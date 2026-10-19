@@ -7,7 +7,8 @@ queues, food, and the wc3env events (construct_start/finish, train_start/finish)
 
 It is a test double that follows the observation and action contracts in wc3env's
 docs/specs, not a Warcraft model: units walk in straight lines, there is no combat, and
-auto_place uses the requested point.
+auto_place uses the requested point unless auto_place_shift is set (Warcraft's own search can
+move a site several hundred units; FakeServer cannot report where, so placements stay empty).
 """
 from __future__ import annotations
 
@@ -23,8 +24,9 @@ SIGHT = 2200  # trees reported within this distance of own objects (fog stand-in
 
 
 class LostTempleWorld:
-    def __init__(self, data: dict, start: int = 0, speed: float | None = None):
+    def __init__(self, data: dict, start: int = 0, speed: float | None = None, auto_place_shift: tuple[float, float] | None = None):
         self.eco = data["economy"]["units"]
+        self.auto_place_shift = auto_place_shift
         self.speed = speed or data["worker"]["speed"]
         self.races = {0: "human", 1: "orc"}
         self.result = ""
@@ -290,7 +292,8 @@ class LostTempleWorld:
                 if t not in self.eco or not self.eco[t]["structure"] or u["type_id"] != "hpea":
                     rejected.append({"index": i, "reason": "bad_arguments"})
                 else:
-                    u["_job"] = {"kind": "build", "type_id": t, "x": float(args["x"]), "y": float(args["y"])}
+                    dx, dy = self.auto_place_shift if args.get("auto_place") and self.auto_place_shift else (0.0, 0.0)
+                    u["_job"] = {"kind": "build", "type_id": t, "x": float(args["x"]) + dx, "y": float(args["y"]) + dy}
             elif cmd == "train":
                 t = args.get("type_id")
                 if not u["structure"] or u["_state"] is not None or t not in (self.eco[u["type_id"]]["trains"] or []) or t not in self.eco:

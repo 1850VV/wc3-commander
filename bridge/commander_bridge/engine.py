@@ -16,6 +16,8 @@ import math
 HALLS = ("htow", "hkee", "hcas")
 RES = {"gold": "采金", "wood": "伐木"}
 ROLE_TEXT = {"gold": "采金", "wood": "伐木", "build": "建造"}
+SITE_MATCH = 96          # a new structure this close to the expected point is the one we ordered
+AUTO_PLACE_MATCH = 700   # fallback when an auto-placed site was never reported back
 
 
 def dist(a, b) -> float:
@@ -248,9 +250,13 @@ class Commander:
                     rt["note"] = f"等待资源 金{int(self.budget[0])}/{c['gold']} 木{int(self.budget[1])}/{c['wood']}"
                     return
                 self.spend(c["gold"], c["wood"])
-                self.order(job["worker"], "build", type_id=e["btype"], x=float(e["site"][0]), y=float(e["site"][1]), auto_place=True)
-                job.update(state="ordered", ordered=self.t, tries=job["tries"] + 1)
-                rt["note"] = f"农民{self.cid[job['worker']]} 前往工地"
+                exact = self.exact(e)
+                # exact: build on the planned point or not at all; otherwise the site is only an anchor
+                # for Warcraft's own search, which may move it several hundred units (see feedback()).
+                args = dict(type_id=e["btype"], x=float(e["site"][0]), y=float(e["site"][1]))
+                self.order(job["worker"], "build", **(args if exact else dict(args, auto_place=True)))
+                job.update(state="ordered", ordered=self.t, tries=job["tries"] + 1, action=self.actions[-1], placed=None)
+                rt["note"] = f"农民{self.cid[job['worker']]} 前往工地" + ("（指定位置）" if exact else "")
             elif job["state"] == "ordered":
                 self.spend(c["gold"], c["wood"])  # keep the money aside until construction starts
                 worker = next((u for u in self.units() if u["unit_id"] == job["worker"]), None)
@@ -261,7 +267,7 @@ class Commander:
                         del self.jobs[e["id"]]
                     else:
                         job["state"] = "wait_res"
-                        rt["note"] = "游戏没有开工，重试"
+                        rt["note"] = "游戏没有在指定位置开工，重试" if self.exact(e) else "游戏没有开工，重试"
             elif job["state"] == "constructing":
                 b = next((s for s in self.obs["units"] if s["unit_id"] == job["building"]), None)
                 if b is None:
@@ -315,15 +321,67 @@ class Commander:
         return names[0] if names else "生产建筑"
 
     def _bind_construction(self, ev):
+        """Claim a new structure for the build job that caused it.
+
+        Strongest evidence first: the job's worker is ordered onto this structure; then the site
+        Warcraft reported choosing (feedback); then the planned point. Only when an auto-placed
+        build has no reported site is the old wide radius used, because the game may move it.
+        """
         b = next((u for u in self.obs["units"] if u["unit_id"] == ev["unit_id"]), None)
+        best = None
         for e in self.events:
             job = self.jobs.get(e["id"])
-            if job and e["kind"] == "build" and job["state"] == "ordered" and e["btype"] == ev["type_id"]:
-                if b and math.hypot(b["x"] - e["site"][0], b["y"] - e["site"][1]) > 700:
-                    continue
-                job.update(state="constructing", building=ev["unit_id"])
-                self.rt[e["id"]].update(bStart=self.t, bid="u%d" % ev["unit_id"], note="建造中 0%")
-                return
+            if not (job and e["kind"] == "build" and job["state"] == "ordered" and e["btype"] == ev["type_id"]):
+                continue
+            worker = next((u for u in self.units() if u["unit_id"] == job["worker"]), None)
+            if worker and (worker.get("order") or {}).get("target_id") == ev["unit_id"]:
+                best = (-1.0, e)
+                break
+            if b is None:
+                continue
+            point, radius = (job["placed"], SITE_MATCH) if job.get("placed") else (e["site"], SITE_MATCH if self.exact(e) else AUTO_PLACE_MATCH)
+            d = math.hypot(b["x"] - point[0], b["y"] - point[1])
+            if d <= radius and (best is None or d < best[0]):
+                best = (d, e)
+        if best is None:
+            return
+        e = best[1]
+        self.jobs[e["id"]].update(state="constructing", building=ev["unit_id"])
+        self.rt[e["id"]].update(bStart=self.t, bid="u%d" % ev["unit_id"], note="建造中 0%")
+        if b is not None:
+            self.rt[e["id"]]["builtAt"] = [b["x"], b["y"]]
+
+    @staticmethod
+    def exact(e) -> bool:
+        """A site the player placed (or a plan marked exact) is built on that point, never moved."""
+        return bool(e.get("exact", e.get("at") is not None and not e.get("resume")))
+
+    def feedback(self, actions: list[dict], placements: list[dict], rejected: list[dict]) -> None:
+        """Read the reply to the actions tick() returned: where Warcraft placed auto-placed builds
+        and which build orders it refused outright."""
+        jobs = {id(j["action"]): (eid, j) for eid, j in self.jobs.items() if j.get("action") is not None}
+        for p in placements:
+            hit = jobs.get(id(actions[p["index"]])) if 0 <= p["index"] < len(actions) else None
+            if hit:
+                eid, job = hit
+                job["placed"] = (p["x"], p["y"])
+                self.rt[eid]["placed"] = [p["x"], p["y"]]
+        for r in rejected:
+            hit = jobs.get(id(actions[r["index"]])) if 0 <= r["index"] < len(actions) else None
+            if not hit or hit[1]["state"] != "ordered":
+                continue
+            eid, job = hit
+            e = next((e for e in self.events if e["id"] == eid), None)
+            if e is None or e["kind"] != "build":
+                continue
+            where = "指定位置" if self.exact(e) else "附近"
+            if job["tries"] >= 4:
+                self.rt[eid].update(status="done", aEnd=self.t, note=f"建造失败：游戏拒绝在{where}建造（{r['reason']}）")
+                self.roles.pop(job["worker"], None)
+                del self.jobs[eid]
+            else:
+                job["state"] = "wait_res"
+                self.rt[eid]["note"] = f"游戏拒绝在{where}建造（{r['reason']}），重试"
 
     def _finish_construction(self, ev):
         for e in self.events:

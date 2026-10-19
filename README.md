@@ -17,7 +17,8 @@
 - **真实数值**：单位和建筑的造价、人口、工期、科技前置取自 1.27a 数据。
 - **离线预演**：A* 寻路、建筑选址（避开采金路线）、金矿一次进一个农民、砍树和树木耗尽、人族建造需要农民在场。拖动时间轴上的事件，整局立刻按新编排重算。
 - **二维指挥**：选中农民后按快捷键，在地图上点选位置放建筑；选中建筑训练单位；暂停的工地可以派人继续建。每个操作都变成时间轴上的一个事件。
-- **连接游戏**：指挥官服务把事件翻译成 wc3env 命令（`build` 用游戏自带选址、`harvest`、`train`、`smart`），时间轴状态以游戏回报的 `construct_start/finish`、`train_start/finish` 事件为准，不把"命令被接受"当成"已完成"。
+- **连接游戏**：指挥官服务把事件翻译成 wc3env 命令（`build`、`harvest`、`train`、`smart`），时间轴状态以游戏回报的 `construct_start/finish`、`train_start/finish` 事件为准，不把"命令被接受"当成"已完成"。
+- **建筑位置**：在地图上亲手放的工地按精确坐标建造，不会被挪开；建不了会在时间轴上提示并重试，最多 4 次。其余工地交给游戏自带选址（可能挪开几百距离），引擎读取游戏回报的实际坐标来认领新建筑，不会因为挪远而重复建造。
 - **AI 建议**：目前是规则引擎占位，之后换成大模型。
 
 ## 快速开始
@@ -62,7 +63,7 @@ python -m commander_bridge --backend wc3env --opponent easy
 ## 测试
 
 ```sh
-node --test web/tests                                              # 模拟器规则
+node --test web/tests/sim.test.js                                  # 模拟器规则（写到文件名，只写目录会报找不到模块）
 WC3ENV_SRC=../wc3env-127a/src python -m unittest discover -s bridge/tests -t bridge   # 指挥官服务端到端
 ```
 

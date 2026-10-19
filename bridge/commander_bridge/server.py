@@ -43,7 +43,7 @@ class FakeGame:
             self.rpc.close()
 
 
-def make_session(backend: str, data: dict, start: int, opponent: str, window: str = "background", seed: int = 1):
+def make_session(backend: str, data: dict, start: int, opponent: str, window: str = "background", seed: int = 1, **world):
     from wc3env import GameConfig, GameSession, MatchSetup, PlayerConfig
 
     if backend == "fake":
@@ -52,7 +52,7 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
         from .testworld import LostTempleWorld
 
         config = GameConfig(map="(4)LostTemple.w3m", players=(PlayerConfig(0, "human"), PlayerConfig(1, control="computer")), mode="stepping", step_ms=250)
-        server = FakeServer(world_factory=lambda: LostTempleWorld(data, start))
+        server = FakeServer(world_factory=lambda: LostTempleWorld(data, start, **world))  # world: test-only options
         return GameSession(config, game_factory=lambda cfg: FakeGame(cfg.map, server))
     players = (PlayerConfig(0, "human"),)
     difficulty = None
@@ -122,6 +122,8 @@ class Runner:
                     self.state = self.commander.snapshot()
                 observations, done, info = session.step({0: actions}, ms=step_ms) if self.backend == "fake" else session.step({0: actions})
                 obs = observations[0]
+                with self.lock:
+                    self.commander.feedback(actions, info.get("placements", {}).get(0, []), info.get("rejected", {}).get(0, []))
                 for r in info.get("rejected", {}).get(0, []):
                     a = actions[r["index"]]
                     self.log(f"游戏拒绝了命令 {a['command']}（{r['reason']}）", "error")

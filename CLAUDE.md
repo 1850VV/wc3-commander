@@ -11,7 +11,7 @@
 ## 命令
 
 ```sh
-node --test web/tests                                                              # 模拟器
+node --test web/tests/sim.test.js                                                 # 模拟器（必须写到文件名）
 WC3ENV_SRC=../wc3env-127a/src python -m unittest discover -s bridge/tests -t bridge  # 端到端（假服务器）
 cd bridge && WC3ENV_SRC=../../wc3env-127a/src python -m commander_bridge --backend fake   # 本地看效果
 python -m commander_bridge --backend wc3env                                         # 真游戏，仅 Windows
@@ -22,6 +22,7 @@ python -m commander_bridge --backend wc3env                                     
 ## 规则
 
 - 命令被 wc3env 接受不等于执行成功；事件状态只能根据后续观测和游戏事件改变。
+- 建造：事件带 `at`（玩家在地图上放的）或 `exact: true` 时按精确坐标建造、不加 `auto_place`；否则加 `auto_place`，游戏可能挪开几百距离。新建筑先按农民的命令目标认领，再按 `info["placements"]` 回报的坐标，都没有才用 700 的宽半径。`server.Runner` 每步后要调用 `engine.feedback`。
 - 不能给 `inside`（金矿里）的单位下命令，否则 wc3env 会让会话进入故障状态；`engine.tick` 已经过滤。
 - 模拟器和测试世界里的数值假设（矿内 1 秒、每棵树 50 木）未校准，改动时同步更新 README 和页面底部说明。
 - 只用于离线单机，不要加任何联网对局相关功能。
