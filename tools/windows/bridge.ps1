@@ -5,6 +5,7 @@ Start, stop or inspect the commander bridge on the Windows game PC.
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 start      # on the desktop
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 stop
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 install    # once: scheduled task for remote start
+  powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 shortcut   # once: desktop shortcut 「魔兽争霸三（指挥官）」
   extra bridge arguments for one start (e.g. --window interactive) can be left in bridge\next-start.txt;
   "start" uses and deletes it, so a remote start through the scheduled task can still pass options
   add -Lan to start or install to open the console to the local network (http://<this PC's 192.168 address>:8790/);
@@ -17,7 +18,7 @@ SSH lands in session 0 (no desktop), so remote start goes through the scheduled 
 Python: the wc3env-127a\.venv next to this repository (override with $env:WC3ENV_PYTHON). The
 system python may load another wc3env copy without a .env and then cannot find the maps.
 #>
-param([ValidateSet("start", "stop", "status", "install", "uninstall")][string]$Action = "status", [switch]$Lan)
+param([ValidateSet("start", "stop", "status", "install", "uninstall", "shortcut")][string]$Action = "status", [switch]$Lan)
 
 # Not "Stop": Windows PowerShell 5.1 then aborts on any line a native program (git, python) writes
 # to stderr. Failures that matter are thrown explicitly or use -ErrorAction Stop.
@@ -99,6 +100,21 @@ switch ($Action) {
         Write-Output "已注册计划任务 $Task：只在你登录时、在你的桌面会话里运行；没有定时触发，只在被调用时启动。"
         if ($Lan) { Write-Output "启动后控制台对局域网开放（没有登录保护），需要防火墙放行 TCP $Port。" }
         Write-Output "远程启动：schtasks /Run /TN $Task    删除：bridge.ps1 uninstall"
+    }
+    "shortcut" {
+        # Opens Warcraft with the commander's hook at the main menu (tools\windows\war3_commander.py);
+        # pythonw: no console window. Its icon is the game's own.
+        $ErrorActionPreference = "Stop"
+        $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "魔兽争霸三（指挥官）.lnk"
+        $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+        $s.TargetPath = Join-Path (Split-Path $Python) "pythonw.exe"
+        $s.Arguments = "`"$(Join-Path $PSScriptRoot 'war3_commander.py')`""
+        $s.WorkingDirectory = $Repo
+        $game = if ($env:WC3_GAME_DIR) { $env:WC3_GAME_DIR } else { "G:\war3\Warcraft III Frozen Throne 1.27a publish" }
+        if (Test-Path (Join-Path $game "War3.exe")) { $s.IconLocation = (Join-Path $game "War3.exe") + ",0" }
+        $s.Description = "用指挥官组件打开魔兽争霸三（到主菜单，自己选图开局）"
+        $s.Save()
+        Write-Output "已在桌面创建：$lnk"
     }
     "uninstall" {
         $ErrorActionPreference = "Stop"

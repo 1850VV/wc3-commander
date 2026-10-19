@@ -21,6 +21,8 @@ def main() -> None:
     p.add_argument("--opponent", choices=("none", "easy", "normal", "insane"), default="none", help="wc3env backend: computer opponent in slot 1; none keeps slot 1 on the map with its AI off (it never attacks)")
     p.add_argument("--window", choices=("background", "interactive"), default="background",
                    help="wc3env backend: background = visible window that keeps running without focus (for watching); interactive = normal window you can play in")
+    p.add_argument("--launch", action="store_true",
+                   help="wc3env backend, test switch: 连接 launches Warcraft and creates the game itself; by default it waits for a game you start with the 「魔兽争霸三（指挥官）」 shortcut")
     p.add_argument("--seed", type=int, default=1, help="wc3env backend: match seed, keep it fixed to compare runs")
     p.add_argument("--wc3env", type=Path, default=Path(os.environ.get("WC3ENV_SRC", Path(__file__).resolve().parents[3] / "wc3env-127a" / "src")),
                    help="path to wc3env-127a/src when wc3env is not pip-installed")
@@ -33,7 +35,7 @@ def main() -> None:
         sys.path.insert(0, str(args.wc3env))
     from .server import serve
 
-    serve(args.backend, args.port, args.speed, args.opponent, args.window, args.seed, args.host)
+    serve(args.backend, args.port, args.speed, args.opponent, args.window, args.seed, args.host, args.launch)
 
 
 if __name__ == "__main__":

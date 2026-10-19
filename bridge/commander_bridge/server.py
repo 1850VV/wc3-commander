@@ -5,7 +5,9 @@
   POST /api/plan      the console's timeline (groups of events)
   POST /api/control   {"action": "start", "start": 0} or {"action": "stop"}
                       or {"action": "tactic", "on": true|false}: run the plan or only watch
-  GET  /api/stream    server-sent events: {"type": "state"} snapshots and {"type": "log"} lines
+                      or {"action": "launch", "on": true|false}: test switch, see Runner.launch
+  GET  /api/stream    server-sent events: {"type": "state"} snapshots, {"type": "log"} lines and
+                      {"type": "plan"} when the bridge picks the plan itself (the console adopts it)
   GET  /api/strategies          saved strategies (name, time, start, event count)
   GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
   PUT  /api/strategies/<name>   save the console plan in the body under that name
@@ -23,10 +25,10 @@ import time
 import traceback
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
 
-from . import strategies
+from . import attach, strategies
 from .data import load_data
 from .engine import Commander
 
@@ -83,8 +85,13 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
 class Runner:
     """Owns the game session on one thread; the HTTP threads only post plans and read snapshots."""
 
-    def __init__(self, backend: str, speed: float, opponent: str, window: str = "background", seed: int = 1):
+    def __init__(self, backend: str, speed: float, opponent: str, window: str = "background", seed: int = 1, launch: bool = False):
         self.backend, self.speed, self.opponent, self.window, self.seed = backend, speed, opponent, window, seed
+        # Test switch, off by default: on, 「连接」 launches Warcraft and creates the game itself (the old
+        # way, for unattended checks). Off, it waits for a game the player starts (attach.py). The fake
+        # backend always launches.
+        self.launch = launch
+        self.waiting = False
         self.data = load_data()
         self.lock = threading.Lock()
         self.commander = Commander(self.data)
@@ -99,6 +106,10 @@ class Runner:
     def log(self, text: str, level: str = "info") -> None:
         for q in list(self.listeners):
             q.put({"type": "log", "level": level, "text": text})
+
+    def publish_plan(self) -> None:
+        for q in list(self.listeners):
+            q.put({"type": "plan", "plan": self.plan})
 
     def set_plan(self, plan: dict) -> None:
         with self.lock:
@@ -120,7 +131,8 @@ class Runner:
             self.commander = Commander(self.data)
             self.commander.set_plan(self.plan)
             self.commander.enabled = self.tactic = True  # every new game starts with the tactic on
-        self.thread = threading.Thread(target=self._run, args=(start,), daemon=True)
+        attached = self.backend == "wc3env" and not self.launch
+        self.thread = threading.Thread(target=self._attach if attached else self._run, args=() if attached else (start,), daemon=True)
         self.thread.start()
 
     def stop(self) -> None:
@@ -165,6 +177,108 @@ class Runner:
                 session.close()
 
 
+    # ---- a game the player started (attach.py) ---------------------------------------------------
+    def _attach(self) -> None:
+        self.waiting = True
+        self.log("正在等待魔兽争霸三：用桌面上的「魔兽争霸三（指挥官）」打开游戏，自己选失落神庙地图开始，开局后会自动接管")
+        warned: set[int] = set()
+        try:
+            while not self.stop_flag.is_set():
+                game = self._find_game(warned)
+                if game is None:
+                    self.stop_flag.wait(2)
+                    continue
+                try:
+                    self._play_attached(game)
+                except Exception as exc:  # the player closed Warcraft, or the pipe broke: wait for the next one
+                    traceback.print_exc()
+                    self.log(f"与魔兽的连接断了（{exc}），继续等待", "error")
+                finally:
+                    self.running = False
+                    game.close()
+        finally:
+            self.waiting = False
+
+    def _find_game(self, warned: set[int]):
+        hooked = attach.hooked_pids()
+        for pid in attach.war3_pids():
+            if pid in hooked:
+                try:
+                    rpc = attach.connect(pid)
+                except (OSError, TimeoutError):
+                    continue  # busy: another client holds it
+                self.log(f"找到指挥官版魔兽（进程 {pid}），等你进入游戏…")
+                return attach.AttachedGame(rpc, pid)
+            if pid not in warned:
+                warned.add(pid)
+                self.log(f"发现一个普通方式打开的魔兽（进程 {pid}），指挥官读不到它。请关掉它，用桌面上的「魔兽争霸三（指挥官）」重新打开", "error")
+        return None
+
+    def _play_attached(self, game: attach.AttachedGame) -> None:
+        while not self.stop_flag.is_set():  # the hook freezes a new game at 0:01 until we take it
+            info = game.rpc.info()
+            if game.rpc.status != "launched" or info.get("held"):
+                break
+            self.stop_flag.wait(1)
+        if self.stop_flag.is_set():
+            return
+        info = game.rpc.info()
+        resumed = game.rpc.status != "launched"
+        obs = game.take_over()
+        map_name = info.get("map") or "?"
+        self.running = True
+        self._choose_plan(obs, map_name, resumed)
+        while not self.stop_flag.is_set():
+            tick_start = time.perf_counter()
+            with self.lock:
+                actions = self.commander.tick(obs)
+                self.state = self.commander.snapshot()
+            obs, done, ack = game.step(actions)
+            with self.lock:
+                self.commander.feedback(actions, ack.get("placements", []), ack.get("rejected", []))
+            for r in ack.get("rejected", []):
+                self.log(f"游戏拒绝了命令 {actions[r['index']]['command']}（{r['reason']}）", "error")
+            if done:
+                with self.lock:
+                    self.commander.tick(obs)
+                    self.state = self.commander.snapshot()
+                self.log("本局结束。下一局请先关掉魔兽，再用「魔兽争霸三（指挥官）」重新打开")
+                break
+            time.sleep(max(0.0, 0.25 - (time.perf_counter() - tick_start)))
+
+    def _choose_plan(self, obs: dict, map_name: str, resumed: bool) -> None:
+        """Lost Temple: the fast-expand strategy for our start, tactic on. Anything else: watch only."""
+        base = PureWindowsPath(map_name).name
+        start, off = attach.start_of(obs, self.data["starts"])
+        why = None
+        if not attach.is_lost_temple(map_name):
+            why = f"地图「{base}」名字里没有 Lost Temple"
+        elif start is None:
+            why = "没找到你的人族城镇大厅（这套战术只支持人族）"
+        elif off > attach.START_MATCH:
+            why = f"城镇大厅离最近的出生点 {off:.0f}，对不上失落神庙的出生点"
+        plan = None
+        if why is None:
+            name = "人族速矿二本 · " + self.data["starts"][start]["name"]
+            try:
+                plan = strategies.load(name)["plan"]
+            except (FileNotFoundError, ValueError):
+                why = f"找不到策略「{name}」"
+        with self.lock:
+            self.commander = Commander(self.data)
+            if plan is not None:
+                self.plan = plan
+            self.commander.set_plan(self.plan)
+            self.commander.enabled = self.tactic = why is None
+            self.state = self.commander.snapshot()
+        if plan is not None:
+            self.publish_plan()
+            verb = "重新接上" if resumed else "已接管"
+            self.log(f"{verb}：{base}，出生点{self.data['starts'][start]['name']}，已套用「{name}」，战术已开启")
+        else:
+            self.log(f"已接管：{why}。战术已关闭，只观察不下命令", "error")
+
+
 class Handler(SimpleHTTPRequestHandler):
     runner: Runner
 
@@ -188,7 +302,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/health":
-            return self._json(200, {"ok": True, "backend": self.runner.backend, "running": self.runner.running, "tactic": self.runner.tactic})
+            r = self.runner
+            return self._json(200, {"ok": True, "backend": r.backend, "running": r.running, "tactic": r.tactic,
+                                    "launch": r.launch or r.backend == "fake", "waiting": r.waiting})
         if self.path == "/api/stream":
             return self._stream()
         if self.path == "/api/plan":
@@ -232,6 +348,8 @@ class Handler(SimpleHTTPRequestHandler):
                 threading.Thread(target=self.runner.stop, daemon=True).start()
             elif action == "tactic":
                 self.runner.set_tactic(bool(body.get("on", True)))
+            elif action == "launch":
+                self.runner.launch = bool(body.get("on", False))
             else:
                 return self._json(400, {"ok": False, "error": "未知操作"})
             return self._json(200, {"ok": True})
@@ -272,8 +390,8 @@ def lan_addresses() -> list[str]:
 
 
 def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none", window: str = "background", seed: int = 1,
-          host: str = "127.0.0.1") -> None:
-    runner = Runner(backend, speed, opponent, window, seed)
+          host: str = "127.0.0.1", launch: bool = False) -> None:
+    runner = Runner(backend, speed, opponent, window, seed, launch)
     handler = partial(type("BoundHandler", (Handler,), {"runner": runner}), directory=str(WEB))
     httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True

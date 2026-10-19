@@ -630,14 +630,16 @@
     async connect(btn) {
       let h = {};
       try { h = await (await fetch('/api/health')).json(); } catch (_) { say('连不上本地服务', true); return; }
-      if (h.running) { // a game is already going: join it with its plan instead of starting a new one
+      if (h.running || h.waiting) { // a game is already going (or awaited): join it with its plan instead of starting anew
         try { this.adopt((await (await fetch('/api/plan')).json()).plan); } catch (_) { say('读不到正在运行的计划', true); return; }
-      } else this.pushPlan();
+      } else if (h.launch) this.pushPlan(); // test switch / fake server: send this plan and launch a game
+      // otherwise the bridge waits for the game you start and picks the strategy for your start itself
       live.es = new EventSource('/api/stream');
-      live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
+      live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'plan') this.adopt(msg.plan); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
       live.es.onerror = () => say('与本地服务的连接中断，正在重试…', true);
       live.on = true; btn.textContent = '断开'; this.showTactic(h.running ? h.tactic !== false : true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
       if (h.running) { say('已加入正在进行的游戏（' + W.starts[startIndex].name + '，' + allEvents().length + ' 个事件）'); return; }
+      if (h.waiting) { say('正在等待你开游戏…'); return; }
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'start', start: startIndex})});
     },
     adopt(plan) { // take over the plan the bridge is running, keeping the console in step with the game
