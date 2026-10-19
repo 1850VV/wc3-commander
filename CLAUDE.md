@@ -33,6 +33,7 @@ tools/pc.sh start | status | log | stop | pull                                  
 - 工地：`sim.js` 的 `planSites` 先给带 `at` 的事件占位，再按开始时间给自动工地选址；`at` 放不下时就近改位置并写 `e.siteNote`。控制台在建筑开工（`rt.bid`）前都允许拖动工地（`app.js` 的 `movable`）。
 - 封家（`sim.js` 的 `wallCheck`/`autoWall`，常量 `WALL`）：从采金路线出发找通往检查窗口边界的最宽路，K 是最窄处能放下的最大空方块边长（格）。单位需要 `floor(碰撞半径/16)+1` 格：碰撞半径取自 wc3env 的 `runs/reference-127a.json`（农民 16、步兵 31、英雄/苦工/火枪手 32），所以 2 格 = 封家、3 格英雄能进；这个换算是推断，待实机验证。建筑放在 64 单位网格上；祭坛、兵营、城镇大厅四周有 2 格可走的边，只有农场是实心的。`canPlace` 的 `margin` 参数：自动选址留 32，玩家放的和自动封家用 0（可以贴着放）。
 - 建造：事件带 `at`（玩家在地图上放的）或 `exact: true` 时按精确坐标建造、不加 `auto_place`；否则加 `auto_place`，游戏可能挪开几百距离。新建筑先按农民的命令目标认领，再按 `info["placements"]` 回报的坐标，都没有才用 700 的宽半径。`server.Runner` 每步后要调用 `engine.feedback`。已下令后工地坐标或精确/自动方式变了，引擎会重新下令（`_site_changed`）。
+- 连接（`attach.py`，`server.Runner._attach`）：默认等玩家用「魔兽争霸三（指挥官）」快捷方式（`tools/windows/war3_commander.py`，用 wc3env-127a 分支 `claude/attach-menu-game` 的 DLL，在 PC 的 `wc3env-127a-attach` 工作树里）打开、自己从菜单开的游戏：钩子在 0:01 停住，服务用 `create_game(map="*", players="loaded", mode="realtime")` 接管；地图名含 lost temple 就按出生点载入 `人族速矿二本 · <方向>` 并开战术，否则只观察。每个进程只能接管一局。`--launch`（测试开关，默认关）恢复由服务启动游戏的旧流程，自动验收时用它。
 - 不能给 `inside`（金矿里）的单位下命令，否则 wc3env 会让会话进入故障状态；`engine.tick` 已经过滤。
 - 模拟器和测试世界里的数值假设（矿内 1 秒、每棵树 50 木）未校准，改动时同步更新 README 和页面底部说明。
 - 只用于离线单机，不要加任何联网对局相关功能。控制台默认只监听 127.0.0.1；`--host 0.0.0.0`（`bridge.ps1 -Lan`）只为家里局域网访问，控制台没有登录保护，不要做成默认。

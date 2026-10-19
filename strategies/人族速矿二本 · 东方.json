@@ -1,6 +1,6 @@
 {
  "name": "人族速矿二本 · 东方",
- "saved": "2026-10-19T20:45:12",
+ "saved": "2026-10-19T22:02:54",
  "plan": {
   "start": 3,
   "groups": [
@@ -33,6 +33,10 @@
       "at": [
        6688,
        1120
+      ],
+      "site": [
+       6688,
+       1120
       ]
      },
      {
@@ -44,6 +48,10 @@
       "unit": 5,
       "btype": "hhou",
       "at": [
+       6272,
+       1216
+      ],
+      "site": [
        6272,
        1216
       ]
@@ -75,6 +83,10 @@
       "unit": null,
       "btype": "hbar",
       "at": [
+       6016,
+       1344
+      ],
+      "site": [
        6016,
        1344
       ]
@@ -167,7 +179,11 @@
        6272,
        2240
       ],
-      "then": "wood"
+      "then": "wood",
+      "site": [
+       6272,
+       2240
+      ]
      },
      {
       "id": "f15",
@@ -199,7 +215,11 @@
        6464,
        1152
       ],
-      "then": "wood"
+      "then": "wood",
+      "site": [
+       6464,
+       1152
+      ]
      },
      {
       "id": "f18",
@@ -263,7 +283,11 @@
       "near": "natural",
       "helpers": 4,
       "then": "natural",
-      "after": "f22"
+      "after": "f22",
+      "site": [
+       7040,
+       -2368
+      ]
      },
      {
       "id": "f24",
@@ -301,7 +325,11 @@
       "unit": null,
       "btype": "hwtw",
       "near": "natural",
-      "then": "natural"
+      "then": "natural",
+      "site": [
+       6656,
+       -2368
+      ]
      },
      {
       "id": "f28",
@@ -370,7 +398,11 @@
       "start": 285,
       "unit": null,
       "btype": "hlum",
-      "then": "wood"
+      "then": "wood",
+      "site": [
+       6560,
+       2208
+      ]
      },
      {
       "id": "f38",
@@ -381,6 +413,10 @@
       "unit": null,
       "btype": "hhou",
       "at": [
+       6912,
+       1024
+      ],
+      "site": [
        6912,
        1024
       ]
@@ -409,6 +445,10 @@
       "at": [
        5888,
        1600
+      ],
+      "site": [
+       5888,
+       1600
       ]
      },
      {
@@ -418,7 +458,11 @@
       "name": "建造 神秘藏宝室",
       "start": 405,
       "unit": null,
-      "btype": "hvlt"
+      "btype": "hvlt",
+      "site": [
+       6208,
+       1792
+      ]
      },
      {
       "id": "f40",
@@ -437,7 +481,11 @@
       "start": 485,
       "unit": null,
       "btype": "hars",
-      "after": "f32"
+      "after": "f32",
+      "site": [
+       6656,
+       704
+      ]
      },
      {
       "id": "f41",
@@ -447,7 +495,11 @@
       "start": 500,
       "unit": null,
       "btype": "hars",
-      "after": "f32"
+      "after": "f32",
+      "site": [
+       6208,
+       832
+      ]
      },
      {
       "id": "f42",

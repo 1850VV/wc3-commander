@@ -1,6 +1,6 @@
 {
  "name": "人族速矿二本 · 北方",
- "saved": "2026-10-19T20:45:12",
+ "saved": "2026-10-19T22:02:54",
  "plan": {
   "start": 2,
   "groups": [
@@ -33,6 +33,10 @@
       "at": [
        -160,
        6496
+      ],
+      "site": [
+       -160,
+       6496
       ]
      },
      {
@@ -44,6 +48,10 @@
       "unit": 5,
       "btype": "hhou",
       "at": [
+       -896,
+       6080
+      ],
+      "site": [
        -896,
        6080
       ]
@@ -75,6 +83,10 @@
       "unit": null,
       "btype": "hbar",
       "at": [
+       -1152,
+       6144
+      ],
+      "site": [
        -1152,
        6144
       ]
@@ -167,7 +179,11 @@
        -1408,
        6272
       ],
-      "then": "wood"
+      "then": "wood",
+      "site": [
+       -1408,
+       6272
+      ]
      },
      {
       "id": "f15",
@@ -199,7 +215,11 @@
        -64,
        6720
       ],
-      "then": "wood"
+      "then": "wood",
+      "site": [
+       -64,
+       6720
+      ]
      },
      {
       "id": "f18",
@@ -263,7 +283,11 @@
       "near": "natural",
       "helpers": 4,
       "then": "natural",
-      "after": "f22"
+      "after": "f22",
+      "site": [
+       3904,
+       6848
+      ]
      },
      {
       "id": "f24",
@@ -301,7 +325,11 @@
       "unit": null,
       "btype": "hwtw",
       "near": "natural",
-      "then": "natural"
+      "then": "natural",
+      "site": [
+       3904,
+       6464
+      ]
      },
      {
       "id": "f28",
@@ -370,7 +398,11 @@
       "start": 285,
       "unit": null,
       "btype": "hlum",
-      "then": "wood"
+      "then": "wood",
+      "site": [
+       -1120,
+       5728
+      ]
      },
      {
       "id": "f38",
@@ -381,6 +413,10 @@
       "unit": null,
       "btype": "hhou",
       "at": [
+       -256,
+       6272
+      ],
+      "site": [
        -256,
        6272
       ]
@@ -405,7 +441,11 @@
       "name": "建造 农场 5",
       "start": 390,
       "unit": null,
-      "btype": "hhou"
+      "btype": "hhou",
+      "site": [
+       128,
+       6272
+      ]
      },
      {
       "id": "f34",
@@ -414,7 +454,11 @@
       "name": "建造 神秘藏宝室",
       "start": 405,
       "unit": null,
-      "btype": "hvlt"
+      "btype": "hvlt",
+      "site": [
+       -448,
+       5504
+      ]
      },
      {
       "id": "f40",
@@ -433,7 +477,11 @@
       "start": 485,
       "unit": null,
       "btype": "hars",
-      "after": "f32"
+      "after": "f32",
+      "site": [
+       128,
+       5824
+      ]
      },
      {
       "id": "f41",
@@ -443,7 +491,11 @@
       "start": 500,
       "unit": null,
       "btype": "hars",
-      "after": "f32"
+      "after": "f32",
+      "site": [
+       576,
+       5824
+      ]
      },
      {
       "id": "f42",

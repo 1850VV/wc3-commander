@@ -102,6 +102,10 @@ function plan(start) {
     {id: 'c9', name: '山丘之王开始训练', event: id('训练 山丘之王'), at: 'start', from: 480, to: 600},
     {id: 'c10', name: '第一个法师开始训练', event: id('训练 牧师'), at: 'start', from: 540, to: 600},
   ];
+  // Resolve every build site now, as the console does before sending a plan: when the bridge picks
+  // this strategy itself (a game you started), nothing else fills in e.site for the engine.
+  Sim.run(W, start, groups, 0);
+  for (const g of groups) g.children = g.children.map(({rt, ...e}) => e); // run state is not part of a plan
   return {start, groups, checkpoints};
 }
 

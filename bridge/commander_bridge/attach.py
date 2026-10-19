@@ -48,14 +48,13 @@ def connect(pid: int):
 
 
 def start_of(obs: dict, starts: list[dict]) -> tuple[int | None, float]:
-    """Index of the start location under our town hall, and how far it is (None without a hall)."""
+    """Index of the start location under one of our town halls, and how far it is (None without a hall).
+    Rejoining later there may be an expansion too; the main hall is the one on a start location."""
     halls = [u for u in obs["units"] if u["structure"] and u["type_id"] in HALLS]
     if not halls:
         return None, math.inf
-    h = halls[0]
-    d = [math.hypot(s["x"] - h["x"], s["y"] - h["y"]) for s in starts]
-    i = min(range(len(starts)), key=d.__getitem__)
-    return i, d[i]
+    d, i = min((math.hypot(s["x"] - h["x"], s["y"] - h["y"]), i) for h in halls for i, s in enumerate(starts))
+    return i, d
 
 
 class AttachedGame:

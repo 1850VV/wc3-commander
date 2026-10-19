@@ -43,6 +43,8 @@ class ChoosePlanTest(unittest.TestCase):
             self.assertTrue(self.r.tactic and self.r.commander.enabled)
             self.assertEqual(self.r.plan["start"], i)
             self.assertIn("人族速矿二本 · " + s["name"], self.logs[-1][1])
+            builds = [e for g in self.r.plan["groups"] for e in g["children"] if e["kind"] == "build"]
+            self.assertTrue(builds and all(e.get("site") for e in builds))  # no console resolves them here
 
     def test_other_map_or_race_only_watches(self):
         s = self.starts[0]
