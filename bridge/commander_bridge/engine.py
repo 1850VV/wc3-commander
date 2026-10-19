@@ -13,7 +13,12 @@ from __future__ import annotations
 
 import math
 
+from .combat import Clear
+
 HALLS = ("htow", "hkee", "hcas")
+# Call to Arms for one peasant; to be confirmed by the native probe (tools/probe_orders.py)
+MILITIA_ORDER = "militia"
+MILITIA_SECONDS = 45
 RES = {"gold": "采金", "wood": "伐木"}
 ROLE_TEXT = {"gold": "采金", "wood": "伐木", "build": "建造"}
 SITE_MATCH = 96          # a new structure this close to the expected point is the one we ordered
@@ -166,6 +171,9 @@ class Commander:
             rt["note"] = "依赖的事件已删除，按时间开始"
             return True
         status = self.rt[dep]["status"]
+        if self.rt[dep].get("failed"):
+            rt["note"] = f"「{d['name']}」失败了，不会自动开始"
+            return False
         if status == "done" or (d["kind"] == "gather" and status == "active"):
             return True
         rt["note"] = f"等「{d['name']}」完成"
@@ -291,6 +299,13 @@ class Commander:
         elif kind == "upgrade":
             self.jobs[e["id"]] = {"state": "waiting", "producer": None}
             rt.update(status="waiting", aStart=self.t, note="排队中")
+        elif kind == "learn":
+            self.jobs[e["id"]] = {"state": "waiting"}
+            rt.update(status="waiting", aStart=self.t, note="等英雄")
+        elif kind == "militia":
+            self._start_militia(e, rt)
+        elif kind == "clear":
+            self._start_clear(e, rt)
 
     # ---- advancing jobs ----------------------------------------------------------------------
     def _advance(self, e):
@@ -344,6 +359,12 @@ class Commander:
                 rt["note"] = f"建造中 {pct}%" if building or worker is None else f"可能暂停 {pct}%：农民没在建造"
         elif e["kind"] == "upgrade":
             self._advance_upgrade(e, job, rt)
+        elif e["kind"] == "learn":
+            self._advance_learn(e, job, rt)
+        elif e["kind"] == "militia":
+            self._advance_militia(e, job, rt)
+        elif e["kind"] == "clear":
+            self._advance_clear(e, job, rt)
         elif e["kind"] == "train":
             ut = e.get("utype", "hpea")
             if job["state"] == "waiting":
@@ -514,6 +535,90 @@ class Commander:
         elif job["state"] == "upgrading":
             left = self.eco[to]["time"] - (self.t - job["started"])
             rt["note"] = f"升级中 {max(0, math.ceil(left))}秒"
+
+    # ---- hero skills -----------------------------------------------------------------------------
+    def _advance_learn(self, e, job, rt):
+        hero = next((u for u in self.units() if u["type_id"] == e.get("hero", "Hamg")), None)
+        if hero is None:
+            rt["note"] = "等" + self.eco.get(e.get("hero", "Hamg"), {}).get("name", "英雄") + "出生"
+            return
+        if any(a.get("ability_id") == e["ability"] and a.get("level", 0) > 0 for a in hero.get("abilities") or []):
+            rt.update(status="done", aEnd=self.t, note="学会 " + e.get("abilityName", e["ability"]))
+            del self.jobs[e["id"]]
+            return
+        if job["state"] == "waiting" or self.t - job.get("ordered", 0) > 3:
+            self.order(hero["unit_id"], "learn", ability_id=e["ability"])
+            job.update(state="ordered", ordered=self.t)
+            rt["note"] = "已下令学 " + e.get("abilityName", e["ability"])
+
+    # ---- militia (Call to Arms) -------------------------------------------------------------------
+    def _start_militia(self, e, rt):
+        held = self.reserved()
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in ("gold", "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
+        pool.sort(key=lambda u: (self.roles.get(u["unit_id"]) != e.get("from", "wood"), self.cid[u["unit_id"]]))
+        us = pool[: e.get("count", 4)]
+        if not us:
+            rt["note"] = "没有能敲钟的农民"
+            return
+        job = {"units": {}, "seen": set(), "reverted": {}}
+        for u in us:
+            job["units"][u["unit_id"]] = self.roles.get(u["unit_id"])
+            self.roles[u["unit_id"]] = "militia"
+            self.order(u["unit_id"], "cast", order=MILITIA_ORDER)
+        self.jobs[e["id"]] = job
+        rt.update(status="active", aStart=self.t, note="敲钟：农民" + "、".join(str(self.cid[u["unit_id"]]) for u in us), militia=[self.cid[u["unit_id"]] for u in us])
+
+    def _advance_militia(self, e, job, rt):
+        here = {u["unit_id"]: u for u in self.units()}
+        for uid, prev in job["units"].items():
+            u = here.get(uid)
+            if u and u["type_id"] == "hmil":
+                job["seen"].add(uid)
+            elif u and uid in job["seen"] and uid not in job["reverted"]:  # a peasant again: free a moment for a builder
+                job["reverted"][uid] = self.t
+                if self.roles.get(uid) == "militia":
+                    self.roles.pop(uid, None)
+            elif uid in job["reverted"] and self.t - job["reverted"][uid] >= 3 and uid not in self.roles and u:
+                self.harvest(u, prev or "gold", self.mine_of.get(uid, "main"))  # nobody needed him: old job
+        if not job["seen"] and self.t - rt["aStart"] > 3:
+            rt["note"] = "游戏没有把农民变成民兵（命令可能不对）"
+        elif job["seen"]:
+            rt["note"] = f"民兵 {len(job['seen']) - len(job['reverted'])} 个"
+        if len(job["reverted"]) == len(job["units"]) and all(self.t - t >= 3 for t in job["reverted"].values()) or self.t - rt["aStart"] > MILITIA_SECONDS + 30:
+            rt.update(status="done", aEnd=self.t, note="民兵已变回农民")
+            for uid in job["units"]:
+                if self.roles.get(uid) == "militia":
+                    self.roles.pop(uid, None)
+            del self.jobs[e["id"]]
+
+    # ---- clearing a creep camp (combat.Clear) ----------------------------------------------------
+    def _start_clear(self, e, rt):
+        if not self.natural_at or not self.hall:
+            rt["note"] = "还不知道分矿在哪"
+            return
+        heroes = [u for u in self.units() if u.get("hero")]
+        if not heroes:
+            rt["note"] = "等英雄出生"
+            return
+        mjob = self.jobs.get(e.get("militia") or "")
+        if e.get("militia") and self.rt.get(e["militia"], {}).get("status") == "pending":
+            rt["note"] = "等民兵事件开始"
+            return
+        if mjob and len(mjob["seen"]) < len(mjob["units"]) and self.t - self.rt[e["militia"]]["aStart"] < 20:
+            rt["note"] = "等民兵在城镇大厅变身"  # peasants walk to the hall before they change (native probe)
+            return
+        mil = mjob["units"] if mjob else {}
+        members = [u["unit_id"] for u in self.units() if u.get("hero") or u["type_id"] == "hfoo" or (u["type_id"] == "hmil" and (not mil or u["unit_id"] in mil))]
+        self.jobs[e["id"]] = {"clear": Clear(self.natural_at, (self.hall["x"], self.hall["y"]), members, self.t)}
+        rt.update(status="running", aStart=self.t, note="部队前往分矿", army=[self.cid.get(m, 0) for m in members])
+
+    def _advance_clear(self, e, job, rt):
+        c = job["clear"]
+        c.tick(self, self.obs, self.t)
+        rt["note"] = c.note
+        if c.result:
+            rt.update(status="done", aEnd=self.t, failed=c.result != "done")
+            del self.jobs[e["id"]]
 
     def _bind_upgrade(self, ev):
         for e in self.events:

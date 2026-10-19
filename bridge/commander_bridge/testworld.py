@@ -6,7 +6,8 @@ gold and lumber harvesting, Human construction (the builder must stay), producti
 queues, food, and the wc3env events (construct_start/finish, train_start/finish).
 
 It is a test double that follows the observation and action contracts in wc3env's
-docs/specs, not a Warcraft model: units walk in straight lines, there is no combat, and
+docs/specs, not a Warcraft model: units walk in straight lines, combat is a crude exchange of
+damage per second between our units and the creeps passed in (no armour, no collision), and
 auto_place uses the requested point unless auto_place_shift is set (Warcraft's own search can
 move a site several hundred units; FakeServer cannot report where, so placements stay empty).
 """
@@ -20,11 +21,18 @@ CHOP_SECONDS = 1.1
 CARRY = 10
 TREE_WOOD = 50
 HALLS = ("htow", "hkee", "hcas")
+NEUTRAL_HOSTILE = 12
+# rough hit points / damage per second / mana, enough to exercise combat.Clear
+STATS = {"Hamg": (450, 22, 285), "Hmkg": (700, 30, 225), "hfoo": (420, 12, 0), "hmil": (220, 10, 0), "hpea": (220, 4, 0), "hwat": (525, 18, 0)}
+REACH, AGGRO = 110, 500        # melee reach; attack-move picks up creeps this close
+WATER = {"ability": "AHwe", "order": "waterelemental", "mana": 125, "cooldown": 20.0, "life": 60.0}
+MILITIA_ORDER, MILITIA_SECONDS = "militia", 45.0
 SIGHT = 2200  # trees reported within this distance of own objects (fog stand-in)
 
 
 class LostTempleWorld:
-    def __init__(self, data: dict, start: int = 0, speed: float | None = None, auto_place_shift: tuple[float, float] | None = None):
+    def __init__(self, data: dict, start: int = 0, speed: float | None = None, auto_place_shift: tuple[float, float] | None = None,
+                 creeps: list[dict] | None = None):
         self.eco = data["economy"]["units"]
         self.auto_place_shift = auto_place_shift
         self.speed = speed or data["worker"]["speed"]
@@ -52,19 +60,22 @@ class LostTempleWorld:
         d = math.hypot(dx, dy) or 1
         for k in range(5):
             self._unit("hpea", s["x"] + dx / d * 300 - dy / d * (k - 2) * 44, s["y"] + dy / d * 300 + dx / d * (k - 2) * 44)
+        for c in creeps or []:  # {type, x, y, hp, dps}
+            u = self._unit(c["type"], c["x"], c["y"], owner=NEUTRAL_HOSTILE)
+            u.update(hp=c.get("hp", 300), max_hp=c.get("hp", 300), _dps=c.get("dps", 8))
 
     # ---- helpers -----------------------------------------------------------------------------
     def _id(self) -> int:
         self.next_id += 1
         return self.next_id
 
-    def _unit(self, type_id, x, y, structure=False, constructing=False):
+    def _unit(self, type_id, x, y, structure=False, constructing=False, owner=0):
         uid = self._id()
-        e = self.eco[type_id]
         hero = type_id[0].isupper()
+        hp, dps, mana = STATS.get(type_id, (100, 0, 0))
         self.units[uid] = {
-            "unit_id": uid, "type_id": type_id, "owner": 0, "x": float(x), "y": float(y),
-            "hp": 100, "max_hp": 100, "mana": 0, "max_mana": 0, "structure": structure, "hero": hero,
+            "unit_id": uid, "type_id": type_id, "owner": owner, "x": float(x), "y": float(y),
+            "hp": hp, "max_hp": hp, "mana": mana, "max_mana": mana, "structure": structure, "hero": hero, "_dps": dps, "_abilities": [],
             "level": 1 if hero else 0, "buffs": [],
             "_job": None, "_carry": None, "_amt": 0, "_inside": False,
             "_state": "constructing" if constructing else None, "_progress": 0.0, "_queue": [], "_qleft": 0.0,
@@ -72,7 +83,7 @@ class LostTempleWorld:
         return self.units[uid]
 
     def _food(self):
-        used = sum(self.eco[u["type_id"]]["food"] for u in self.units.values() if not u["structure"])
+        used = sum(self.eco[u["type_id"]]["food"] for u in self.units.values() if not u["structure"] and u["owner"] == 0 and u["type_id"] in self.eco)
         used += sum(self.eco[u["_queue"][0]]["food"] for u in self.units.values() if u["structure"] and u["_queue"] and u["_qleft"] > 0)
         cap = sum(self.eco[u["type_id"]]["foodMade"] for u in self.units.values() if u["structure"] and u["_state"] != "constructing")
         return used, min(100, cap)
@@ -100,7 +111,65 @@ class LostTempleWorld:
             self.game_time_ms += TURN_MS
             self._tick(TURN_MS / 1000)
 
+    def _combat(self, dt):
+        alive = lambda u: u["unit_id"] in self.units
+        creeps = [c for c in self.units.values() if c["owner"] == NEUTRAL_HOSTILE]
+        ours = [u for u in self.units.values() if u["owner"] == 0 and not u["structure"] and not u["_inside"]]
+        for u in ours:  # timers: summons expire, militia turn back, cooldowns run
+            for a in u["_abilities"]:
+                a["cooldown_remaining"] = max(0.0, a["cooldown_remaining"] - dt)
+            if "_life" in u:
+                u["_life"] -= dt
+                if u["_life"] <= 0:
+                    del self.units[u["unit_id"]]
+                    continue
+            if "_milleft" in u:
+                u["_milleft"] -= dt
+                if u["_milleft"] <= 0:
+                    u["type_id"] = "hpea"
+                    del u["_milleft"]
+            job = u["_job"]
+            if job and job["kind"] == "tohall":
+                if self._walk(u, self.hall["x"], self.hall["y"], self._half("htow") + 24, dt):
+                    u.update(type_id="hmil", _job=None, _milleft=MILITIA_SECONDS)
+                continue
+            if not job or job["kind"] not in ("attack", "attackmove"):
+                continue
+            target = self.units.get(job.get("target")) if job.get("target") else None
+            if job["kind"] == "attackmove" and target is None:
+                near = [c for c in creeps if alive(c) and math.hypot(c["x"] - u["x"], c["y"] - u["y"]) <= AGGRO]
+                if near:
+                    target = min(near, key=lambda c: math.hypot(c["x"] - u["x"], c["y"] - u["y"]))
+                    job["target"] = target["unit_id"]
+                elif self._walk(u, job["x"], job["y"], 0, dt):
+                    u["_job"] = None
+                    continue
+            if target is None:
+                if job["kind"] == "attack":
+                    u["_job"] = None
+                else:
+                    job["target"] = None
+                continue
+            if self._walk(u, target["x"], target["y"], REACH, dt):
+                target["hp"] -= u["_dps"] * dt
+        for c in creeps:  # each creep hits the nearest of our units in reach
+            if not alive(c):
+                continue
+            if c["hp"] <= 0:
+                del self.units[c["unit_id"]]
+                self.events.append({"kind": "death", "unit_id": c["unit_id"], "type_id": c["type_id"], "owner": NEUTRAL_HOSTILE})
+                continue
+            near = [u for u in self.units.values() if u["owner"] == 0 and not u["structure"] and not u["_inside"] and math.hypot(c["x"] - u["x"], c["y"] - u["y"]) <= 400]
+            if near:
+                v = min(near, key=lambda u: math.hypot(c["x"] - u["x"], c["y"] - u["y"]))
+                if self._walk(c, v["x"], v["y"], REACH, dt):
+                    v["hp"] -= c["_dps"] * dt
+                    if v["hp"] <= 0:
+                        del self.units[v["unit_id"]]
+                        self.events.append({"kind": "death", "unit_id": v["unit_id"], "type_id": v["type_id"], "owner": 0})
+
     def _tick(self, dt):
+        self._combat(dt)
         for u in list(self.units.values()):
             job = u["_job"]
             if u["structure"]:
@@ -238,8 +307,12 @@ class LostTempleWorld:
                     order = {"name": "harvest" if job.get("phase") != "back" else "returnresources", "target_id": job["target"], "x": u["x"], "y": u["y"]}
                 elif job["kind"] == "build":
                     order = {"name": "repair", "target_id": job["site"], "x": job["x"], "y": job["y"]} if job.get("site") else {"name": job["type_id"], "target_id": None, "x": job["x"], "y": job["y"]}
+                elif job["kind"] == "attack":
+                    order = {"name": "attack", "target_id": job["target"], "x": u["x"], "y": u["y"]}
+                elif job["kind"] == "attackmove":
+                    order = {"name": "attack", "target_id": job.get("target"), "x": job["x"], "y": job["y"]}
             pub["order"] = order
-            pub["abilities"] = []
+            pub["abilities"] = [dict(a) for a in u["_abilities"]]
             if u["structure"]:
                 pub.update(state=u["_state"], state_seconds=self.eco[u.get("_upgrade") or u["type_id"]]["time"] if u["_state"] else 0.0,
                            queue=list(u["_queue"]), queue_seconds=self.eco[u["_queue"][0]]["time"] if u["_queue"] else 0.0)
@@ -261,7 +334,8 @@ class LostTempleWorld:
                          "team": p, "active": True, "controller": "human" if p == 0 else "computer", "shares_vision": p == player, "shares_control": p == player}
                         for p in (0, 1, 15)],
             "score": {}, "player": {"gold": self.gold, "lumber": self.lumber, "food_used": used, "food_cap": cap},
-            "units": own, "inside": inside, "visible_enemies": mines if player == 0 else [], "items": [], "inventory": [],
+            "units": own, "inside": inside, "items": [], "inventory": [],
+            "visible_enemies": (mines + [{k: v for k, v in c.items() if not k.startswith("_")} for c in self.units.values() if c["owner"] == NEUTRAL_HOSTILE]) if player == 0 else [],
             "events": events, "result": self.result,
         }
 
@@ -279,6 +353,23 @@ class LostTempleWorld:
                 rejected.append({"index": i, "reason": "unknown_unit"})
             elif cmd == "move":
                 u["_job"] = {"kind": "move", "x": float(args["x"]), "y": float(args["y"])}
+            elif cmd == "attack":
+                tid = args.get("target_id")
+                u["_job"] = {"kind": "attack", "target": tid} if tid in self.units else {"kind": "attackmove", "x": float(args["x"]), "y": float(args["y"]), "target": None}
+            elif cmd == "learn":
+                if u["hero"] and not any(a["ability_id"] == args.get("ability_id") for a in u["_abilities"]):
+                    u["_abilities"].append({"ability_id": args["ability_id"], "level": 1, "mana_cost": WATER["mana"], "cooldown_seconds": WATER["cooldown"], "cooldown_remaining": 0.0})
+                    self.events.append({"kind": "hero_learn", "unit_id": u["unit_id"], "ability_id": args["ability_id"]})
+            elif cmd == "cast" and args.get("order") == MILITIA_ORDER and u["type_id"] == "hpea":
+                u["_job"] = {"kind": "tohall"}  # walks to the town hall and changes there (native probe)
+            elif cmd == "cast" and args.get("order") == WATER["order"]:
+                a = next((a for a in u["_abilities"] if a["ability_id"] == WATER["ability"]), None)
+                if a and a["cooldown_remaining"] <= 0 and u["mana"] >= WATER["mana"]:
+                    u["mana"] -= WATER["mana"]
+                    a["cooldown_remaining"] = WATER["cooldown"]
+                    w = self._unit("hwat", u["x"] + 60, u["y"])
+                    w["_life"] = WATER["life"]
+                    self.events.append({"kind": "summon", "unit_id": u["unit_id"], "summoned_id": w["unit_id"], "type_id": "hwat"})
             elif cmd == "stop":
                 u["_job"] = None
             elif cmd in ("harvest", "smart"):

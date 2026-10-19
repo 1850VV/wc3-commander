@@ -176,3 +176,26 @@ test('gather at the natural sends workers to that mine', () => {
   assert.equal(early.units.filter(u => u.task.kind === 'gather' && u.task.mine === early.natural).length, 2);
   assert.ok(Sim.run(W, 0, plan, 120).mineGold.get(early.natural.id) < 12500);
 });
+
+test('militia, clear (estimated) and the expansion after it', () => {
+  const plan = Sim.defaultPlan();
+  const L = Sim.ev('learn', '大法师学水元素', 115, {hero: 'Hamg', ability: 'AHwe', abilityName: '水元素'});
+  const M = Sim.ev('militia', '敲钟', 125, {count: 4, from: 'wood'});
+  const C = Sim.ev('clear', '清近矿', 126, {militia: M.id, est: 30});
+  const X = Sim.ev('build', '建造 分基地', 126, {unit: null, btype: 'htow', near: 'natural', after: C.id, then: 'natural'});
+  plan[3].children.push(L, M, C, X);
+  const mid = Sim.run(W, 0, plan, 145); // they walk to the town hall first, then change
+  assert.equal(L.rt.status, 'done');
+  assert.equal(M.rt.militia.length, 4);
+  assert.equal(mid.units.filter(u => u.type === 'hmil').length, 4);
+  assert.ok(C.rt.aStart > M.rt.aStart, 'the army leaves once the militia have changed');
+  assert.equal(mid.counts().wood + mid.counts().gold + mid.counts().build + mid.counts().idle, mid.workers().length);
+  const g = Sim.run(W, 0, plan, 260);
+  assert.equal(C.rt.status, 'done');
+  assert.match(C.rt.note, /模拟估计/);
+  assert.ok(C.rt.aEnd - C.rt.fightStart >= 29.9);
+  assert.equal(M.rt.status, 'done');
+  assert.equal(g.units.filter(u => u.type === 'hmil').length, 0);
+  assert.ok(X.rt.aStart >= C.rt.aEnd);
+  assert.ok(M.rt.militia.includes(X.rt.builder), 'a militia peasant already at the natural builds the hall');
+});

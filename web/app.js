@@ -38,6 +38,8 @@
   function taskText(u) {
     const t = u.task;
     if (t.kind === 'idle') return '空闲';
+    if (t.kind === 'militia') return t.phase === 'toHall' ? '去城镇大厅敲钟' : '民兵';
+    if (t.kind === 'march') return t.arrived ? '清野中（模拟估计）' : '前往分矿清野';
     if (t.kind === 'build') return {toSite: '前往建造 ', waitRes: '等待资源 · ', building: '正在建造 '}[t.phase] + name(t.ev.btype);
     return RES[t.res] + ' · ' + ({toRes: '前往', queue: '排队进矿', mine: '矿内', chop: '砍树', toDrop: '运回'}[t.phase] || '');
   }
@@ -446,10 +448,16 @@
     }
     if ((r = s.match(/^(?:建造|建|造)\s*分基地\s*(\d+)?/))) { const n = Math.max(0, Math.min(5, +(r[1] || 0))); return addTo(gid, Sim.ev('build', '建造 分基地' + (n ? '（' + n + ' 人协助）' : ''), at, {unit: null, btype: 'htow', near: 'natural', helpers: n || undefined, then: 'natural'})); }
     if ((r = s.match(/^采金\s*(\d+)?\s*分矿/))) { const n = Math.max(1, Math.min(12, +(r[1] || 1))); return addTo(gid, Sim.ev('gather', '采金 × ' + n + ' · 分矿', at, {count: n, res: 'gold', mine: 'natural'})); }
+    if ((r = s.match(/^学\s*水元素/))) return addTo(gid, Sim.ev('learn', '大法师学水元素', at, {hero: 'Hamg', ability: 'AHwe', abilityName: '水元素'}));
+    if ((r = s.match(/^敲钟\s*(\d+)?/))) { const n = Math.max(1, Math.min(8, +(r[1] || 4))); return addTo(gid, Sim.ev('militia', '敲钟 ' + n + ' 个民兵', at, {count: n, from: 'wood'})); }
+    if ((r = s.match(/^清(?:野|近矿)/))) {
+      const mil = allEvents().filter(x => x.kind === 'militia').sort((a, b) => b.start - a.start)[0]; // the latest bell-ringing joins
+      return addTo(gid, Sim.ev('clear', '清近矿', at, {militia: mil ? mil.id : undefined}));
+    }
     if ((r = s.match(/^升级\s*(主城|城堡|防御塔|炮塔)/))) { const to = {主城: 'hkee', 城堡: 'hcas', 防御塔: 'hatw', 炮塔: 'hgtw'}[r[1]]; return addTo(gid, Sim.ev('upgrade', '升级 ' + name(to), at, {to})); }
     if ((r = s.match(/^(采金|伐木)\s*(\d+)?/))) { const res = r[1] === '采金' ? 'gold' : 'wood', n = Math.max(1, Math.min(12, +(r[2] || 1))); return addTo(gid, Sim.ev('gather', r[1] + ' × ' + n, at, {count: n, res})); }
     if ((r = s.match(/^(建造|建|造)\s*(国王祭坛|神秘藏宝室|神秘圣地|农场|兵营|祭坛|伐木场|铁匠铺|车间|狮鹫笼|侦察塔)/))) { const t = BUILD_NAMES[r[2]]; return addTo(gid, Sim.ev('build', '建造 ' + name(t), at, {unit: null, btype: t})); }
-    say('没看懂这条指令。支持：造农民 → 采金/伐木、训练 步兵/火枪手/大法师/牧师/女巫/破法者、采金 N、采金 N 分矿、伐木 N、建造 农场/兵营/伐木场/铁匠铺、建造 分基地 N（N 个农民协助）、升级 主城/防御塔，前面可加 @秒数 定时。', true);
+    say('没看懂这条指令。支持：造农民 → 采金/伐木、训练 步兵/火枪手/大法师/牧师/女巫/破法者、采金 N、采金 N 分矿、伐木 N、建造 农场/兵营/伐木场/铁匠铺、建造 分基地 N（N 个农民协助）、升级 主城/防御塔、学 水元素、敲钟 N、清野，前面可加 @秒数 定时。', true);
     return null;
   }
   const cliIn = $('cliIn');
@@ -533,6 +541,9 @@
   function evSpan(e) {
     const rt = e.rt || {}, s = rt.aStart ?? e.start, t = V().t;
     if (e.kind === 'gather') return [s, T_END];
+    if (e.kind === 'learn') return [s, (rt.aEnd ?? s) + 2];
+    if (e.kind === 'militia') return [s, rt.aEnd ?? Math.max(t, s) + 50];
+    if (e.kind === 'clear') return [s, rt.aEnd ?? (rt.fightStart != null ? rt.fightStart + rt.est : Math.max(t, s) + (e.est || 40) + 30)];
     if (rt.status === 'done') return [s, Math.max(rt.aEnd, s + 1)];
     if (e.kind === 'train' || e.kind === 'upgrade') { const d = ECO[e.to || e.utype || 'hpea'].time; return [s, rt.trainStart != null ? rt.trainStart + d : Math.max(t, s) + d]; }
     const d = ECO[e.btype].time; return [s, rt.bStart != null ? rt.bStart + d : Math.max(t, s) + d + 4];

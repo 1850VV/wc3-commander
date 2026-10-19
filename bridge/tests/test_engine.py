@@ -142,6 +142,79 @@ class ExpansionTest(unittest.TestCase):
         self.assertIsNotNone(c.natural())
 
 
+def clear_plan(plan):
+    """Archmage learns Water Elemental, three wood peasants answer Call to Arms, the army clears the
+    natural, then the expansion goes up there (south start; sites as sim.js resolves them)."""
+    add = plan["groups"][3]["children"].extend
+    add([
+        {"id": "L", "seq": 990, "kind": "learn", "name": "大法师学水元素", "start": 115, "hero": "Hamg", "ability": "AHwe"},
+        {"id": "M", "seq": 991, "kind": "militia", "name": "敲钟", "start": 125, "count": 3, "from": "wood"},
+        {"id": "C", "seq": 992, "kind": "clear", "name": "清近矿", "start": 126, "militia": "M"},
+        {"id": "X", "seq": 993, "kind": "build", "name": "建造 分基地", "start": 126, "unit": None, "btype": "htow", "near": "natural",
+         "site": [-3200, -7424], "after": "C", "then": "natural"},
+    ])
+
+
+TROLLS = [{"type": "nftr", "x": -3500, "y": -7250, "hp": 240, "dps": 6}, {"type": "nfsp", "x": -3560, "y": -7180, "hp": 200, "dps": 4},
+          {"type": "nftr", "x": -3440, "y": -7300, "hp": 240, "dps": 6}]
+
+
+class ClearTest(unittest.TestCase):
+    def test_army_clears_the_natural_and_the_expansion_follows(self):
+        c, rejected = play("default-plan-s0.json", 330, 0, clear_plan, creeps=TROLLS)
+        self.assertEqual(rejected, [])
+        self.assertEqual(c.rt["L"]["status"], "done", c.rt["L"])
+        self.assertEqual(c.rt["C"]["status"], "done", c.rt["C"])
+        self.assertFalse(c.rt["C"].get("failed"), c.rt["C"])
+        self.assertEqual([u for u in c.obs["visible_enemies"] if u.get("owner") == 12], [])
+        self.assertGreaterEqual(c.rt["X"]["aStart"], c.rt["C"]["aEnd"])
+        self.assertIn(c.rt["X"]["status"], ("running", "done"))
+        self.assertTrue(any(a["command"] == "cast" and a["arguments"].get("order") == "waterelemental" for a in c.sent))
+        self.assertTrue(any(a["command"] == "cast" and a["arguments"].get("order") == "militia" for a in c.sent))
+
+    def test_too_strong_a_camp_fails_and_holds_the_expansion(self):
+        brutes = [{"type": "nogr", "x": -3500, "y": -7250, "hp": 9000, "dps": 90}]
+        c, rejected = play("default-plan-s0.json", 300, 0, clear_plan, creeps=brutes)
+        self.assertEqual(c.rt["C"]["status"], "done")
+        self.assertTrue(c.rt["C"].get("failed"), c.rt["C"])
+        self.assertEqual(c.rt["X"]["status"], "pending")
+        self.assertIn("失败", c.rt["X"]["note"])
+
+
+class ClearUnitTest(unittest.TestCase):
+    """combat.Clear on hand-made observations."""
+
+    class Cmd:
+        def __init__(self):
+            self.orders = []
+
+        def order(self, unit_id, command, **arguments):
+            self.orders.append((unit_id, command, arguments))
+
+    def obs(self, units, creeps):
+        return {"units": units, "visible_enemies": creeps, "events": []}
+
+    def unit(self, uid, type_id, x, y, hp=1.0, order=None, hero=False):
+        return {"unit_id": uid, "type_id": type_id, "x": x, "y": y, "hp": 100 * hp, "max_hp": 100, "hero": hero, "mana": 0, "order": order, "abilities": []}
+
+    def test_healer_first_and_hands_off_a_unit_the_player_pulls_back(self):
+        from commander_bridge.combat import Clear
+        cl, cmd = Clear((0, 0), (2000, 0), [1, 2, 3], t=0), self.Cmd()
+        creeps = [{"unit_id": 90, "type_id": "nftr", "owner": 12, "x": 50, "y": 0, "hp": 50, "max_hp": 240},
+                  {"unit_id": 91, "type_id": "nfsp", "owner": 12, "x": 80, "y": 0, "hp": 200, "max_hp": 200}]
+        army = [self.unit(1, "Hamg", 100, 0, hero=True), self.unit(2, "hfoo", 120, 0), self.unit(3, "hmil", 110, 0)]
+        cl.tick(cmd, self.obs(army, creeps), 1.0)
+        self.assertEqual({o[2].get("target_id") for o in cmd.orders if o[1] == "attack"}, {91})  # shadow priest before the weaker troll
+        army[2]["order"] = {"name": "move", "target_id": None, "x": 1500, "y": 0}  # the player pulls the militia back
+        cmd.orders.clear()
+        cl.tick(cmd, self.obs(army, creeps), 3.0)
+        self.assertNotIn(3, [o[0] for o in cmd.orders])
+        army[2].update(hp=20, order=None)  # out of the pause and badly hurt: walks home
+        cmd.orders.clear()
+        cl.tick(cmd, self.obs(army, creeps), 9.0)
+        self.assertIn((3, "move", {"x": 2000, "y": 0}), cmd.orders)
+
+
 class ReservedWorkerTest(unittest.TestCase):
     def test_automatic_builder_skips_a_peasant_a_later_event_names(self):
         def early_farm(plan):  # 0:00 farm with no peasant; the 0:01 barracks calls for peasant 3

@@ -95,6 +95,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .row.child .lab{padding-left:26px;color:#c3c8bc}
 .chip{font-size:10px;padding:1px 5px;border-radius:3px;border:1px solid var(--line);color:var(--muted);flex:none}
 .chip.build{color:var(--team-2);border-color:#2e4f73}.chip.gather{color:var(--gold);border-color:#5c4f22}.chip.train{color:#c9a3e8;border-color:#4b3a5e}
+.chip.upgrade{color:#9fd3c7;border-color:#2f5a52}.chip.learn{color:#c9a3e8;border-color:#4b3a5e}.chip.militia{color:#e0904a;border-color:#6a4422}.chip.clear{color:#d0584a;border-color:#6b2c25}
 .src{margin-left:auto;font-size:10px;color:var(--muted);font-weight:400}
 .track{position:relative;cursor:pointer}
 .ruler{height:24px;font-family:var(--f-mono);font-size:10px;color:var(--muted)}

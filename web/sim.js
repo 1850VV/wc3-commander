@@ -26,7 +26,10 @@
   // Power build: each extra builder adds 0.6x speed and 15% of the price (fits the 1-5 builder
   // table for a town hall: 180/113/82/64/53 s, 385/443/500/558/613 gold), to be checked in the game.
   const ASSIST = {speed: 0.6, cost: 0.15};
-  const KIND = {build: '建造', gather: '采集', train: '生产', upgrade: '升级'};
+  const KIND = {build: '建造', gather: '采集', train: '生产', upgrade: '升级', learn: '技能', militia: '民兵', clear: '清野'};
+  // Militia lasts 45 s (Call to Arms). Clearing is not simulated: once the army reaches the camp the
+  // camp counts as cleared after e.est seconds (default CLEAR_EST), marked as an estimate.
+  const MILITIA_SECONDS = 45, CLEAR_EST = 40;
   const RES = {gold: '采金', wood: '伐木'};
 
   function decodeRows(rows, w, h) {
@@ -492,6 +495,29 @@
         if (!this.queues.has(p.id)) this.queues.set(p.id, {cur: null, q: []});
         this.queues.get(p.id).q.push(e);
         Object.assign(rt, {status: 'waiting', aStart: this.t, note: '排队中 · ' + this.w.eco[p.type].name, producer: p.id});
+      } else if (e.kind === 'learn') {
+        const hero = this.units.find(u => u.type === (e.hero || 'Hamg'));
+        if (!hero) { rt.note = '等' + this.w.eco[e.hero || 'Hamg'].name + '出生'; return; }
+        Object.assign(rt, {status: 'done', aStart: this.t, aEnd: this.t, note: this.w.eco[hero.type].name + '学会 ' + (e.abilityName || e.ability)});
+      } else if (e.kind === 'militia') {
+        // e.count peasants from e.from (default wood) answer Call to Arms for MILITIA_SECONDS
+        const pool = this.workers().filter(u => !u.hidden && u.task.kind === 'gather' && !this.reserved().has(u.id))
+          .sort((a, b) => (a.task.res === (e.from || 'wood') ? 0 : 1) - (b.task.res === (e.from || 'wood') ? 0 : 1) || a.id - b.id);
+        const us = pool.slice(0, e.count || 4);
+        if (!us.length) { rt.note = '没有能敲钟的农民'; return; }
+        // as in the game (native probe 2026-10-19): the peasant walks to the town hall, changes there, and the 45 s start then
+        for (const u of us) { u.task = {kind: 'militia', phase: 'toHall', until: Infinity, prev: u.task, ev: e}; u.path = null; }
+        Object.assign(rt, {status: 'active', aStart: this.t, note: '民兵 ' + us.map(u => u.id).join('、') + '（45 秒）', militia: us.map(u => u.id)});
+      } else if (e.kind === 'clear') {
+        // army: heroes and footmen, plus the militia of e.militia (an event id); target: the natural
+        const mil = e.militia && this.events.find(x => x.id === e.militia);
+        if (mil && mil.rt.status === 'pending') { rt.note = '等「' + mil.name + '」'; return; }
+        if (mil && this.units.some(u => (mil.rt.militia || []).includes(u.id) && u.task.kind === 'militia' && u.task.phase === 'toHall')) { rt.note = '等民兵在城镇大厅变身'; return; }
+        const army = this.units.filter(u => /^[A-Z]/.test(u.type) || u.type === 'hfoo' || (mil && mil.rt.militia && mil.rt.militia.includes(u.id) && u.task.kind === 'militia'));
+        if (!army.some(u => /^[A-Z]/.test(u.type))) { rt.note = '等英雄出生'; return; }
+        const camp = this.natural, ring = this._ring(this.w.rectOf(camp.x, camp.y, camp.tex));
+        for (const u of army) { u.task = {kind: 'march', goals: ring, key: 'camp' + e.id, ev: e, prev: u.task}; u.path = null; }
+        Object.assign(rt, {status: 'running', aStart: this.t, note: '部队前往分矿（' + army.length + ' 个单位）', army: army.map(u => u.id), est: e.est || CLEAR_EST});
       } else if (e.kind === 'upgrade') {
         // e.to: target type; e.from (optional): which kind of building; e.at (optional): which one
         const eco = this.w.eco, can = b => b.done && (eco[b.type].upgrades || []).includes(e.to) && (!e.from || b.type === e.from);
@@ -529,7 +555,7 @@
     step() {
       const due = this.events.filter(e => e.rt.status === 'pending' && e.start <= this.t + 1e-9 && this.ready(e)).sort((a, b) => a.start - b.start || a.seq - b.seq);
       for (const e of due) this.tryStart(e);
-      this._production(); this._units(); this._construction();
+      this._production(); this._units(); this._construction(); this._clearing();
       this.t = Math.round((this.t + DT) * 10) / 10;
     }
     _production() {
@@ -595,6 +621,20 @@
       const tgt = new Map(); for (const u of this.units) if (u.task.tree != null) tgt.set(u.task.tree, (tgt.get(u.task.tree) || 0) + 1);
       for (const u of this.units) {
         const t = u.task;
+        if (t.kind === 'militia') {
+          if (t.phase === 'toHall') {
+            const hall = this.dropFor('gold', u);
+            if (this.walk(u, this._ring(w.rectOf(hall.x, hall.y, hall.tex)), 'hall' + hall.id)) { t.phase = 'armed'; t.until = this.t + MILITIA_SECONDS; u.type = 'hmil'; }
+          } else if (this.t >= t.until - 1e-9) this._unmilitia(u);
+          continue;
+        }
+        if (t.kind === 'idle' && t.resume && this.t - t.since >= 3) { u.task = this.gatherTask(t.resume.res, t.resume.mine); continue; }
+        if (t.kind === 'march') {
+          const mil = t.prev && t.prev.kind === 'militia' ? t.prev : null;
+          if (mil && this.t >= mil.until - 1e-9) { this._unmilitia(u, mil); continue; } // time up: a peasant again, out of the fight
+          if (this.walk(u, t.goals, t.key)) t.arrived = true;
+          continue;
+        }
         if (t.kind === 'gather') {
           if (t.phase === 'toRes') {
             if (u.amt > 0 && u.carry !== t.res) { t.phase = 'toDrop'; continue; }
@@ -661,8 +701,8 @@
     /* e.helpers more peasants join a construction once it has started (power build) */
     _sendHelpers(e, builder) {
       const held = this.reserved();
-      const pool = this.workers().filter(u => u !== builder && u.task.kind === 'gather' && !u.hidden && !held.has(u.id))
-        .sort((a, b) => Math.hypot(a.x - e.site[0], a.y - e.site[1]) - Math.hypot(b.x - e.site[0], b.y - e.site[1]));
+      const pool = this.workers().filter(u => u !== builder && (u.task.kind === 'gather' || u.task.kind === 'idle') && !u.hidden && !held.has(u.id))
+        .sort((a, b) => (a.task.kind === 'idle' ? 0 : 1) - (b.task.kind === 'idle' ? 0 : 1) || Math.hypot(a.x - e.site[0], a.y - e.site[1]) - Math.hypot(b.x - e.site[0], b.y - e.site[1]));
       for (const u of pool.slice(0, e.helpers)) { u.task = {kind: 'build', ev: e, phase: 'toSite', helper: true}; u.path = null; }
     }
     _construction() {
@@ -681,6 +721,37 @@
           Object.assign(e.rt, {status: 'done', aEnd: this.t, note: '完工'});
           const next = this.mineOf(e.then === 'natural' ? 'natural' : 'main');
           for (const u of this.units) if (u.task.kind === 'build' && u.task.ev === e) { u.task = this.gatherTask('gold', next); u.path = null; }
+        }
+      }
+    }
+    /* militia time is up: a peasant again where he stands, free for a builder for a few seconds,
+     * then back to his old job */
+    _unmilitia(u, mil) {
+      const m = mil || u.task;
+      u.type = 'hpea'; u.path = null;
+      u.task = m.prev && m.prev.kind === 'gather' ? {kind: 'idle', resume: m.prev, since: this.t} : {kind: 'idle'};
+      const e = m.ev;
+      if (e && e.rt.status === 'active' && !this.units.some(x => x.type === 'hmil' && (e.rt.militia || []).includes(x.id)))
+        Object.assign(e.rt, {status: 'done', aEnd: this.t, note: '民兵已变回农民'});
+    }
+    /* clear events: the camp counts as cleared e.est seconds after the first unit arrives */
+    _clearing() {
+      for (const e of this.events) {
+        if (e.kind !== 'clear' || e.rt.status !== 'running') continue;
+        const army = this.units.filter(u => u.task.kind === 'march' && u.task.ev === e);
+        if (e.rt.fightStart == null) {
+          if (army.some(u => u.task.arrived)) { e.rt.fightStart = this.t; }
+          else continue;
+        }
+        const left = e.rt.est - (this.t - e.rt.fightStart);
+        e.rt.note = '清野中（模拟估计）' + Math.max(0, Math.ceil(left)) + '秒';
+        if (left <= 1e-6) {
+          Object.assign(e.rt, {status: 'done', aEnd: this.t, note: '清完（模拟估计 ' + e.rt.est + ' 秒，不模拟战斗）'});
+          for (const u of army) {
+            const mil = u.task.prev && u.task.prev.kind === 'militia' ? u.task.prev : null;
+            if (mil && this.t >= mil.until - 1e-9) this._unmilitia(u, mil);
+            else u.task = mil || {kind: 'idle'}; // militia stay until their time is up; heroes and footmen wait there
+          }
         }
       }
     }
