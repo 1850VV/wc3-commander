@@ -329,7 +329,7 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
       }
       let m = -1; // narrowest cell on that path, ignoring the window margin
       for (let k = exit; k >= 0; k = par[k]) { const x = k % S, y = (k - x) / S; if (x > 2 && y > 2 && x < S - 3 && y < S - 3 && (m < 0 || clr[k] < clr[m])) m = k; }
-      return {K, choke: m >= 0 ? m : exit};
+      return {K, choke: m >= 0 ? m : exit, clr};
     }
 
     /* ---------- wall-in check ----------
@@ -340,7 +340,8 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
      * the narrowest point of the best way out, and that point (the choke). Grid cells are 32
      * units; see WALL for how many cells peasants (K >= 2) and heroes (K >= 3) need.
      * opts.sites: planned buildings [{type, x, y}] counted as solid; opts.radius in cells;
-     * opts.gaps: how many gap widths to report in .gaps (widest first). */
+     * opts.gaps: how many gap widths to report in .gaps (widest first); opts.area: also count
+     * .inside, the free cells enclosed with the mining route (null when not enclosed). */
     wallCheck(opts) {
       const o = opts || {}, w = this.w, W = w.W, R = o.radius || WALL.radius, cap = WALL.cap;
       const hc = w.cellAt(this.hall.x, this.hall.y), hx = hc % W, hy = (hc - hx) / W;
@@ -366,6 +367,20 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
         const cx = r.choke % S, cy = (r.choke - cx) / S, h = r.K + 1;
         for (let y = Math.max(0, cy - h); y <= Math.min(S - 1, cy + h); y++) for (let x = Math.max(0, cx - h); x <= Math.min(S - 1, cx + h); x++) blocked[y * S + x] = 1;
       }
+      // room inside the wall: cells a hero-sized unit reaches from the mining route (a gap narrower
+      // than WALL.hero stops the flood); null when that reaches the window edge (not walled)
+      let inside = null;
+      if (o.area) {
+        const clr = this._wayOut(solid, S, starts, cap).clr, seen = new Uint8Array(N), q = starts.filter(k => clr[k] >= WALL.hero);
+        for (const k of q) seen[k] = 1;
+        let open = false;
+        for (let h = 0; h < q.length && !open; h++) {
+          const k = q[h], x = k % S, y = (k - x) / S;
+          if (x === 0 || y === 0 || x === S - 1 || y === S - 1) open = true;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= S || Y >= S) continue; const n = Y * S + X; if (!seen[n] && clr[n] >= WALL.hero) { seen[n] = 1; q.push(n); } }
+        }
+        inside = open ? null : q.length;
+      }
       // workers must still reach the gold mine from the hall
       const mineCells = new Set(this._ring(w.rectOf(this.mine.x, this.mine.y, this.mine.tex)).filter(i => !extra.has(i)));
       const reach = new Uint8Array(N), q2 = starts.filter(k => !solid[k]); let mineOK = false;
@@ -375,7 +390,7 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
         if (mineCells.has(gi(x, y))) { mineOK = true; break; }
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= S || Y >= S) continue; const n = Y * S + X; if (!reach[n] && !solid[n]) { reach[n] = 1; q2.push(n); } }
       }
-      return {K, gaps, choke, mineOK, radius: R, box: [w.ox + x0 * w.C, w.oy + y0 * w.C, w.ox + (x0 + S) * w.C, w.oy + (y0 + S) * w.C],
+      return {K, gaps, choke, mineOK, inside, radius: R, box: [w.ox + x0 * w.C, w.oy + y0 * w.C, w.ox + (x0 + S) * w.C, w.oy + (y0 + S) * w.C],
               verdict: K < WALL.worker ? 'sealed' : K < WALL.hero ? 'walled' : 'open'};
     }
 

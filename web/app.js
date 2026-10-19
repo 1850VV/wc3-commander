@@ -128,13 +128,13 @@
   }
   function wallState() {
     const sites = layoutSites(), key = startIndex + JSON.stringify(sites);
-    if (key !== wallKey) { wallKey = key; wallRes = new Sim.Game(W, {start: startIndex, events: []}).wallCheck({sites}); }
+    if (key !== wallKey) { wallKey = key; wallRes = new Sim.Game(W, {start: startIndex, events: []}).wallCheck({sites, area: true}); }
     return wallRes;
   }
   function wallText(r) {
     if (!r.mineOK) return {cls: 'bad', text: '农民到不了金矿：工地把采金路线堵住了'};
     if (r.verdict === 'sealed') return {cls: 'bad', text: `堵死了：最窄处 ${r.K} 格，农民也过不去`};
-    if (r.verdict === 'walled') return {cls: 'ok', text: `已封家：最窄处 ${r.K} 格，农民和步兵能过，英雄过不去`};
+    if (r.verdict === 'walled') return {cls: 'ok', text: `已封家：最窄处 ${r.K} 格，农民和步兵能过，英雄过不去` + (r.inside ? `；墙内空地 ${r.inside} 格（约 ${Math.floor(r.inside / 16)} 个农场大小）` : '')};
     return {cls: '', text: `未封家：最窄处 ${r.K >= Sim.WALL.cap ? r.K + '+' : r.K} 格，英雄能进来（需要 ${Sim.WALL.hero} 格）`};
   }
   function autoWall() {
@@ -543,6 +543,19 @@
       live.backend = h.backend;
       const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.textContent = '连接 ' + (h.backend === 'fake' ? '假游戏服务器' : '魔兽争霸三');
       b.onclick = () => (live.on ? this.disconnect(b) : this.connect(b)); $('modeTag').after(b);
+      const sv = document.createElement('button'); sv.className = 'btn'; sv.type = 'button'; sv.textContent = '保存布局';
+      sv.title = '把整套编排（包括拖好的工地）存到服务端的 strategies 目录'; sv.onclick = () => this.save(); b.after(sv);
+    },
+    async save() {
+      const d = new Date(), pad = n => String(n).padStart(2, '0');
+      const nm = prompt('给这套编排起个名字（会存成 strategies/名字.json）', `布局 ${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`);
+      if (!nm) return;
+      if (!live.on) G = Sim.run(W, startIndex, groups, G.t); // make sure every site is resolved
+      try {
+        const r = await fetch('/api/strategies/' + encodeURIComponent(nm.trim()), {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify(this.serialize())});
+        const j = await r.json();
+        say(j.ok ? `已保存「${j.name}」：${j.events} 个事件` : '没保存成功：' + j.error, !j.ok);
+      } catch (_) { say('没保存成功：连不上本地服务', true); }
     },
     connect(btn) {
       this.pushPlan();

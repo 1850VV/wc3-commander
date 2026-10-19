@@ -4,6 +4,9 @@
   POST /api/plan      the console's timeline (groups of events)
   POST /api/control   {"action": "start", "start": 0} or {"action": "stop"}
   GET  /api/stream    server-sent events: {"type": "state"} snapshots and {"type": "log"} lines
+  GET  /api/strategies          saved strategies (name, time, start, event count)
+  GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
+  PUT  /api/strategies/<name>   save the console plan in the body under that name
 
 Binds to 127.0.0.1 unless --host says otherwise. There is no login: anyone who can reach the port
 can start the game, so only open it to a trusted home network. Uses the standard library; wc3env
@@ -19,7 +22,9 @@ import traceback
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
+from . import strategies
 from .data import load_data
 from .engine import Commander
 
@@ -168,7 +173,27 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True, "backend": self.runner.backend, "running": self.runner.running})
         if self.path == "/api/stream":
             return self._stream()
+        if self.path == "/api/strategies":
+            return self._json(200, {"ok": True, "strategies": strategies.list_all()})
+        if self.path.startswith("/api/strategies/"):
+            try:
+                return self._json(200, {"ok": True, **strategies.load(unquote(self.path[len("/api/strategies/"):]))})
+            except FileNotFoundError:
+                return self._json(404, {"ok": False, "error": "没有这个策略"})
+            except ValueError as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
         return super().do_GET()
+
+    def do_PUT(self):
+        if not self.path.startswith("/api/strategies/"):
+            return self._json(404, {"ok": False})
+        try:
+            saved = strategies.save(unquote(self.path[len("/api/strategies/"):]), self._body())
+        except json.JSONDecodeError:
+            return self._json(400, {"ok": False, "error": "请求不是有效的 JSON"})
+        except ValueError as exc:
+            return self._json(400, {"ok": False, "error": str(exc)})
+        return self._json(200, {"ok": True, **saved})
 
     def do_POST(self):
         try:
