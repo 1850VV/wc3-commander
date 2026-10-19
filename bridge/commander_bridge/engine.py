@@ -141,15 +141,27 @@ class Commander:
     def workers(self):
         return [u for u in self.units() if u["type_id"] == "hpea"]
 
+    def reserved(self) -> set[int]:
+        """Unit ids named by events that have not started: automatic picks leave them alone (a 0:00
+        farm must not take peasant 3 just before the 0:01 barracks event calls for him)."""
+        cids = set()
+        for e in self.events:
+            if self.rt[e["id"]]["status"] == "pending":
+                cids.update([e["unit"]] if e.get("unit") else [])
+                cids.update(e.get("units") or [])
+        return {self.uid[c] for c in cids if c in self.uid}
+
     def pick_workers(self, n, res):
         def score(u):
             role = self.roles.get(u["unit_id"])
             return 0 if role is None else 1 if role in ("gold", "wood") and role != res else 9
-        pool = [u for u in self.workers() if score(u) < 9 and u["unit_id"] not in self.ordered]
+        held = self.reserved()
+        pool = [u for u in self.workers() if score(u) < 9 and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
         return sorted(pool, key=lambda u: (score(u), self.cid[u["unit_id"]]))[:n]
 
     def pick_builder(self, site):
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) != "build" and u["unit_id"] not in self.ordered]
+        held = self.reserved()
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) != "build" and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
         point = {"x": site[0], "y": site[1]}
         return min(pool, key=lambda u: (self.roles.get(u["unit_id"]) is not None, self.roles.get(u["unit_id"]) != "gold", dist(u, point)), default=None)
 

@@ -105,6 +105,17 @@ class EditTest(unittest.TestCase):
         self.assertEqual(by_name(c, "建造 农场 · 农民2")[0]["status"], "done")
 
 
+class ReservedWorkerTest(unittest.TestCase):
+    def test_automatic_builder_skips_a_peasant_a_later_event_names(self):
+        def early_farm(plan):  # 0:00 farm with no peasant; the 0:01 barracks calls for peasant 3
+            plan["groups"][3]["children"].append({"id": "x1", "seq": 999, "kind": "build", "name": "建造 农场", "start": 0, "unit": None, "btype": "hhou", "site": [1600, -6784]})
+        c, rejected = play("default-plan-s0.json", 120, 0, early_farm)
+        self.assertEqual(rejected, [])
+        self.assertEqual(c.rt["x1"]["status"], "done", c.rt["x1"])
+        self.assertNotEqual(c.rt["x1"]["builder"], 3)
+        self.assertEqual(c.rt["e3"]["builder"], 3)
+
+
 class PlacementTest(unittest.TestCase):
     """2026-10-19 real run: Warcraft moved the second farm 724 units from the planned site, the
     engine never claimed it and kept re-ordering, building four farms for one event."""

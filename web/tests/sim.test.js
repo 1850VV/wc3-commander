@@ -108,3 +108,12 @@ test('auto wall leaves started buildings alone', () => {
   const r = Sim.autoWall(W, 0, plan, {skip: new Set([altar.id])});
   assert.ok(!r.placed.some(p => p.e === altar));
 });
+
+test('an automatic builder does not take a peasant a later event names', () => {
+  const plan = Sim.defaultPlan();
+  plan[3].children.push(Sim.ev('build', '建造 农场', 0, {unit: null, btype: 'hhou'})); // 0:00, before the 0:01 barracks with peasant 3
+  const g = Sim.run(W, 0, plan, 150), farm = plan[3].children[0];
+  assert.equal(farm.rt.status, 'done', farm.rt.note);
+  assert.notEqual(farm.rt.builder, 3);
+  assert.equal(byName(g, '建造 兵营').rt.builder, 3);
+});

@@ -1,0 +1,209 @@
+{
+ "name": "南出生点",
+ "saved": "2026-10-19T16:38:22",
+ "plan": {
+  "start": 0,
+  "groups": [
+   {
+    "id": "g_open",
+    "name": "人族标准开局",
+    "src": "预设",
+    "children": [
+     {
+      "id": "e1",
+      "seq": 1,
+      "kind": "build",
+      "name": "建造 国王祭坛 · 农民1",
+      "start": 0,
+      "unit": 1,
+      "btype": "halt",
+      "site": [
+       736,
+       -7008
+      ],
+      "at": [
+       736,
+       -7008
+      ]
+     },
+     {
+      "id": "e2",
+      "seq": 2,
+      "kind": "build",
+      "name": "建造 农场 · 农民2",
+      "start": 0,
+      "unit": 2,
+      "btype": "hhou",
+      "site": [
+       1408,
+       -6528
+      ],
+      "at": [
+       1408,
+       -6528
+      ]
+     },
+     {
+      "id": "e3",
+      "seq": 3,
+      "kind": "build",
+      "name": "建造 兵营 · 农民3",
+      "start": 1,
+      "unit": 3,
+      "btype": "hbar",
+      "site": [
+       1536,
+       -6272
+      ],
+      "at": [
+       1536,
+       -6272
+      ]
+     },
+     {
+      "id": "e4",
+      "seq": 4,
+      "kind": "gather",
+      "name": "采金 · 农民4、5",
+      "start": 0,
+      "units": [
+       4,
+       5
+      ],
+      "res": "gold"
+     },
+     {
+      "id": "e5",
+      "seq": 5,
+      "kind": "train",
+      "name": "训练农民 → 采金",
+      "start": 0,
+      "utype": "hpea",
+      "then": "gold"
+     }
+    ]
+   },
+   {
+    "id": "g_eco",
+    "name": "经济运营",
+    "src": "预设",
+    "children": [
+     {
+      "id": "e6",
+      "seq": 6,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 15,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "e7",
+      "seq": 7,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 30,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "e8",
+      "seq": 8,
+      "kind": "train",
+      "name": "训练农民 → 采金",
+      "start": 45,
+      "utype": "hpea",
+      "then": "gold"
+     },
+     {
+      "id": "e9",
+      "seq": 9,
+      "kind": "build",
+      "name": "建造 农场",
+      "start": 50,
+      "unit": null,
+      "btype": "hhou",
+      "site": [
+       960,
+       -6976
+      ],
+      "at": [
+       960,
+       -6976
+      ]
+     },
+     {
+      "id": "e10",
+      "seq": 10,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 60,
+      "utype": "hpea",
+      "then": "wood"
+     }
+    ]
+   },
+   {
+    "id": "g_army",
+    "name": "首发英雄与兵力",
+    "src": "预设",
+    "children": [
+     {
+      "id": "e11",
+      "seq": 11,
+      "kind": "train",
+      "name": "训练 大法师",
+      "start": 62,
+      "utype": "Hamg"
+     },
+     {
+      "id": "e12",
+      "seq": 12,
+      "kind": "train",
+      "name": "训练 步兵",
+      "start": 75,
+      "utype": "hfoo"
+     },
+     {
+      "id": "e13",
+      "seq": 13,
+      "kind": "train",
+      "name": "训练 步兵",
+      "start": 95,
+      "utype": "hfoo"
+     }
+    ]
+   },
+   {
+    "id": "g_user",
+    "name": "我的指令",
+    "src": "手动",
+    "children": [
+     {
+      "id": "e14",
+      "seq": 14,
+      "kind": "build",
+      "name": "建造 农场",
+      "start": 0,
+      "unit": null,
+      "btype": "hhou",
+      "site": [
+       1792,
+       -6336
+      ],
+      "at": [
+       1792,
+       -6336
+      ]
+     }
+    ]
+   },
+   {
+    "id": "g_ai",
+    "name": "AI 指令",
+    "src": "AI",
+    "children": []
+   }
+  ]
+ }
+}

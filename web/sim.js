@@ -428,12 +428,19 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
     }
     unit(id) { return this.units.find(u => u.id === id); }
     workers() { return this.units.filter(u => u.type === 'hpea'); }
+    /* peasants named by events that have not started yet: automatic picks leave them alone, or a
+     * 0:00 farm would take peasant 3 just before the 0:01 barracks event calls for him */
+    reserved() {
+      const ids = new Set();
+      for (const e of this.events) if (e.rt.status === 'pending') { if (e.unit) ids.add(e.unit); for (const id of e.units || []) ids.add(id); }
+      return ids;
+    }
     pickWorkers(n, res) {
-      const sc = u => u.task.kind === 'idle' ? 0 : u.task.kind === 'gather' && u.task.res !== res ? 1 : 9;
-      return this.workers().filter(u => u.task.kind !== 'build' && sc(u) < 9).sort((a, b) => sc(a) - sc(b) || a.id - b.id).slice(0, n);
+      const sc = u => u.task.kind === 'idle' ? 0 : u.task.kind === 'gather' && u.task.res !== res ? 1 : 9, held = this.reserved();
+      return this.workers().filter(u => u.task.kind !== 'build' && sc(u) < 9 && !held.has(u.id)).sort((a, b) => sc(a) - sc(b) || a.id - b.id).slice(0, n);
     }
     pickBuilder(site) {
-      const pool = this.workers().filter(u => u.task.kind !== 'build' && !u.hidden);
+      const held = this.reserved(), pool = this.workers().filter(u => u.task.kind !== 'build' && !u.hidden && !held.has(u.id));
       pool.sort((a, b) => (a.task.kind === 'idle' ? 0 : 1) - (b.task.kind === 'idle' ? 0 : 1) || (a.task.res === 'gold' ? 0 : 1) - (b.task.res === 'gold' ? 0 : 1) || a.amt - b.amt ||
         (site ? Math.hypot(a.x - site[0], a.y - site[1]) - Math.hypot(b.x - site[0], b.y - site[1]) : 0) || a.id - b.id);
       return pool[0] || null;
@@ -637,6 +644,8 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
   /* ---------------- plan helpers ---------------- */
   let seq = 0;
   function ev(kind, name, start, params) { return Object.assign({id: 'e' + (++seq), seq, kind, name, start, rt: null}, params); }
+  /* after loading a saved plan: new events must not reuse its ids (e14 ...) */
+  function syncSeq(events) { for (const e of events) seq = Math.max(seq, e.seq || 0, +(String(e.id).match(/^e(\d+)$/) || [0, 0])[1]); }
   function defaultPlan() {
     return [
       {id: 'g_open', name: '人族标准开局', src: '预设', open: true, children: [
@@ -721,7 +730,7 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
     return game;
   }
 
-  const api = {World, Game, run, autoWall, WALL, cellsFor, ev, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
+  const api = {World, Game, run, autoWall, WALL, cellsFor, ev, syncSeq, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CommanderSim = api;
 })(typeof globalThis === 'undefined' ? window : globalThis);

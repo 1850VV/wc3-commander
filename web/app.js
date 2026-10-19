@@ -545,6 +545,28 @@
       b.onclick = () => (live.on ? this.disconnect(b) : this.connect(b)); $('modeTag').after(b);
       const sv = document.createElement('button'); sv.className = 'btn'; sv.type = 'button'; sv.textContent = '保存布局';
       sv.title = '把整套编排（包括拖好的工地）存到服务端的 strategies 目录'; sv.onclick = () => this.save(); b.after(sv);
+      const ld = document.createElement('select'); ld.className = 'btn'; ld.title = '载入保存过的编排（会替换当前整套编排）';
+      ld.innerHTML = '<option value="">载入布局…</option>';
+      ld.onfocus = ld.onpointerdown = () => this.list(ld); ld.onchange = () => { const nm = ld.value; ld.value = ''; if (nm) this.load(nm); }; sv.after(ld);
+    },
+    async list(ld) {
+      try {
+        const j = await (await fetch('/api/strategies')).json();
+        const keep = ld.options[0]; ld.innerHTML = ''; ld.appendChild(keep);
+        for (const s of j.strategies || []) { const o = document.createElement('option'); o.value = s.name; o.textContent = `${s.name}（${s.start != null ? W.starts[s.start].name : '?'}，${s.events} 个事件）`; ld.appendChild(o); }
+      } catch (_) { /* keep the old list */ }
+    },
+    async load(nm) {
+      if (live.on) { say('游戏连接中不能载入，先点「断开」', true); return; }
+      try {
+        const j = await (await fetch('/api/strategies/' + encodeURIComponent(nm))).json();
+        if (!j.ok) { say('载入失败：' + j.error, true); return; }
+        groups = j.plan.groups.map(g => ({...g, open: true, children: g.children.map(e => ({...e, rt: null}))}));
+        Sim.syncSeq(allEvents());
+        if (j.plan.start != null) { startIndex = j.plan.start; startSel.value = String(startIndex); }
+        sel = null; resim(0); buildTimeline(); renderCmd(); home(); playing = false; bPlay.textContent = '▶ 播放';
+        say(`已载入「${j.name}」（${W.starts[startIndex].name}出生点，${allEvents().length} 个事件），保存于 ${j.saved}`);
+      } catch (_) { say('载入失败：连不上本地服务', true); }
     },
     async save() {
       const d = new Date(), pad = n => String(n).padStart(2, '0');
