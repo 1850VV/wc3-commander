@@ -430,8 +430,8 @@
 
   /* ---------- live bridge (only when served by bridge/commander_bridge) ---------- */
   const Live = {
-    async probe() {
-      if (!/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return;
+    async probe() { // any host: the bridge may be opened over the LAN (--host / bridge.ps1 -Lan)
+      if (location.protocol === 'file:') return;
       try { const r = await fetch('/api/health'); if (!r.ok) return; const h = await r.json(); if (h.ok) this.offer(h); } catch (_) { /* offline page */ }
     },
     offer(h) {
