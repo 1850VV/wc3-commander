@@ -49,7 +49,8 @@ case "${1:-status}" in
     for _ in $(seq 1 30); do
       if remote "try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:$PORT/api/health -TimeoutSec 2).Content } catch { exit 1 }" >/dev/null 2>&1; then
         bridge status
-        lan=$(lan_url)
+        lan=""
+        for _ in 1 2 3 4 5; do lan=$(lan_url); [ -n "$lan" ] && break; sleep 1; done  # LAN can lag localhost by a moment
         if [ -n "$lan" ]; then echo "直接打开：$lan（局域网，不用转发）"; else tunnel; fi
         exit 0
       fi
