@@ -79,6 +79,8 @@ WC3ENV_SRC=../wc3env-127a/src python -m unittest discover -s bridge/tests -t bri
 | `bridge/commander_bridge/testworld.py` | 给 wc3env FakeServer 用的失落神庙经济世界 |
 | `tools/build_data.py` | 从 warcraft-commander 提取的数据重新生成 `lost-temple.js` |
 | `tools/export_plan.js` | 导出带工地位置的默认计划（测试夹具） |
+| `tools/windows/bridge.ps1` | Windows 上启动 / 停止 / 查看指挥官服务；`install` 注册计划任务，供远程启动 |
+| `tools/pc.sh` | 在 Mac / Linux 上通过 SSH 远程操作游戏电脑上的服务，并转发控制台端口 |
 
 ## 数据来源与假设
 
