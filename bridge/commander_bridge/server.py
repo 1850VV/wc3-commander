@@ -226,7 +226,7 @@ class Runner:
         info = game.rpc.info()
         resumed = game.rpc.status != "launched"
         obs = game.take_over()
-        map_name = info.get("map") or "?"
+        map_name = info.get("map") or ""
         self.running = True
         self._choose_plan(obs, map_name, resumed)
         while not self.stop_flag.is_set():
@@ -249,10 +249,12 @@ class Runner:
 
     def _choose_plan(self, obs: dict, map_name: str, resumed: bool) -> None:
         """Lost Temple: the fast-expand strategy for our start, tactic on. Anything else: watch only."""
-        base = PureWindowsPath(map_name).name
+        base = PureWindowsPath(map_name).name if map_name else "地图名未知"
         start, off = attach.start_of(obs, self.data["starts"])
         why = None
-        if not attach.is_lost_temple(map_name):
+        # The map name is unknown when the hook was loaded into a game already running (inject_running.py):
+        # then a town hall sitting on a Lost Temple start location is the evidence.
+        if map_name and not attach.is_lost_temple(map_name):
             why = f"地图「{base}」名字里没有 Lost Temple"
         elif start is None:
             why = "没找到你的人族城镇大厅（这套战术只支持人族）"

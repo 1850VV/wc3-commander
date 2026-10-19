@@ -46,6 +46,14 @@ class ChoosePlanTest(unittest.TestCase):
             builds = [e for g in self.r.plan["groups"] for e in g["children"] if e["kind"] == "build"]
             self.assertTrue(builds and all(e.get("site") for e in builds))  # no console resolves them here
 
+    def test_unknown_map_name_goes_by_the_start_location(self):
+        s = self.starts[2]
+        self.r._choose_plan(hall_at(s["x"], s["y"]), "", False)
+        self.assertTrue(self.r.tactic)
+        self.assertEqual(self.r.plan["start"], 2)
+        self.r._choose_plan(hall_at(s["x"] + 3000, s["y"]), "", False)
+        self.assertFalse(self.r.tactic)
+
     def test_other_map_or_race_only_watches(self):
         s = self.starts[0]
         for obs, map_name in ((hall_at(s["x"], s["y"]), r"Maps\(2)EchoIsles.w3x"),
