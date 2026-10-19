@@ -7,6 +7,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -62,6 +63,44 @@ class ChoosePlanTest(unittest.TestCase):
             self.r._choose_plan(obs, map_name, False)
             self.assertFalse(self.r.tactic or self.r.commander.enabled, map_name)
             self.assertEqual(self.logs[-1][0], "error")
+
+
+class FindGameTest(unittest.TestCase):
+    """Any War3 gets the hook (after a grace period); refusals are explained once, not repeated."""
+
+    def setUp(self):
+        self.r = Runner("wc3env", 1.0, "none")
+        self.logs = []
+        self.r.log = lambda text, level="info": self.logs.append((level, text))
+        self.saved = {k: getattr(attach, k) for k in ("war3_pids", "hooked_pids", "inject", "connect")}
+        self.injected = []
+        attach.war3_pids = lambda: [7]
+        attach.hooked_pids = lambda: set()
+        attach.inject = lambda pid: self.injected.append(pid) or True
+
+    def tearDown(self):
+        for k, v in self.saved.items():
+            setattr(attach, k, v)
+
+    def test_plain_war3_gets_the_hook_after_a_grace_period(self):
+        seen, told = {}, set()
+        self.assertIsNone(self.r._find_game(seen, told))
+        self.assertEqual(self.injected, [])  # maybe the shortcut's launch: give it time
+        seen[7] -= 10
+        self.r._find_game(seen, told)
+        self.assertEqual(self.injected, [7])
+        attach.hooked_pids = lambda: {7}
+        attach.connect = lambda pid: "rpc"
+        self.assertEqual(self.r._find_game(seen, told).pid, 7)
+
+    def test_administrator_game_is_explained_once(self):
+        def deny(pid):
+            raise PermissionError(5, "access denied")
+        attach.inject = deny
+        seen, told = {7: time.monotonic() - 10}, set()
+        for _ in range(3):
+            self.r._find_game(seen, told)
+        self.assertEqual(len([t for _, t in self.logs if "管理员" in t]), 1)
 
 
 if __name__ == "__main__":

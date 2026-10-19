@@ -92,6 +92,7 @@ class Runner:
         # backend always launches.
         self.launch = launch
         self.waiting = False
+        self.attached: int | None = None  # War3 pid whose current game the commander is playing
         self.data = load_data()
         self.lock = threading.Lock()
         self.commander = Commander(self.data)
@@ -127,11 +128,12 @@ class Runner:
     def start(self, start: int) -> None:
         self.stop()
         self.stop_flag.clear()
-        with self.lock:
-            self.commander = Commander(self.data)
-            self.commander.set_plan(self.plan)
-            self.commander.enabled = self.tactic = True  # every new game starts with the tactic on
         attached = self.backend == "wc3env" and not self.launch
+        if not (attached and self.attached):  # reconnecting to the game we were playing keeps its progress
+            with self.lock:
+                self.commander = Commander(self.data)
+                self.commander.set_plan(self.plan)
+                self.commander.enabled = self.tactic = True  # every new game starts with the tactic on
         self.thread = threading.Thread(target=self._attach if attached else self._run, args=() if attached else (start,), daemon=True)
         self.thread.start()
 
@@ -179,56 +181,86 @@ class Runner:
 
     # ---- a game the player started (attach.py) ---------------------------------------------------
     def _attach(self) -> None:
+        """Wait, as long as it takes, for any Warcraft, then for a game in it; survive pauses and drops."""
         self.waiting = True
-        self.log("正在等待魔兽争霸三：用桌面上的「魔兽争霸三（指挥官）」打开游戏，自己选失落神庙地图开始，开局后会自动接管")
-        warned: set[int] = set()
+        self.log("正在等待魔兽争霸三：打开游戏后会自动接入，开局后自动接管；中途切屏、暂停都没关系")
+        seen: dict[int, float] = {}  # War3 pid -> when first seen without a hook
+        told: set[int] = set()  # pids whose problem was already explained once
         try:
             while not self.stop_flag.is_set():
-                game = self._find_game(warned)
+                game = self._find_game(seen, told)
                 if game is None:
                     self.stop_flag.wait(2)
                     continue
                 try:
                     self._play_attached(game)
-                except Exception as exc:  # the player closed Warcraft, or the pipe broke: wait for the next one
+                except TimeoutError:
+                    self.log("魔兽暂时没有回应（可能在加载或切屏了），稍后自动接上")
+                except Exception as exc:  # Warcraft closed or the pipe broke: wait for it again
                     traceback.print_exc()
-                    self.log(f"与魔兽的连接断了（{exc}），继续等待", "error")
+                    gone = game.pid not in attach.war3_pids()
+                    self.log("魔兽已关闭，继续等待" if gone else f"和魔兽的连接中断了（{exc}），稍后自动接上")
+                    if gone:
+                        self.attached = None
                 finally:
                     self.running = False
                     game.close()
+                self.stop_flag.wait(1)
         finally:
             self.waiting = False
 
-    def _find_game(self, warned: set[int]):
+    def _find_game(self, seen: dict[int, float], told: set[int]):
         hooked = attach.hooked_pids()
         for pid in attach.war3_pids():
             if pid in hooked:
                 try:
-                    rpc = attach.connect(pid)
+                    return attach.AttachedGame(attach.connect(pid), pid)
                 except (OSError, TimeoutError):
-                    continue  # busy: another client holds it
-                self.log(f"找到指挥官版魔兽（进程 {pid}），等你进入游戏…")
-                return attach.AttachedGame(rpc, pid)
-            if pid not in warned:
-                warned.add(pid)
-                self.log(f"发现一个不是用「魔兽争霸三（指挥官）」打开的魔兽（进程 {pid}），指挥官读不到它。请关掉它，"
-                         "双击桌面上的「魔兽争霸三（指挥官）」重新打开（不是「魔兽指挥官（新版原型）」，也不是游戏目录里的 War3.exe）", "error")
+                    continue  # still starting, or another client holds it
+            # Without a hook: give it one. Not straight away: the shortcut's own launch needs a moment
+            # to create its pipe (a second hook would refuse to load anyway).
+            first = seen.setdefault(pid, time.monotonic())
+            if pid in told or time.monotonic() - first < 5:
+                continue
+            try:
+                if attach.inject(pid):
+                    self.log(f"发现魔兽（进程 {pid}），已装上指挥官组件")
+                else:
+                    told.add(pid)
+                    self.log(f"魔兽（进程 {pid}）没能装上指挥官组件", "error")
+            except PermissionError:
+                told.add(pid)
+                self.log(f"魔兽（进程 {pid}）是以管理员权限运行的，指挥官服务没有权限接入它。"
+                         "关掉它后用桌面上的「魔兽争霸三（指挥官）」打开，或者让指挥官服务也以管理员权限运行", "error")
+            except Exception as exc:
+                told.add(pid)
+                traceback.print_exc()
+                self.log(f"给魔兽（进程 {pid}）装组件出错：{exc}", "error")
         return None
 
     def _play_attached(self, game: attach.AttachedGame) -> None:
+        note = None
         while not self.stop_flag.is_set():  # the hook freezes a new game at 0:01 until we take it
             info = game.rpc.info()
-            if game.rpc.status != "launched" or info.get("held"):
+            status = game.rpc.status
+            if status == "in_game" or (status == "launched" and info.get("held")):
                 break
+            text = "已接入魔兽，等你开始一局游戏…" if status == "launched" else "这局已经结束，等你开下一局…"
+            if text != note:
+                self.log(text)
+                note = text
             self.stop_flag.wait(1)
         if self.stop_flag.is_set():
             return
         info = game.rpc.info()
-        resumed = game.rpc.status != "launched"
+        resumed = game.rpc.status == "in_game"
         obs = game.take_over()
-        map_name = info.get("map") or ""
         self.running = True
-        self._choose_plan(obs, map_name, resumed)
+        if resumed and self.attached == game.pid:  # same game after a drop: keep the plan's progress
+            self.log("重新接上了，继续执行")
+        else:
+            self._choose_plan(obs, info.get("map") or "", resumed)
+            self.attached = game.pid
         while not self.stop_flag.is_set():
             tick_start = time.perf_counter()
             with self.lock:
@@ -243,8 +275,9 @@ class Runner:
                 with self.lock:
                     self.commander.tick(obs)
                     self.state = self.commander.snapshot()
-                self.log("本局结束。下一局请先关掉魔兽，再用「魔兽争霸三（指挥官）」重新打开")
-                break
+                self.attached = None
+                self.log("本局结束，等你开下一局")
+                return
             time.sleep(max(0.0, 0.25 - (time.perf_counter() - tick_start)))
 
     def _choose_plan(self, obs: dict, map_name: str, resumed: bool) -> None:

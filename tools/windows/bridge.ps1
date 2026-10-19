@@ -115,19 +115,8 @@ switch ($Action) {
         $s.Description = "用指挥官组件打开魔兽争霸三（到主菜单，自己选图开局）"
         $s.Save()
         Write-Output "已在桌面创建：$lnk"
-        # Experimental: load the hook into a Warcraft already running (tools\windows\inject_running.py).
-        # A game started by Warcraft's launcher runs as administrator, so this shortcut asks Windows for
-        # administrator rights (the run-as-administrator flag, byte 0x15 bit 0x20 of the .lnk): you approve it.
-        $lnk2 = Join-Path ([Environment]::GetFolderPath("Desktop")) "接管正在运行的魔兽（实验）.lnk"
-        $s2 = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk2)
-        $s2.TargetPath = $s.TargetPath
-        $s2.Arguments = "`"$(Join-Path $PSScriptRoot 'inject_running.py')`""
-        $s2.WorkingDirectory = $Repo
-        $s2.IconLocation = $s.IconLocation
-        $s2.Description = "实验：把指挥官组件装进已经打开的魔兽（会请求管理员权限，游戏可能崩溃）"
-        $s2.Save()
-        $bytes = [IO.File]::ReadAllBytes($lnk2); $bytes[0x15] = $bytes[0x15] -bor 0x20; [IO.File]::WriteAllBytes($lnk2, $bytes)
-        Write-Output "已在桌面创建：$lnk2"
+        # The bridge now loads the hook into any Warcraft itself; drop the old experimental shortcut.
+        Remove-Item (Join-Path ([Environment]::GetFolderPath("Desktop")) "接管正在运行的魔兽（实验）.lnk") -ErrorAction SilentlyContinue
     }
     "uninstall" {
         $ErrorActionPreference = "Stop"

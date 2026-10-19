@@ -1,24 +1,30 @@
 """Take over a Warcraft III game the player started by hand (Windows only).
 
-The player opens Warcraft with the desktop shortcut 「魔兽争霸三（指挥官）」 (tools/windows/war3_commander.py),
-which starts it with wc3hook.dll loaded and no map: the player picks a map in Warcraft's own menus.
-That hook (wc3env-127a branch claude/attach-menu-game) freezes the new game at 0:01 and waits; here we
-find the process, connect to its pipe, and release the game in realtime with `create_game(map="*",
-players="loaded")`. A Warcraft opened any other way has no hook and cannot be read.
+Any War3.exe works. One opened with the desktop shortcut 「魔兽争霸三（指挥官）」 (tools/windows/war3_commander.py)
+already has wc3hook.dll; any other gets it injected here (`inject`), at the menu or mid-game. The hook
+(wc3env-127a branch claude/attach-menu-game) freezes each new game at 0:01, or a running one at its next
+frame, until we connect to its pipe and release it in realtime with `create_game(map="*",
+players="loaded")`. A Warcraft running as administrator can only be injected by an elevated bridge.
 """
 from __future__ import annotations
 
 import csv
+import ctypes
 import io
 import math
 import os
 import re
+import shutil
 import subprocess
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 HALLS = {"htow", "hkee", "hcas"}
 START_MATCH = 600  # a start location farther than this from our town hall means another map
 PIPE_DIR = "\\\\.\\pipe\\"
+HOOK = Path(os.environ.get("WC3_COMMANDER_HOOK", str(
+    Path.home() / "Documents" / "ChatGPT" / "wc3env-127a-attach" / "src" / "wc3env" / "native" / "wc3hook.dll"
+)))
+CACHE = Path(__file__).resolve().parents[1] / "hook-cache"  # one copy per injected game: a loaded DLL stays locked
 
 
 def is_lost_temple(map_path: str) -> bool:
@@ -38,6 +44,43 @@ def hooked_pids() -> set[int]:
     except OSError:
         return set()
     return {int(n[len("wc3hook-"):]) for n in names if n.startswith("wc3hook-") and n[len("wc3hook-"):].isdigit()}
+
+
+def inject(pid: int) -> bool:
+    """Load the hook into a running War3.exe. False if it already has one (the hook refuses a second
+    copy). PermissionError when Windows refuses access (the game runs as administrator)."""
+    from wc3env.inject import MEM_COMMIT_RESERVE, PAGE_READWRITE, _export_rva, k32, kernel32_32_base
+
+    if not HOOK.is_file():
+        raise FileNotFoundError(f"找不到指挥官版的 wc3hook.dll：{HOOK}")
+    CACHE.mkdir(exist_ok=True)
+    dll = CACHE / f"wc3hook-{pid}.dll"
+    if not dll.is_file():
+        shutil.copy2(HOOK, dll)
+    load = kernel32_32_base() + _export_rva(os.path.join(os.environ["WINDIR"], "SysWOW64", "kernel32.dll"), b"LoadLibraryW")
+    h = k32.OpenProcess(0x1F0FFF, False, pid)  # PROCESS_ALL_ACCESS
+    if not h:
+        err = ctypes.get_last_error()
+        if err == 5:
+            raise PermissionError(err, "access denied")
+        raise OSError(err, f"OpenProcess failed: {err}")
+    try:
+        raw = str(dll).encode("utf-16-le") + b"\0\0"
+        mem = k32.VirtualAllocEx(h, None, len(raw), MEM_COMMIT_RESERVE, PAGE_READWRITE)
+        written = ctypes.c_size_t(0)
+        if not mem or not k32.WriteProcessMemory(h, mem, raw, len(raw), ctypes.byref(written)):
+            raise OSError(ctypes.get_last_error(), "could not write the DLL path into the game")
+        thread = k32.CreateRemoteThread(h, None, 0, ctypes.c_void_p(load), ctypes.c_void_p(mem), 0, None)
+        if not thread:
+            err = ctypes.get_last_error()
+            raise (PermissionError if err == 5 else OSError)(err, f"CreateRemoteThread failed: {err}")
+        k32.WaitForSingleObject(thread, 15000)
+        code = ctypes.c_ulong(0)
+        k32.GetExitCodeThread(thread, ctypes.byref(code))
+        k32.CloseHandle(thread)
+        return bool(code.value)
+    finally:
+        k32.CloseHandle(h)
 
 
 def connect(pid: int):

@@ -7,3 +7,4 @@ node_modules/
 bridge/run.log
 bridge/war3-launch.log
 bridge/next-start.txt
+bridge/hook-cache/
