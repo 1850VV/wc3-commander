@@ -21,12 +21,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+LOG = Path(__file__).resolve().parents[2] / "bridge" / "war3-launch.log"
 HOOK = Path(os.environ.get("WC3_COMMANDER_HOOK", str(
     Path.home() / "Documents" / "ChatGPT" / "wc3env-127a-attach" / "src" / "wc3env" / "native" / "wc3hook.dll"
 )))
 
 
+def note(text: str) -> None:
+    import time
+
+    with LOG.open("a", encoding="utf-8") as f:
+        f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + text + "\n")
+
+
 def fail(text: str) -> None:
+    note("失败：" + text)
     ctypes.windll.user32.MessageBoxW(None, text, "魔兽争霸三（指挥官）", 0x10)
     sys.exit(1)
 
@@ -42,6 +51,7 @@ def main() -> None:
     if not HOOK.is_file():
         fail(f"找不到指挥官版的 wc3hook.dll：\n{HOOK}")
     game_dir = settings().game_dir
+    note("快捷方式被打开")
     docs = user_dir()
     docs.mkdir(parents=True)
     exe = prepare_runtime(game_dir, docs / "Runtime")
@@ -62,7 +72,16 @@ def main() -> None:
     except Exception as exc:
         fail(f"魔兽没能启动：{exc}")
     k32.CloseHandle(handle)
+    note(f"已启动 War3.exe 进程 {pid}（{exe}）")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as exc:  # pythonw has no console: never fail silently
+        import traceback
+
+        note(traceback.format_exc())
+        fail(f"启动出错：{exc}")

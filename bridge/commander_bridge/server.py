@@ -211,7 +211,8 @@ class Runner:
                 return attach.AttachedGame(rpc, pid)
             if pid not in warned:
                 warned.add(pid)
-                self.log(f"发现一个普通方式打开的魔兽（进程 {pid}），指挥官读不到它。请关掉它，用桌面上的「魔兽争霸三（指挥官）」重新打开", "error")
+                self.log(f"发现一个不是用「魔兽争霸三（指挥官）」打开的魔兽（进程 {pid}），指挥官读不到它。请关掉它，"
+                         "双击桌面上的「魔兽争霸三（指挥官）」重新打开（不是「魔兽指挥官（新版原型）」，也不是游戏目录里的 War3.exe）", "error")
         return None
 
     def _play_attached(self, game: attach.AttachedGame) -> None:

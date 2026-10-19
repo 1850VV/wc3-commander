@@ -5,4 +5,5 @@ __pycache__/
 node_modules/
 .DS_Store
 bridge/run.log
+bridge/war3-launch.log
 bridge/next-start.txt
