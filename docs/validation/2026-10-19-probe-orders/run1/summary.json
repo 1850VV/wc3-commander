@@ -1,0 +1,938 @@
+{
+  "militia": {
+    "peasant_abilities": [
+      "Ahrp",
+      "Amil",
+      "Ahar",
+      "Aatk",
+      "Amov",
+      "AHbu"
+    ],
+    "hall_abilities": [
+      "Amic",
+      "Aalr",
+      "Afih",
+      "ARal",
+      "Argl",
+      "Aupg",
+      "Aque"
+    ],
+    "single_peasant": [
+      {
+        "order": "militia",
+        "args": {},
+        "rejected": [],
+        "became_militia_after": 0.75
+      }
+    ],
+    "townbellon": {
+      "rejected": [],
+      "all_militia_after": 5.75,
+      "types": {
+        "26693": [
+          "hmil",
+          false,
+          null,
+          null
+        ],
+        "24948": [
+          "hmil",
+          false,
+          null,
+          null
+        ],
+        "26725": [
+          "hmil",
+          false,
+          null,
+          null
+        ]
+      },
+      "cost": {
+        "gold": 0,
+        "lumber": 0
+      },
+      "hall": {
+        "type_id": "htow",
+        "x": 1280.0,
+        "y": -6848.0,
+        "hp": 1500,
+        "max_hp": 1500,
+        "mana": 0,
+        "order": null,
+        "state": null,
+        "state_seconds": 0.0,
+        "queue": [],
+        "queue_seconds": 0.0,
+        "abilities": [
+          {
+            "ability_id": "Amic",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aalr",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Afih",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "ARal",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Argl",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aupg",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aque",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          }
+        ]
+      }
+    },
+    "single_back": [
+      {
+        "order": "militiaoff",
+        "rejected": [],
+        "peasant_again_after": 0.25,
+        "unit": {
+          "type_id": "hpea",
+          "x": 1486.607,
+          "y": -6594.419,
+          "hp": 220,
+          "max_hp": 220,
+          "mana": 0,
+          "order": null,
+          "abilities": [
+            {
+              "ability_id": "Ahrp",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amil",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Ahar",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Aatk",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amov",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "AHbu",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            }
+          ]
+        }
+      }
+    ],
+    "townbelloff": {
+      "rejected": [],
+      "all_peasant_after": 0.25,
+      "types": {
+        "26693": [
+          "hpea",
+          false,
+          null,
+          null
+        ],
+        "24948": [
+          "hpea",
+          false,
+          null,
+          null
+        ],
+        "26725": [
+          "hpea",
+          false,
+          null,
+          null
+        ]
+      }
+    },
+    "expire": {
+      "rejected": [],
+      "militia": [
+        26693,
+        24948,
+        26725
+      ],
+      "reverted_after": 45.0,
+      "after": {
+        "26693": {
+          "type_id": "hpea",
+          "x": 570.042,
+          "y": -6001.494,
+          "hp": 220,
+          "max_hp": 220,
+          "mana": 0,
+          "order": null,
+          "abilities": [
+            {
+              "ability_id": "Ahrp",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amil",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Ahar",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Aatk",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amov",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "AHbu",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            }
+          ]
+        },
+        "24948": {
+          "type_id": "hpea",
+          "x": 553.203,
+          "y": -6062.602,
+          "hp": 220,
+          "max_hp": 220,
+          "mana": 0,
+          "order": null,
+          "abilities": [
+            {
+              "ability_id": "Ahrp",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amil",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Ahar",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Aatk",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amov",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "AHbu",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            }
+          ]
+        },
+        "26725": {
+          "type_id": "hpea",
+          "x": 624.649,
+          "y": -6074.231,
+          "hp": 220,
+          "max_hp": 220,
+          "mana": 0,
+          "order": null,
+          "abilities": [
+            {
+              "ability_id": "Ahrp",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amil",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Ahar",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Aatk",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "Amov",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            },
+            {
+              "ability_id": "AHbu",
+              "level": 1,
+              "mana_cost": 0,
+              "cooldown_seconds": 0.0,
+              "cooldown_remaining": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "wall_seconds": 4.0
+  },
+  "hero": {
+    "train": {
+      "rejected": [],
+      "train_start": [
+        {
+          "kind": "train_start",
+          "unit_id": 26713,
+          "type_id": "Hamg",
+          "t": 58.0
+        }
+      ],
+      "train_finish": [
+        {
+          "kind": "train_finish",
+          "unit_id": 26713,
+          "trained_id": 24949,
+          "type_id": "Hamg",
+          "t": 113.0
+        }
+      ],
+      "seconds": 55.0,
+      "cost_first_hero": {
+        "gold": 0,
+        "lumber": 0
+      }
+    },
+    "hero_before": {
+      "type_id": "Hamg",
+      "x": 400.0,
+      "y": -6480.0,
+      "hp": 450,
+      "max_hp": 450,
+      "mana": 285,
+      "order": null,
+      "abilities": [
+        {
+          "ability_id": "AItp",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "AInv",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "AHer",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Aatk",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Amov",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        }
+      ]
+    },
+    "learn": {
+      "rejected": [],
+      "hero_learn": [
+        {
+          "kind": "hero_learn",
+          "unit_id": 24949,
+          "ability_id": "AHwe",
+          "t": 113.25
+        }
+      ],
+      "abilities": [
+        {
+          "ability_id": "AHwe",
+          "level": 1,
+          "mana_cost": 125,
+          "cooldown_seconds": 20.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "AItp",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "AInv",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "AHer",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Aatk",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Amov",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        }
+      ]
+    },
+    "cast": {
+      "rejected": [],
+      "summon": [],
+      "spell_effect": [],
+      "mana_before": 285,
+      "mana_after": 285,
+      "ability": {
+        "ability_id": "AHwe",
+        "level": 1,
+        "mana_cost": 125,
+        "cooldown_seconds": 20.0,
+        "cooldown_remaining": 0.0
+      }
+    },
+    "recast_on_cooldown": {
+      "rejected": [],
+      "summon": []
+    },
+    "wall_seconds": 4.2
+  },
+  "upgrade": {
+    "keep": {
+      "tries": [
+        {
+          "command": "train",
+          "rejected": [],
+          "upgrade_start": [
+            {
+              "kind": "upgrade_start",
+              "unit_id": 26675,
+              "type_id": "htow",
+              "t": 119.25
+            }
+          ],
+          "building": {
+            "type_id": "htow",
+            "x": 1280.0,
+            "y": -6848.0,
+            "hp": 1500,
+            "max_hp": 1500,
+            "mana": 0,
+            "order": null,
+            "state": "upgrading",
+            "state_seconds": 140.0,
+            "queue": [],
+            "queue_seconds": 0.0,
+            "abilities": [
+              {
+                "ability_id": "AUnP",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Amic",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Aalr",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Afih",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "ARal",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Argl",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Aupg",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Aque",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              }
+            ]
+          }
+        }
+      ],
+      "cost": {
+        "gold": 320,
+        "lumber": 210
+      },
+      "upgrade_finish": [
+        {
+          "kind": "upgrade_finish",
+          "unit_id": 26675,
+          "type_id": "hkee",
+          "t": 259.5
+        }
+      ],
+      "seconds": 140.25,
+      "after": {
+        "type_id": "hkee",
+        "x": 1280.0,
+        "y": -6848.0,
+        "hp": 2000,
+        "max_hp": 2000,
+        "mana": 0,
+        "order": null,
+        "state": null,
+        "state_seconds": 0.0,
+        "queue": [],
+        "queue_seconds": 0.0,
+        "abilities": [
+          {
+            "ability_id": "Abdl",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Amic",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aalr",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Afih",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "ARal",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Argl",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aupg",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aque",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          }
+        ]
+      },
+      "cost_total": {
+        "gold": 320,
+        "lumber": 210
+      }
+    },
+    "tower_unit": {
+      "type_id": "hwtw",
+      "x": 1856.0,
+      "y": -5952.0,
+      "hp": 300,
+      "max_hp": 300,
+      "mana": 0,
+      "order": null,
+      "state": null,
+      "state_seconds": 0.0,
+      "queue": [],
+      "queue_seconds": 0.0,
+      "abilities": [
+        {
+          "ability_id": "Aalr",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Afih",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Adts",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        },
+        {
+          "ability_id": "Aupg",
+          "level": 1,
+          "mana_cost": 0,
+          "cooldown_seconds": 0.0,
+          "cooldown_remaining": 0.0
+        }
+      ]
+    },
+    "arcane": {
+      "tries": [
+        {
+          "command": "train",
+          "rejected": [],
+          "upgrade_start": [
+            {
+              "kind": "upgrade_start",
+              "unit_id": 26491,
+              "type_id": "hwtw",
+              "t": 260.75
+            }
+          ],
+          "building": {
+            "type_id": "hwtw",
+            "x": 1856.0,
+            "y": -5952.0,
+            "hp": 300,
+            "max_hp": 300,
+            "mana": 0,
+            "order": null,
+            "state": "upgrading",
+            "state_seconds": 50.0,
+            "queue": [],
+            "queue_seconds": 0.0,
+            "abilities": [
+              {
+                "ability_id": "AUnP",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Aalr",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Afih",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Adts",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              },
+              {
+                "ability_id": "Aupg",
+                "level": 1,
+                "mana_cost": 0,
+                "cooldown_seconds": 0.0,
+                "cooldown_remaining": 0.0
+              }
+            ]
+          }
+        }
+      ],
+      "cost": {
+        "gold": 70,
+        "lumber": 50
+      },
+      "upgrade_finish": [
+        {
+          "kind": "upgrade_finish",
+          "unit_id": 26491,
+          "type_id": "hatw",
+          "t": 311.0
+        }
+      ],
+      "seconds": 50.25,
+      "after": {
+        "type_id": "hatw",
+        "x": 1856.0,
+        "y": -5952.0,
+        "hp": 500,
+        "max_hp": 500,
+        "mana": 0,
+        "order": null,
+        "state": null,
+        "state_seconds": 0.0,
+        "queue": [],
+        "queue_seconds": 0.0,
+        "abilities": [
+          {
+            "ability_id": "AHta",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 180.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Afbt",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Abds",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aatk",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Aalr",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Afih",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          },
+          {
+            "ability_id": "Adts",
+            "level": 1,
+            "mana_cost": 0,
+            "cooldown_seconds": 0.0,
+            "cooldown_remaining": 0.0
+          }
+        ]
+      },
+      "cost_total": {
+        "gold": 70,
+        "lumber": 50
+      }
+    },
+    "wall_seconds": 12.5
+  },
+  "assist": {
+    "trials": [
+      {
+        "type_id": "hhou",
+        "helpers": 0,
+        "command": "smart",
+        "error": "RpcError('step: bad_status: step is not valid in ended')"
+      },
+      {
+        "type_id": "hhou",
+        "helpers": 1,
+        "command": "smart",
+        "error": "RpcError('debug: bad_status: debug is not valid in ended')"
+      },
+      {
+        "type_id": "hhou",
+        "helpers": 2,
+        "command": "smart",
+        "error": "RpcError('debug: bad_status: debug is not valid in ended')"
+      },
+      {
+        "type_id": "hhou",
+        "helpers": 3,
+        "command": "smart",
+        "error": "RpcError('debug: bad_status: debug is not valid in ended')"
+      },
+      {
+        "type_id": "hhou",
+        "helpers": 2,
+        "command": "repair",
+        "error": "RpcError('debug: bad_status: debug is not valid in ended')"
+      },
+      {
+        "type_id": "htow",
+        "helpers": 0,
+        "command": "smart",
+        "error": "RpcError('debug: bad_status: debug is not valid in ended')"
+      },
+      {
+        "type_id": "htow",
+        "helpers": 3,
+        "command": "smart",
+        "error": "RpcError('debug: bad_status: debug is not valid in ended')"
+      }
+    ],
+    "wall_seconds": 6.7
+  }
+}
