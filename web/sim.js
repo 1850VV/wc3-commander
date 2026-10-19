@@ -16,6 +16,12 @@
     startGold: 500, startWood: 150, startWorkers: 5,
   };
   const HALLS = ['htow', 'hkee', 'hcas'];
+  // Wall-in check. A unit needs a gap of floor(collision / 16) + 1 cells (assumption, to be checked
+// in the real game): collision 16-31 (peasant 16, footman 31) needs 2 cells, collision 32 (every
+// hero, grunt, rifleman; from wc3env reference-127a.json) needs 3. Buildings sit on a 64-unit grid,
+// so gaps between them are whole multiples of 2 cells: a 2-cell gap is the human wall.
+const WALL = {radius: 40, cap: 40, lane: 64, search: 14, worker: 2, hero: 3, farms: 4};
+const cellsFor = collision => Math.floor(collision / 16) + 1;
   const KIND = {build: '建造', gather: '采集', train: '生产'};
   const RES = {gold: '采金', wood: '伐木'};
 
@@ -262,7 +268,9 @@
     lane() { // mining lane between hall and mine; keep it clear like the native solver does
       return [[this.hall.x, this.hall.y], [this.mine.x, this.mine.y]];
     }
-    canPlace(type, x, y, reserved) {
+    /* margin: gap kept from other planned buildings (automatic placement keeps 32 for walking
+     * room; a site the player places, or a wall piece, may touch them: margin 0) */
+    canPlace(type, x, y, reserved, margin = 32) {
       const w = this.w, tex = w.buildingTex(type), r = w.rectOf(x, y, tex), B = w.bounds;
       if (r[0] < B[0] || r[2] > B[1] || r[1] < B[2] || r[3] > B[3]) return {ok: false, why: '超出地图边界'};
       for (const i of w.cellsOf(x, y, tex, 'build')) if (this.noBuild(i)) return {ok: false, why: '地形、树木或建筑占用'};
@@ -270,7 +278,7 @@
       if (segRectDist([a, b], r) < 150) return {ok: false, why: '挡住采金路线'};
       for (const o of reserved || []) {
         const q = w.rectOf(o.x, o.y, w.buildingTex(o.type));
-        if (r[0] < q[2] + 32 && r[2] > q[0] - 32 && r[1] < q[3] + 32 && r[3] > q[1] - 32) return {ok: false, why: '与计划中的建筑重叠'};
+        if (r[0] < q[2] + margin && r[2] > q[0] - margin && r[1] < q[3] + margin && r[3] > q[1] - margin) return {ok: false, why: '与计划中的建筑重叠'};
       }
       return {ok: true};
     }
@@ -288,6 +296,89 @@
       }
       return null;
     }
+    /* Max-min search on a window: clearance (largest empty square touching each free cell; beyond
+     * the window counts as open ground), then the best path from starts to the window border.
+     * Returns K, the clearance at the path's narrowest point, and that cell (-1 when shut). */
+    _wayOut(solid, S, starts, cap) {
+      const N = S * S, clr = new Uint8Array(N), tmp = new Uint8Array(N);
+      for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+        for (let yy = 0; yy < S; yy++) for (let xx = 0; xx < S; xx++) {
+          const x = sx > 0 ? S - 1 - xx : xx, y = sy > 0 ? S - 1 - yy : yy, k = y * S + x;
+          if (solid[k]) { tmp[k] = 0; continue; }
+          const g = (X, Y) => X < 0 || Y < 0 || X >= S || Y >= S ? cap : tmp[Y * S + X];
+          tmp[k] = Math.min(cap, 1 + Math.min(g(x + sx, y), g(x, y + sy), g(x + sx, y + sy)));
+          if (tmp[k] > clr[k]) clr[k] = tmp[k];
+        }
+      }
+      const best = new Int16Array(N).fill(-1), par = new Int32Array(N).fill(-1), seen = new Uint8Array(N);
+      const buckets = Array.from({length: cap + 1}, () => []);
+      for (const k of starts) if (clr[k]) { best[k] = clr[k]; buckets[clr[k]].push(k); }
+      let K = 0, exit = -1;
+      for (let b = cap; b >= 1 && exit < 0; b--) {
+        const q = buckets[b];
+        while (q.length) {
+          const k = q.pop(); if (best[k] !== b || seen[k]) continue; seen[k] = 1;
+          const x = k % S, y = (k - x) / S;
+          if (x === 0 || y === 0 || x === S - 1 || y === S - 1) { K = b; exit = k; break; }
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const X = x + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= S || Y >= S) continue;
+            const n = Y * S + X, v = Math.min(b, clr[n]);
+            if (v > best[n]) { best[n] = v; par[n] = k; buckets[v].push(n); }
+          }
+        }
+      }
+      let m = -1; // narrowest cell on that path, ignoring the window margin
+      for (let k = exit; k >= 0; k = par[k]) { const x = k % S, y = (k - x) / S; if (x > 2 && y > 2 && x < S - 3 && y < S - 3 && (m < 0 || clr[k] < clr[m])) m = k; }
+      return {K, choke: m >= 0 ? m : exit};
+    }
+
+    /* ---------- wall-in check ----------
+     * Can a unit walk from outside to the peasants on the mining route? Inside a square window
+     * around the hall (the hall itself is part of the wall), every
+     * free cell gets the side of the largest empty square touching it (clearance); a max-min
+     * search from the mining route to the window border then gives K, the clearance at
+     * the narrowest point of the best way out, and that point (the choke). Grid cells are 32
+     * units; see WALL for how many cells peasants (K >= 2) and heroes (K >= 3) need.
+     * opts.sites: planned buildings [{type, x, y}] counted as solid; opts.radius in cells;
+     * opts.gaps: how many gap widths to report in .gaps (widest first). */
+    wallCheck(opts) {
+      const o = opts || {}, w = this.w, W = w.W, R = o.radius || WALL.radius, cap = WALL.cap;
+      const hc = w.cellAt(this.hall.x, this.hall.y), hx = hc % W, hy = (hc - hx) / W;
+      const x0 = hx - R, y0 = hy - R, S = 2 * R + 1, N = S * S;
+      const solid = new Uint8Array(N), extra = new Set();
+      for (const s of o.sites || []) for (const i of w.cellsOf(s.x, s.y, w.buildingTex(s.type), 'walk')) extra.add(i);
+      const gi = (x, y) => (y0 + y) * W + x0 + x; // window cell -> grid cell
+      for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) { const i = gi(x, y); solid[y * S + x] = x0 + x < 0 || y0 + y < 0 || x0 + x >= W || y0 + y >= w.H || this.blocked(i) || extra.has(i) ? 1 : 0; }
+      // start: the free cells on the mining route between hall and mine, where the peasants walk
+      const [la, lb] = this.lane(), lane = [];
+      for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (ptSeg(w.center(gi(x, y)), la, lb) <= WALL.lane) lane.push(y * S + x);
+      const starts = lane.filter(k => !solid[k]);
+      // Gap widths, widest first: find the best way out, note its narrowest point, close that gap
+      // and look again. Comparing several gaps lets the greedy wall see progress when it narrows
+      // one of two equally wide gaps.
+      const gaps = [], blocked = solid.slice();
+      let K = 0, choke = null;
+      for (let n = 0; n < (o.gaps || 1); n++) {
+        const r = this._wayOut(blocked, S, starts, cap);
+        gaps.push(r.K);
+        if (n === 0) { K = r.K; if (r.choke >= 0) choke = w.center(gi(r.choke % S, (r.choke - r.choke % S) / S)); }
+        if (!r.K || r.choke < 0) break;
+        const cx = r.choke % S, cy = (r.choke - cx) / S, h = r.K + 1;
+        for (let y = Math.max(0, cy - h); y <= Math.min(S - 1, cy + h); y++) for (let x = Math.max(0, cx - h); x <= Math.min(S - 1, cx + h); x++) blocked[y * S + x] = 1;
+      }
+      // workers must still reach the gold mine from the hall
+      const mineCells = new Set(this._ring(w.rectOf(this.mine.x, this.mine.y, this.mine.tex)).filter(i => !extra.has(i)));
+      const reach = new Uint8Array(N), q2 = starts.filter(k => !solid[k]); let mineOK = false;
+      for (const k of q2) reach[k] = 1;
+      for (let h = 0; h < q2.length && !mineOK; h++) {
+        const k = q2[h], x = k % S, y = (k - x) / S;
+        if (mineCells.has(gi(x, y))) { mineOK = true; break; }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const X = x + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= S || Y >= S) continue; const n = Y * S + X; if (!reach[n] && !solid[n]) { reach[n] = 1; q2.push(n); } }
+      }
+      return {K, gaps, choke, mineOK, radius: R, box: [w.ox + x0 * w.C, w.oy + y0 * w.C, w.ox + (x0 + S) * w.C, w.oy + (y0 + S) * w.C],
+              verdict: K < WALL.worker ? 'sealed' : K < WALL.hero ? 'walled' : 'open'};
+    }
+
     /* generic anchor relative to the hall, rotated by the hall->mine direction */
     anchor(type, k) {
       const {dir, perp} = this.basis, h = this.hall;
@@ -312,7 +403,7 @@
       for (const e of [...builds.filter(e => e.at && !e.resume), ...builds.filter(e => !e.at && !e.resume)]) {
         let site = null;
         if (e.at) {
-          const [x, y] = this.w.snap(e.btype, e.at[0], e.at[1]), chk = this.canPlace(e.btype, x, y, reserved);
+          const [x, y] = this.w.snap(e.btype, e.at[0], e.at[1]), chk = this.canPlace(e.btype, x, y, reserved, 0);
           if (chk.ok) site = [x, y]; else e.siteNote = '指定位置不能建（' + chk.why + '），改到旁边';
         }
         if (!site) { const [ax, ay] = e.at || this.anchor(e.btype, nth.get(e) - 1); site = this.findSite(e.btype, ax, ay, reserved); }
@@ -556,6 +647,56 @@
       {id: 'g_ai', name: 'AI 指令', src: 'AI', open: true, children: []},
     ];
   }
+  /* Greedy wall-in (after warcraft-commander/commander/layout.js auto 'wall'): take the earliest
+   * altar, barracks and up to WALL.farms farms that are not pinned, and one by one
+   * put each one where it narrows the way to the mining route the most (nearest the choke on ties),
+   * never below what peasants need (WALL.worker) and never cutting the hall off from the mine.
+   * Returns the sites to pin ({e, pos}) and the check before and after; changes nothing itself. */
+  function autoWall(world, startIndex, groups, opts) {
+    const g = run(world, startIndex, groups, 0), w = world;
+    const builds = g.events.filter(e => e.kind === 'build' && !e.resume && e.site).sort((a, b) => a.start - b.start || a.seq - b.seq);
+    const skip = (opts && opts.skip) || new Set(); // events that may not move (already started)
+    const free = builds.filter(e => !e.at && !skip.has(e.id)), take = (t, n) => free.filter(e => e.btype === t).slice(0, n);
+    const pieces = [...take('halt', 1), ...take('hbar', 1), ...take('hhou', WALL.farms)];
+    const fixed = builds.filter(e => !pieces.includes(e)).map(e => ({type: e.btype, x: e.site[0], y: e.site[1]}));
+    const siteOf = (e, pos) => ({type: e.btype, x: pos[0], y: pos[1]});
+    const GAPS = 3, vec = c => c.gaps.concat(Array(GAPS).fill(0)).slice(0, GAPS);
+    const less = (a, b) => { for (let i = 0; i < GAPS; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; };
+    const before = g.wallCheck({sites: builds.map(e => siteOf(e, e.site)), gaps: GAPS});
+    // compare gap widths widest first (padded), so narrowing either of two equal gaps counts
+    function greedy(order) {
+      const placed = [], sites = () => fixed.concat(placed.map(p => siteOf(p.e, p.pos)));
+      for (const e of order) {
+        const cur = g.wallCheck({sites: sites(), gaps: GAPS});
+        if (cur.K < WALL.hero || !cur.choke) break;
+        const [cx, cy] = w.snap(e.btype, g.hall.x, g.hall.y), here = sites();
+        let best = null;
+        for (let dy = -WALL.search; dy <= WALL.search; dy++) for (let dx = -WALL.search; dx <= WALL.search; dx++) {
+          const x = cx + dx * 64, y = cy + dy * 64;
+          if (!g.canPlace(e.btype, x, y, here, 0).ok) continue;
+          const c = g.wallCheck({sites: here.concat([{type: e.btype, x, y}]), gaps: GAPS});
+          if (c.K < WALL.worker || !c.mineOK) continue;
+          const v = vec(c), d = Math.hypot(x - cur.choke[0], y - cur.choke[1]);
+          if (!best || less(v, best.v) || (!less(best.v, v) && d < best.d)) best = {pos: [x, y], v, d};
+        }
+        if (best && less(best.v, vec(cur))) placed.push({e, pos: best.pos});
+      }
+      // pieces left over keep their automatic sites
+      const after = g.wallCheck({gaps: GAPS, sites: sites().concat(pieces.filter(e => !placed.some(p => p.e === e)).map(e => siteOf(e, e.site)))});
+      return {placed, after};
+    }
+    // two piece orders (biggest first, farms first); keep the narrowest result
+    const size = e => w.tex(w.buildingTex(e.btype)).w, bySize = [...pieces].sort((a, b) => size(b) - size(a) || a.start - b.start);
+    const orders = [bySize, [...bySize].reverse()];
+    let best = null;
+    for (const o of orders) {
+      const r = greedy(o);
+      if (!best || less(vec(r.after), vec(best.after)) || (!less(vec(best.after), vec(r.after)) && r.placed.length < best.placed.length)) best = r;
+      if (best.after.K < WALL.hero) break;
+    }
+    return {placed: best.placed, before, after: best.after, pieces: pieces.length};
+  }
+
   /* run a fresh game with these groups up to time t (deterministic replay) */
   function run(world, startIndex, groups, t) {
     const events = groups.flatMap(g => g.children);
@@ -565,7 +706,7 @@
     return game;
   }
 
-  const api = {World, Game, run, ev, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
+  const api = {World, Game, run, autoWall, WALL, cellsFor, ev, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CommanderSim = api;
 })(typeof globalThis === 'undefined' ? window : globalThis);

@@ -110,7 +110,7 @@
   function siteAt(wx, wy) { return allEvents().find(e => movable(e) && inRect(siteRect(e), wx, wy)); }
   function upcomingSites(t) { return allEvents().filter(e => movable(e) && e.start <= t + UPCOMING).sort((a, b) => a.start - b.start || a.seq - b.seq); }
   function siteGhost(btype, wx, wy, exceptId) {
-    const pos = W.snap(btype, wx, wy), chk = placementGame().canPlace(btype, pos[0], pos[1], plannedReserved(exceptId));
+    const pos = W.snap(btype, wx, wy), chk = placementGame().canPlace(btype, pos[0], pos[1], plannedReserved(exceptId), 0);
     return {btype, pos, ok: chk.ok, why: chk.why};
   }
   function pinSite(e, pos) {
@@ -118,6 +118,41 @@
     say('已把' + name(e.btype) + '的工地固定在 ' + pos.join(', ') + '，到时按这个位置精确建造');
   }
   function unpinSite(e) { delete e.at; planChanged(); renderCmd(); say(name(e.btype) + '的工地改回自动选址'); }
+  /* ---------- wall-in ---------- */
+  // Checked on the plan's final layout: every build event's site (where the game actually put it,
+  // once known), on an otherwise empty map around the hall. Cached until the layout changes.
+  let wallKey = '', wallRes = null, wallBusy = false;
+  function layoutSites() {
+    return allEvents().filter(e => e.kind === 'build' && !e.resume && e.site)
+      .map(e => { const p = (e.rt && e.rt.builtAt) || e.site; return {type: e.btype, x: p[0], y: p[1]}; });
+  }
+  function wallState() {
+    const sites = layoutSites(), key = startIndex + JSON.stringify(sites);
+    if (key !== wallKey) { wallKey = key; wallRes = new Sim.Game(W, {start: startIndex, events: []}).wallCheck({sites}); }
+    return wallRes;
+  }
+  function wallText(r) {
+    if (!r.mineOK) return {cls: 'bad', text: '农民到不了金矿：工地把采金路线堵住了'};
+    if (r.verdict === 'sealed') return {cls: 'bad', text: `堵死了：最窄处 ${r.K} 格，农民也过不去`};
+    if (r.verdict === 'walled') return {cls: 'ok', text: `已封家：最窄处 ${r.K} 格，农民和步兵能过，英雄过不去`};
+    return {cls: '', text: `未封家：最窄处 ${r.K >= Sim.WALL.cap ? r.K + '+' : r.K} 格，英雄能进来（需要 ${Sim.WALL.hero} 格）`};
+  }
+  function autoWall() {
+    if (wallBusy) return;
+    wallBusy = true; say('正在计算封家布局…（几秒钟）');
+    setTimeout(() => {
+      try {
+        const locked = new Set(allEvents().filter(e => e.kind === 'build' && !movable(e)).map(e => e.id));
+        const saved = new Map(allEvents().map(e => [e.id, e.rt])); // autoWall replays the plan; keep live status
+        const r = Sim.autoWall(W, startIndex, groups, {skip: locked});
+        for (const e of allEvents()) if (live.on) e.rt = saved.get(e.id);
+        for (const p of r.placed) p.e.at = p.pos.slice();
+        planChanged(); renderCmd();
+        const t = wallText(r.after);
+        say(r.placed.length ? `自动封家：调整了 ${r.placed.length} 个工地。` + t.text + (r.after.verdict === 'open' ? '。可以再加一个农场，或手动拖动工地。' : '') : '没有找到能让通道变窄的位置：' + t.text, r.after.verdict !== 'walled');
+      } finally { wallBusy = false; }
+    }, 30);
+  }
   function focusEvent(e) { sel = {type: 'event', id: e.id}; if (e.site) { cam.x = e.site[0]; cam.y = e.site[1]; } renderCmd(); markSel(); }
 
   function draw() {
@@ -163,6 +198,13 @@
       ctx.strokeStyle = sel && sel.type === 'building' && sel.id === b.id ? '#d6a03f' : '#4a8ad6'; ctx.lineWidth = sel && sel.id === b.id ? 2.5 : 1.5; ctx.strokeRect(x, y, w, h);
       if (w > 22) label(name(b.type) + (b.done ? '' : ' ' + Math.floor(b.progress * 100) + '%'), x + w / 2, y + h / 2, ls);
       if (b.train && b.train.total && w > 22) { ctx.fillStyle = '#d6a03f'; ctx.fillRect(x + 3, y + h - 6, (w - 6) * (1 - b.train.left / b.train.total), 3); }
+    }
+    // wall-in: ring at the narrowest point of the way to the mining route
+    const wr = wallState();
+    if (wr.choke) {
+      const [x, y] = toScreen(...wr.choke), r = Math.max(8, wr.K * 32 * cam.s / 2 + 4), col = wr.verdict === 'walled' ? '#7fb069' : wr.verdict === 'open' ? '#e0904a' : '#d0584a';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+      label('最窄 ' + wr.K + ' 格', x, y - r - 9, ls * .9, col);
     }
     const ghost = placing && placing.pos ? placing : dragging && drag.ghost;
     if (ghost) {
@@ -259,7 +301,7 @@
   function stopPlace() { placing = null; cv.classList.remove('placing'); placeTip.hidden = true; renderCmd(); }
   function placementGame() { return live.on ? Live.planGame() : G; }
   function updateGhost(wx, wy) {
-    const pos = W.snap(placing.btype, wx, wy), chk = placementGame().canPlace(placing.btype, pos[0], pos[1], plannedReserved());
+    const pos = W.snap(placing.btype, wx, wy), chk = placementGame().canPlace(placing.btype, pos[0], pos[1], plannedReserved(), 0);
     placing.pos = pos; placing.ok = chk.ok; placeTip.textContent = chk.ok ? '点击确认放置 ' + name(placing.btype) + '，Esc 取消' : '这里不能放：' + chk.why;
   }
   function confirmPlace() {
@@ -271,7 +313,10 @@
   /* ---------- status + command card ---------- */
   const statusEl = $('status'), cmdEl = $('cmd'); let lastStatus = '';
   // pointerdown, not click: the panel is re-rendered every second while the countdown runs
-  statusEl.addEventListener('pointerdown', p => { const b = p.target.closest('[data-ev]'); const e = b && allEvents().find(x => x.id === b.dataset.ev); if (e) focusEvent(e); });
+  statusEl.addEventListener('pointerdown', p => {
+    if (p.target.closest('[data-act="autowall"]')) { autoWall(); return; }
+    const b = p.target.closest('[data-ev]'); const e = b && allEvents().find(x => x.id === b.dataset.ev); if (e) focusEvent(e);
+  });
   function renderStatus() {
     const v = V(); let h = '';
     const item = sel && (sel.type === 'unit' ? v.units.find(u => u.id === sel.id) : sel.type === 'building' ? v.buildings.find(b => b.id === sel.id) : allEvents().find(e => e.id === sel.id));
@@ -282,6 +327,10 @@
         <span>采金</span><span class="num">${c.gold} 名农民</span><span>伐木</span><span class="num">${c.wood} 名农民</span>
         <span>建造</span><span class="num">${c.build} 名农民</span><span>空闲</span><span class="num" style="color:${c.idle ? 'var(--warn)' : 'inherit'}">${c.idle} 名农民</span>
         <span>主矿剩余</span><span class="num">${v.mine.gold >= 0 ? Math.floor(v.mine.gold) + ' 金' : '游戏不提供'}</span></div>`;
+      const wr = wallState(), wt = wallText(wr);
+      h += `<div class="subtitle">封家</div><div class="wall"><span class="${wt.cls}">${wt.text}</span>`
+        + `<button type="button" data-act="autowall"${wallBusy ? ' disabled' : ''}>自动封家</button></div>`
+        + `<div class="hint">按计划里全部工地的位置判断；地图上的圆圈是最窄处。农民 2 格、英雄 3 格是推算值，还没在真游戏里验证。</div>`;
       const up = upcomingSites(v.t);
       h += `<div class="subtitle">接下来的工地 <span class="hint">（${UPCOMING} 秒内）</span></div>`;
       h += up.length ? '<div class="upc">' + up.map(e => {

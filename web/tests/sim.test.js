@@ -70,3 +70,41 @@ test('a placed site that cannot be built moves nearby with a note', () => {
   assert.match(farm.siteNote, /指定位置不能建/);
   assert.ok(farm.site && (farm.site[0] !== lane[0] || farm.site[1] !== lane[1]));
 });
+
+test('gap sizes follow collision: peasant and footman 2 cells, heroes 3', () => {
+  assert.deepEqual([16, 31, 32, 48].map(Sim.cellsFor), [2, 2, 3, 4]);
+  assert.equal(Sim.WALL.worker, Sim.cellsFor(31));
+  assert.equal(Sim.WALL.hero, Sim.cellsFor(32));
+});
+
+test('the default layout does not wall in the mining route', () => {
+  const plan = Sim.defaultPlan(), g = Sim.run(W, 0, plan, 0);
+  const sites = plan.flatMap(x => x.children).filter(e => e.kind === 'build').map(e => ({type: e.btype, x: e.site[0], y: e.site[1]}));
+  const r = g.wallCheck({sites});
+  assert.equal(r.verdict, 'open');
+  assert.ok(r.K >= Sim.WALL.hero && r.mineOK && r.choke);
+});
+
+test('auto wall seals the south base with an altar, a barracks and three farms', () => {
+  const plan = Sim.defaultPlan();
+  plan[1].children.push(Sim.ev('build', '建造 农场', 70, {unit: null, btype: 'hhou'}));
+  const r = Sim.autoWall(W, 0, plan);
+  assert.equal(r.before.verdict, 'open');
+  assert.equal(r.after.verdict, 'walled');
+  assert.equal(r.after.K, Sim.WALL.worker);
+  assert.ok(r.after.mineOK);
+  for (const p of r.placed) p.e.at = p.pos;
+  const g = Sim.run(W, 0, plan, 200);
+  for (const p of r.placed) {
+    assert.deepEqual(p.e.site, p.pos, 'pinned wall piece kept its spot');
+    assert.equal(p.e.siteNote, undefined);
+    assert.equal(p.e.rt.status, 'done', p.e.name);
+    assert.ok(g.buildings.some(b => b.type === p.e.btype && b.x === p.pos[0] && b.y === p.pos[1]));
+  }
+});
+
+test('auto wall leaves started buildings alone', () => {
+  const plan = Sim.defaultPlan(), altar = plan[0].children[0];
+  const r = Sim.autoWall(W, 0, plan, {skip: new Set([altar.id])});
+  assert.ok(!r.placed.some(p => p.e === altar));
+});
