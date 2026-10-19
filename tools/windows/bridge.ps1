@@ -5,6 +5,8 @@ Start, stop or inspect the commander bridge on the Windows game PC.
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 start      # on the desktop
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 stop
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 install    # once: scheduled task for remote start
+  add -Lan to start or install to open the console to the local network (http://<this PC's 192.168 address>:8790/);
+  there is no login, so only on a trusted home network, and Windows Firewall must allow TCP 8790
 
 The game window only shows when the bridge runs in the desktop session. A program started over
 SSH lands in session 0 (no desktop), so remote start goes through the scheduled task installed by
@@ -13,7 +15,7 @@ SSH lands in session 0 (no desktop), so remote start goes through the scheduled 
 Python: the wc3env-127a\.venv next to this repository (override with $env:WC3ENV_PYTHON). The
 system python may load another wc3env copy without a .env and then cannot find the maps.
 #>
-param([ValidateSet("start", "stop", "status", "install", "uninstall")][string]$Action = "status")
+param([ValidateSet("start", "stop", "status", "install", "uninstall")][string]$Action = "status", [switch]$Lan)
 
 # Not "Stop": Windows PowerShell 5.1 then aborts on any line a native program (git, python) writes
 # to stderr. Failures that matter are thrown explicitly or use -ErrorAction Stop.
@@ -39,6 +41,11 @@ function Show-Status {
         $where = if ($p.SessionId -eq 0) { "会话 0（后台，没有桌面，游戏窗口出不来）" } else { "会话 $($p.SessionId)（桌面）" }
         Write-Output ("服务进程 {0}：{1}" -f $p.ProcessId, $where)
     }
+    $listen = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object LocalAddress)
+    if ($listen -contains "0.0.0.0") {
+        $ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" } | ForEach-Object IPAddress
+        Write-Output ("局域网：" + (($ips | ForEach-Object { "http://${_}:$Port/" }) -join "  "))
+    } elseif ($listen) { Write-Output "只在本机：http://127.0.0.1:$Port/" }
     try { Write-Output ("状态：" + (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$Port/api/health" -TimeoutSec 3).Content) }
     catch { Write-Output "状态：端口 $Port 没有响应" }
 }
@@ -65,7 +72,8 @@ switch ($Action) {
         if (-not (Test-Path (Join-Path $check[1] "Maps"))) { throw "游戏目录里没有 Maps，检查 wc3env-127a\.env 的 WC3_GAME_DIR" }
         "# $(Get-Date -Format s) start" | Out-File -FilePath $Log -Encoding utf8
         # stderr lines become plain text (no red NativeCommandError) and go to the log as UTF-8
-        & $Python -u -m commander_bridge --backend wc3env 2>&1 | ForEach-Object {
+        $hostArgs = if ($Lan) { @("--host", "0.0.0.0") } else { @() }
+        & $Python -u -m commander_bridge --backend wc3env @hostArgs 2>&1 | ForEach-Object {
             $line = "$_"
             Write-Output $line
             Add-Content -Path $Log -Value $line -Encoding utf8
@@ -75,12 +83,13 @@ switch ($Action) {
         $ErrorActionPreference = "Stop"  # no native programs here; any failure must stop before "registered"
         $ps = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
         # not $action/$settings: variable names ignore case and $Action is this script's parameter
-        $run = New-ScheduledTaskAction -Execute $ps -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" start" -WorkingDirectory $Bridge
+        $run = New-ScheduledTaskAction -Execute $ps -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" start$(if ($Lan) { ' -Lan' })" -WorkingDirectory $Bridge
         # over SSH $env:USERDOMAIN is "WORKGROUP", not the machine name, so ask Windows who we are
         $who = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
         $limits = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
         Register-ScheduledTask -TaskName $Task -Action $run -Principal $who -Settings $limits -Force -ErrorAction Stop | Out-Null
         Write-Output "已注册计划任务 $Task：只在你登录时、在你的桌面会话里运行；没有定时触发，只在被调用时启动。"
+        if ($Lan) { Write-Output "启动后控制台对局域网开放（没有登录保护），需要防火墙放行 TCP $Port。" }
         Write-Output "远程启动：schtasks /Run /TN $Task    删除：bridge.ps1 uninstall"
     }
     "uninstall" {

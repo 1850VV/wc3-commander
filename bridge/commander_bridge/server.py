@@ -5,7 +5,9 @@
   POST /api/control   {"action": "start", "start": 0} or {"action": "stop"}
   GET  /api/stream    server-sent events: {"type": "state"} snapshots and {"type": "log"} lines
 
-Binds to 127.0.0.1 only. Uses the standard library; wc3env is the only dependency.
+Binds to 127.0.0.1 unless --host says otherwise. There is no login: anyone who can reach the port
+can start the game, so only open it to a trusted home network. Uses the standard library; wc3env
+is the only dependency.
 """
 from __future__ import annotations
 
@@ -209,12 +211,28 @@ class Handler(SimpleHTTPRequestHandler):
             self.runner.listeners.remove(q)
 
 
-def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none", window: str = "background", seed: int = 1) -> None:
+def lan_addresses() -> list[str]:
+    """This machine's private IPv4 addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)."""
+    import ipaddress
+    import socket
+
+    try:
+        ips = socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        return []
+    return sorted(ip for ip in set(ips) if ipaddress.ip_address(ip).is_private and not ip.startswith("127."))
+
+
+def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none", window: str = "background", seed: int = 1,
+          host: str = "127.0.0.1") -> None:
     runner = Runner(backend, speed, opponent, window, seed)
     handler = partial(type("BoundHandler", (Handler,), {"runner": runner}), directory=str(WEB))
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True
     print(f"指挥官控制台：http://127.0.0.1:{port}/  （后端：{backend}，Ctrl+C 退出）")
+    if host != "127.0.0.1":
+        for ip in lan_addresses():
+            print(f"局域网访问：http://{ip}:{port}/  （没有登录保护，只在信任的家庭网络里打开）")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

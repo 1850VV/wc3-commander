@@ -5,7 +5,8 @@
 #   tools/pc.sh pull      git pull --ff-only in the PC's checkout
 #   tools/pc.sh start     stop any bridge, start it on the PC's desktop (scheduled task), open the tunnel
 #   tools/pc.sh stop      stop the bridge on the PC
-#   tools/pc.sh tunnel    forward http://127.0.0.1:8790/ on this machine to the PC
+#   tools/pc.sh tunnel    forward http://127.0.0.1:8790/ on this machine to the PC (not needed when the
+#                         bridge was installed with -Lan and this machine is on the same network)
 #   tools/pc.sh untunnel  close that forward
 #   tools/pc.sh log [n]   last n lines (default 40) of bridge\run.log on the PC
 #
@@ -21,6 +22,13 @@ TASK=wc3-commander-bridge
 
 remote() { ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST_ALIAS" "$1"; }
 bridge() { remote "powershell -NoProfile -ExecutionPolicy Bypass -File \"$REPO\\tools\\windows\\bridge.ps1\" $1"; }
+# the console's address on the PC's LAN, when the bridge listens there and this machine can reach it
+lan_url() {
+  local ip
+  for ip in $(remote "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -like '192.168.*' -or \$_.IPAddress -like '10.*' } | ForEach-Object IPAddress" 2>/dev/null | tr -d '\r'); do
+    if curl -s -m 2 "http://$ip:$PORT/api/health" >/dev/null; then echo "http://$ip:$PORT/"; return; fi
+  done
+}
 tunnel_up() { lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; }
 
 tunnel() {
@@ -41,7 +49,8 @@ case "${1:-status}" in
     for _ in $(seq 1 30); do
       if remote "try { (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:$PORT/api/health -TimeoutSec 2).Content } catch { exit 1 }" >/dev/null 2>&1; then
         bridge status
-        tunnel
+        lan=$(lan_url)
+        if [ -n "$lan" ]; then echo "直接打开：$lan（局域网，不用转发）"; else tunnel; fi
         exit 0
       fi
       sleep 1
