@@ -17,6 +17,9 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8790)
     p.add_argument("--speed", type=float, default=2.0, help="fake backend only: game seconds per real second")
     p.add_argument("--opponent", choices=("none", "easy", "normal", "insane"), default="none", help="wc3env backend: computer opponent in slot 1")
+    p.add_argument("--window", choices=("background", "interactive"), default="background",
+                   help="wc3env backend: background = visible window that keeps running without focus (for watching); interactive = normal window you can play in")
+    p.add_argument("--seed", type=int, default=1, help="wc3env backend: match seed, keep it fixed to compare runs")
     p.add_argument("--wc3env", type=Path, default=Path(os.environ.get("WC3ENV_SRC", Path(__file__).resolve().parents[3] / "wc3env-127a" / "src")),
                    help="path to wc3env-127a/src when wc3env is not pip-installed")
     args = p.parse_args()
@@ -28,7 +31,7 @@ def main() -> None:
         sys.path.insert(0, str(args.wc3env))
     from .server import serve
 
-    serve(args.backend, args.port, args.speed, args.opponent)
+    serve(args.backend, args.port, args.speed, args.opponent, args.window, args.seed)
 
 
 if __name__ == "__main__":

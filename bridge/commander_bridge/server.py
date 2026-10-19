@@ -43,8 +43,8 @@ class FakeGame:
             self.rpc.close()
 
 
-def make_session(backend: str, data: dict, start: int, opponent: str):
-    from wc3env import GameConfig, GameSession, PlayerConfig
+def make_session(backend: str, data: dict, start: int, opponent: str, window: str = "background", seed: int = 1):
+    from wc3env import GameConfig, GameSession, MatchSetup, PlayerConfig
 
     if backend == "fake":
         from wc3env.fake_server import FakeServer
@@ -59,16 +59,19 @@ def make_session(backend: str, data: dict, start: int, opponent: str):
     if opponent != "none":
         players += (PlayerConfig(1, control="computer"),)
         difficulty = {"easy": 0, "normal": 1, "insane": 2}[opponent]
-    config = GameConfig(map="(4)LostTemple.w3m", players=players, mode="realtime", window_mode="interactive",
-                        render=True, ai_difficulty=difficulty)
+    # "background" keeps a visible window that does not pause when you switch to the browser;
+    # "interactive" is the normal game window (you can play, but it may pause without focus).
+    config = GameConfig(map="(4)LostTemple.w3m", players=players, mode="realtime", window_mode=window,
+                        background_visible=window == "background", render=True, ai_difficulty=difficulty,
+                        setup=MatchSetup(seed=seed))
     return GameSession(config)
 
 
 class Runner:
     """Owns the game session on one thread; the HTTP threads only post plans and read snapshots."""
 
-    def __init__(self, backend: str, speed: float, opponent: str):
-        self.backend, self.speed, self.opponent = backend, speed, opponent
+    def __init__(self, backend: str, speed: float, opponent: str, window: str = "background", seed: int = 1):
+        self.backend, self.speed, self.opponent, self.window, self.seed = backend, speed, opponent, window, seed
         self.data = load_data()
         self.lock = threading.Lock()
         self.commander = Commander(self.data)
@@ -107,7 +110,7 @@ class Runner:
         session = None
         try:
             self.log("正在启动魔兽争霸三…" if self.backend == "wc3env" else "正在启动假游戏服务器（失落神庙测试世界）")
-            session = make_session(self.backend, self.data, start, self.opponent)
+            session = make_session(self.backend, self.data, start, self.opponent, self.window, self.seed)
             obs = session.reset()[0]
             self.running = True
             self.log("已连接，开始按时间轴执行")
@@ -204,8 +207,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.runner.listeners.remove(q)
 
 
-def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none") -> None:
-    runner = Runner(backend, speed, opponent)
+def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none", window: str = "background", seed: int = 1) -> None:
+    runner = Runner(backend, speed, opponent, window, seed)
     handler = partial(type("BoundHandler", (Handler,), {"runner": runner}), directory=str(WEB))
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     httpd.daemon_threads = True
