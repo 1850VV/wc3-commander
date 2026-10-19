@@ -4,6 +4,8 @@
 
 记录时间：2026-10-19 12:22–12:26（Asia/Shanghai）。由 Mac 通过 `ssh pc` 端口转发连到 Windows 上已在运行的指挥官服务（`python -m commander_bridge --backend wc3env`，PID 26572，默认 `--opponent none`、`--seed 1`），在控制台点「连接 魔兽争霸三」开局，约 3:08 游戏时间点「断开」。出生点：南方（start 0）。
 
+> 后续：第二个农场的问题已在 `6e82274` 修复，并于同日 13:51 在真游戏复验通过，见 [第二个农场复验](../2026-10-19-farm-retest/README.md)。
+
 ## 第 5 步对照（游戏时间）
 
 | 预期 | 时间轴实际 | 结果 |

@@ -212,15 +212,15 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def lan_addresses() -> list[str]:
-    """This machine's private IPv4 addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)."""
-    import ipaddress
+    """This machine's home-network IPv4 addresses (192.168.x.x, 10.x.x.x). 172.16-31.x.x is left out:
+    on Windows those are usually Hyper-V/WSL virtual switches nobody else can reach."""
     import socket
 
     try:
         ips = socket.gethostbyname_ex(socket.gethostname())[2]
     except OSError:
         return []
-    return sorted(ip for ip in set(ips) if ipaddress.ip_address(ip).is_private and not ip.startswith("127."))
+    return sorted(ip for ip in set(ips) if ip.startswith(("192.168.", "10.")))
 
 
 def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none", window: str = "background", seed: int = 1,

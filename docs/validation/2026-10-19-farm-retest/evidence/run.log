@@ -1,0 +1,7 @@
+# 2026-10-19T13:43:02 start
+指挥官控制台：http://127.0.0.1:8790/  （后端：wc3env，Ctrl+C 退出）
+局域网访问：http://<VIRTUAL_ADAPTER_1>:8790/  （没有登录保护，只在信任的家庭网络里打开）
+局域网访问：http://<VIRTUAL_ADAPTER_2>:8790/  （没有登录保护，只在信任的家庭网络里打开）
+局域网访问：http://<LAN_SERVER_IP>:8790/  （没有登录保护，只在信任的家庭网络里打开）
+<LAN_CLIENT_IP> - - [19/Oct/2026 13:44:05] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [19/Oct/2026 13:51:35] "GET /favicon.ico HTTP/1.1" 404 -
