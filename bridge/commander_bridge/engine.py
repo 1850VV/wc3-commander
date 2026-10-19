@@ -712,5 +712,8 @@ class Commander:
             "t": self.t, "start": self.start_index, "gold": p["gold"], "wood": p["lumber"], "foodUsed": p["food_used"], "foodCap": p["food_cap"],
             "units": units, "buildings": buildings,
             "mine": {"x": self.mine["x"], "y": self.mine["y"], "gold": -1} if self.mine else None,
+            # what we can see of others: creeps (owner 12) and other players' units (for the record)
+            "creeps": [{"type": u["type_id"], "x": round(u["x"]), "y": round(u["y"]), "hp": round(u.get("hp", 0))} for u in o.get("visible_enemies", []) if u.get("owner") == 12],
+            "enemies": [{"owner": u.get("owner"), "type": u["type_id"], "x": round(u["x"]), "y": round(u["y"])} for u in o.get("visible_enemies", []) if u.get("owner") not in (0, 12, 15)],
             "events": self.rt,
         }
