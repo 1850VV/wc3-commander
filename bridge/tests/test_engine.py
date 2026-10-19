@@ -181,6 +181,22 @@ class ClearTest(unittest.TestCase):
         self.assertIn("失败", c.rt["X"]["note"])
 
 
+class FastExpandTest(unittest.TestCase):
+    """The south fast-expand strategy (tools/make_fast_expand.js; sites resolved by sim.js) end to
+    end in the fake game, with forest trolls at the natural."""
+
+    def test_build_order_reaches_a_mining_expansion(self):
+        c, rejected = play("fast-expand-s0.json", 330, 0, creeps=TROLLS)
+        self.assertEqual(rejected, [])
+        by = {e["name"]: c.rt[e["id"]] for e in c.events}
+        for name in ("建造 国王祭坛 · 农民4", "建造 兵营 · 新农民", "训练 大法师（首发免费）", "大法师学水元素", "清近矿（大法师 + 步兵 + 民兵）"):
+            self.assertEqual(by[name]["status"], "done", (name, by[name]))
+        self.assertFalse(by["清近矿（大法师 + 步兵 + 民兵）"].get("failed"))
+        hall = by["建造 分基地（4 人协助）"]
+        self.assertIn(hall["status"], ("running", "done"), hall)
+        self.assertGreater(hall["bStart"], by["清近矿（大法师 + 步兵 + 民兵）"]["aEnd"] - 0.5)
+
+
 class ClearUnitTest(unittest.TestCase):
     """combat.Clear on hand-made observations."""
 

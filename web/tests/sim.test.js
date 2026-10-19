@@ -199,3 +199,30 @@ test('militia, clear (estimated) and the expansion after it', () => {
   assert.ok(X.rt.aStart >= C.rt.aEnd);
   assert.ok(M.rt.militia.includes(X.rt.builder), 'a militia peasant already at the natural builds the hall');
 });
+
+test('fast-expand strategies: walls on their pins, key checkpoints on time in simulation', () => {
+  const {plan} = require('../../tools/make_fast_expand.js');
+  for (let s = 0; s < 4; s++) {
+    const p = plan(s), groups = p.groups.map(g => ({...g, children: g.children.map(e => ({...e}))}));
+    Sim.run(W, s, groups, 600);
+    const events = groups.flatMap(g => g.children), name = W.starts[s].name;
+    for (const e of events.filter(e => e.kind === 'build')) {
+      assert.equal(e.rt.status, 'done', `${name} ${e.name}: ${e.rt.note}`);
+      if (e.at) assert.deepEqual(e.site, e.at, `${name} ${e.name} on its wall spot`);
+    }
+    const state = id => Sim.checkpoint(p.checkpoints.find(c => c.id === id), events, 600).state;
+    for (const id of ['c1', 'c2', 'c3', 'c7', 'c8', 'c9']) assert.equal(state(id), 'ok', `${name} ${p.checkpoints.find(c => c.id === id).name}`);
+    for (const id of ['c4', 'c5', 'c6']) assert.ok(['ok', 'late'].includes(state(id)), `${name} ${id} reached`);
+  }
+});
+
+test('checkpoint grading', () => {
+  const e = {id: 'x', rt: {status: 'done', aEnd: 70, bStart: 30}}, cp = {event: 'x', at: 'end', from: 55, to: 65};
+  assert.deepEqual(Sim.checkpoint(cp, [e], 100), {state: 'late', value: 70, by: 5});
+  assert.equal(Sim.checkpoint({...cp, to: 75}, [e], 100).state, 'ok');
+  assert.equal(Sim.checkpoint({...cp, at: 'start', from: 40, to: 60}, [e], 100).state, 'early');
+  assert.equal(Sim.checkpoint(cp, [{id: 'x', rt: {status: 'running'}}], 60).state, 'pending');
+  assert.equal(Sim.checkpoint(cp, [{id: 'x', rt: {status: 'running'}}], 66).state, 'missed');
+  assert.equal(Sim.checkpoint(cp, [{id: 'x', rt: {status: 'done', aEnd: 60, failed: true}}], 66).state, 'missed');
+  assert.equal(Sim.checkpoint(cp, [], 66).state, 'missing');
+});

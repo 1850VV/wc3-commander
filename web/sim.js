@@ -573,8 +573,8 @@
             const ut = e.utype || 'hpea', {dir} = this.basis, half = this.w.tex(b.tex).w * 16;
             const u = {id: this.nextId++, type: ut, x: b.x + dir[0] * (half + 40), y: b.y + dir[1] * (half + 40), task: {kind: 'idle'}, carry: null, amt: 0, path: null, hidden: false};
             this._unstick(u); this.units.push(u);
-            if (ut === 'hpea') u.task = this.gatherTask(e.then || 'gold');
-            Object.assign(e.rt, {status: 'done', aEnd: this.t, note: this.w.eco[ut].name + u.id + ' 出生' + (ut === 'hpea' ? ' → ' + RES[e.then || 'gold'] : '')});
+            if (ut === 'hpea') u.task = e.then === 'natural' ? this.gatherTask('gold', this.natural) : this.gatherTask(e.then || 'gold');
+            Object.assign(e.rt, {status: 'done', aEnd: this.t, note: this.w.eco[ut].name + u.id + ' 出生' + (ut === 'hpea' ? ' → ' + (e.then === 'natural' ? '分矿采金' : RES[e.then || 'gold']) : '')});
             Q.cur = null;
           }
         }
@@ -719,8 +719,10 @@
         if (b.progress >= 1 - 1e-6) {
           b.progress = 1; b.done = true; this.foodCap = Math.min(100, this.foodCap + (c.foodMade || 0));
           Object.assign(e.rt, {status: 'done', aEnd: this.t, note: '完工'});
-          const next = this.mineOf(e.then === 'natural' ? 'natural' : 'main');
-          for (const u of this.units) if (u.task.kind === 'build' && u.task.ev === e) { u.task = this.gatherTask('gold', next); u.path = null; }
+          // then: 'natural' (mine there), 'wood' (chop), otherwise back to the main mine
+          for (const u of this.units) if (u.task.kind === 'build' && u.task.ev === e) {
+            u.task = e.then === 'wood' ? this.gatherTask('wood') : this.gatherTask('gold', this.mineOf(e.then === 'natural' ? 'natural' : 'main')); u.path = null;
+          }
         }
       }
     }
@@ -865,6 +867,19 @@
     return {placed: best.placed, before, after: best.after, pieces: pieces.length};
   }
 
+  /* A checkpoint from a strategy: {id, name, event, at: 'end' | 'start', from, to} (seconds).
+   * 'start' is when the work itself began (construction, training or upgrade, otherwise the event's
+   * start); 'end' is when it finished. Result: ok | early | late (by .by s) | missed | pending. */
+  function checkpoint(cp, events, t) {
+    const e = events.find(x => x.id === cp.event);
+    if (!e) return {state: 'missing', note: '计划里没有这个事件'};
+    const rt = e.rt || {}, v = cp.at === 'start' ? rt.bStart ?? rt.trainStart ?? (rt.status !== 'pending' ? rt.aStart : null) : (rt.status === 'done' && !rt.failed ? rt.aEnd : null);
+    if (v == null) return t > cp.to ? {state: 'missed'} : {state: 'pending'};
+    if (cp.from != null && v < cp.from) return {state: 'early', value: v, by: cp.from - v};
+    if (v <= cp.to) return {state: 'ok', value: v};
+    return {state: 'late', value: v, by: v - cp.to};
+  }
+
   /* run a fresh game with these groups up to time t (deterministic replay) */
   function run(world, startIndex, groups, t) {
     const events = groups.flatMap(g => g.children);
@@ -874,7 +889,7 @@
     return game;
   }
 
-  const api = {World, Game, run, autoWall, WALL, cellsFor, ev, syncSeq, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
+  const api = {World, Game, run, autoWall, checkpoint, WALL, cellsFor, ev, syncSeq, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CommanderSim = api;
 })(typeof globalThis === 'undefined' ? window : globalThis);

@@ -25,6 +25,7 @@ tools/pc.sh start | status | log | stop | pull                                  
 - 命令被 wc3env 接受不等于执行成功；事件状态只能根据后续观测和游戏事件改变。
 - 事件字段：`after`（等哪个事件完成，模拟器 `ready()`/引擎 `ready()`）；`kind: 'upgrade'` + `to`（可选 `from`、`at`），升级占建筑队列、扣差价，引擎下 `train type_id=to`，按 `upgrade_start/finish` 改状态；建造的 `near: 'natural'`、`helpers: N`、`then: 'natural'`；采集的 `mine: 'natural'`。分矿 = 离主基地最近的另一座金矿（sim `natural`，引擎 `natural()`）。协助建造的速度和费用 `ASSIST` 是推算值。
 - 民兵和清野：`kind: 'learn'`（`hero`、`ability`）、`'militia'`（`count`、`from`）、`'clear'`（`militia` 指向敲钟事件、`est` 模拟时长）。实机命令已由探针确认（`docs/validation/2026-10-19-probe-orders`，在分支 claude/nice-moore-a8bdef）：农民 `cast militia`（先走回大厅才变身，45 秒原地变回，同一 unit_id）、`learn AHwe`、`cast waterelemental` 不能带坐标、升级用 `train`。清野控制器在 `combat.py`；失败的事件带 `rt.failed`，等它的事件不会开始。假游戏 `testworld.py` 有简单战斗（可传入 `creeps`）。
+- 速矿策略由 `tools/make_fast_expand.js` 生成（改打法改这里再运行）；检查点格式 `{id, name, event, at: 'end'|'start', from, to}`，评估在 `sim.js` 的 `checkpoint()`。建造的 `then` 也可以是 `'wood'`，训练的 `then` 可以是 `'natural'`。
 - 实机注意：即使 `--opponent none`，地图自带的玩家 1 电脑也在，约 5 分钟会来进攻（探针第一次运行被打掉）。
 - 引擎 `tick()` 先清空动作列表再处理游戏事件（`_ingest`），处理事件时下的命令才不会丢。
 - 自动挑农民（`pickBuilder`/`pickWorkers`，引擎 `pick_builder`/`pick_workers`）会避开还没开始的事件点名要用的农民（`reserved`）。

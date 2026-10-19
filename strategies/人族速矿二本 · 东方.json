@@ -1,0 +1,577 @@
+{
+ "name": "人族速矿二本 · 东方",
+ "saved": "2026-10-19T20:45:12",
+ "plan": {
+  "start": 3,
+  "groups": [
+   {
+    "id": "g_open",
+    "name": "速矿开局",
+    "src": "打法",
+    "children": [
+     {
+      "id": "f3",
+      "seq": 3,
+      "kind": "gather",
+      "name": "采金 · 农民1、2、3",
+      "start": 0,
+      "units": [
+       1,
+       2,
+       3
+      ],
+      "res": "gold"
+     },
+     {
+      "id": "f1",
+      "seq": 1,
+      "kind": "build",
+      "name": "建造 国王祭坛 · 农民4",
+      "start": 0,
+      "unit": 4,
+      "btype": "halt",
+      "at": [
+       6688,
+       1120
+      ]
+     },
+     {
+      "id": "f4",
+      "seq": 4,
+      "kind": "build",
+      "name": "建造 农场 · 农民5",
+      "start": 0,
+      "unit": 5,
+      "btype": "hhou",
+      "at": [
+       6272,
+       1216
+      ]
+     },
+     {
+      "id": "f5",
+      "seq": 5,
+      "kind": "train",
+      "name": "训练农民 → 采金",
+      "start": 0,
+      "utype": "hpea",
+      "then": "gold"
+     },
+     {
+      "id": "f6",
+      "seq": 6,
+      "kind": "train",
+      "name": "训练农民 → 采金",
+      "start": 15,
+      "utype": "hpea",
+      "then": "gold"
+     },
+     {
+      "id": "f2",
+      "seq": 2,
+      "kind": "build",
+      "name": "建造 兵营 · 新农民",
+      "start": 16,
+      "unit": null,
+      "btype": "hbar",
+      "at": [
+       6016,
+       1344
+      ]
+     },
+     {
+      "id": "f7",
+      "seq": 7,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 30,
+      "utype": "hpea",
+      "then": "wood"
+     }
+    ]
+   },
+   {
+    "id": "g_army",
+    "name": "英雄与步兵",
+    "src": "打法",
+    "children": [
+     {
+      "id": "f8",
+      "seq": 8,
+      "kind": "train",
+      "name": "训练 大法师（首发免费）",
+      "start": 60,
+      "utype": "Hamg",
+      "after": "f1"
+     },
+     {
+      "id": "f9",
+      "seq": 9,
+      "kind": "learn",
+      "name": "大法师学水元素",
+      "start": 115,
+      "hero": "Hamg",
+      "ability": "AHwe",
+      "abilityName": "水元素"
+     },
+     {
+      "id": "f10",
+      "seq": 10,
+      "kind": "train",
+      "name": "训练 步兵 F1",
+      "start": 75,
+      "utype": "hfoo",
+      "after": "f2"
+     },
+     {
+      "id": "f11",
+      "seq": 11,
+      "kind": "train",
+      "name": "训练 步兵 F2",
+      "start": 95,
+      "utype": "hfoo"
+     },
+     {
+      "id": "f12",
+      "seq": 12,
+      "kind": "train",
+      "name": "训练 步兵 F3",
+      "start": 125,
+      "utype": "hfoo"
+     }
+    ]
+   },
+   {
+    "id": "g_eco",
+    "name": "经济与农场",
+    "src": "打法",
+    "children": [
+     {
+      "id": "f13",
+      "seq": 13,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 45,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f14",
+      "seq": 14,
+      "kind": "build",
+      "name": "建造 农场 2",
+      "start": 60,
+      "unit": null,
+      "btype": "hhou",
+      "at": [
+       6272,
+       2240
+      ],
+      "then": "wood"
+     },
+     {
+      "id": "f15",
+      "seq": 15,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 60,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f16",
+      "seq": 16,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 75,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f17",
+      "seq": 17,
+      "kind": "build",
+      "name": "建造 农场 3",
+      "start": 95,
+      "unit": null,
+      "btype": "hhou",
+      "at": [
+       6464,
+       1152
+      ],
+      "then": "wood"
+     },
+     {
+      "id": "f18",
+      "seq": 18,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 90,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f19",
+      "seq": 19,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 105,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f20",
+      "seq": 20,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 120,
+      "utype": "hpea",
+      "then": "wood"
+     }
+    ]
+   },
+   {
+    "id": "g_expand",
+    "name": "清近矿与分矿",
+    "src": "打法",
+    "children": [
+     {
+      "id": "f21",
+      "seq": 21,
+      "kind": "militia",
+      "name": "敲钟：4 个伐木农民变民兵",
+      "start": 125,
+      "count": 4,
+      "from": "wood"
+     },
+     {
+      "id": "f22",
+      "seq": 22,
+      "kind": "clear",
+      "name": "清近矿（大法师 + 步兵 + 民兵）",
+      "start": 127,
+      "militia": "f21"
+     },
+     {
+      "id": "f23",
+      "seq": 23,
+      "kind": "build",
+      "name": "建造 分基地（4 人协助）",
+      "start": 130,
+      "unit": null,
+      "btype": "htow",
+      "near": "natural",
+      "helpers": 4,
+      "then": "natural",
+      "after": "f22"
+     },
+     {
+      "id": "f24",
+      "seq": 24,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 135,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f25",
+      "seq": 25,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 150,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f26",
+      "seq": 26,
+      "kind": "train",
+      "name": "训练农民 → 伐木",
+      "start": 165,
+      "utype": "hpea",
+      "then": "wood"
+     },
+     {
+      "id": "f27",
+      "seq": 27,
+      "kind": "build",
+      "name": "建造 侦察塔（分矿）",
+      "start": 225,
+      "unit": null,
+      "btype": "hwtw",
+      "near": "natural",
+      "then": "natural"
+     },
+     {
+      "id": "f28",
+      "seq": 28,
+      "kind": "upgrade",
+      "name": "侦察塔升级为防御塔",
+      "start": 260,
+      "from": "hwtw",
+      "to": "hatw"
+     },
+     {
+      "id": "f29",
+      "seq": 29,
+      "kind": "train",
+      "name": "训练农民 → 分矿采金",
+      "start": 250,
+      "utype": "hpea",
+      "then": "natural"
+     },
+     {
+      "id": "f30",
+      "seq": 30,
+      "kind": "train",
+      "name": "训练农民 → 分矿采金",
+      "start": 265,
+      "utype": "hpea",
+      "then": "natural"
+     },
+     {
+      "id": "f31",
+      "seq": 31,
+      "kind": "train",
+      "name": "训练农民 → 分矿采金",
+      "start": 280,
+      "utype": "hpea",
+      "then": "natural"
+     }
+    ]
+   },
+   {
+    "id": "g_tech",
+    "name": "二本与科技",
+    "src": "打法",
+    "children": [
+     {
+      "id": "f35",
+      "seq": 35,
+      "kind": "train",
+      "name": "训练 步兵 F4",
+      "start": 270,
+      "utype": "hfoo"
+     },
+     {
+      "id": "f36",
+      "seq": 36,
+      "kind": "train",
+      "name": "训练 步兵 F5",
+      "start": 290,
+      "utype": "hfoo"
+     },
+     {
+      "id": "f37",
+      "seq": 37,
+      "kind": "build",
+      "name": "建造 伐木场",
+      "start": 285,
+      "unit": null,
+      "btype": "hlum",
+      "then": "wood"
+     },
+     {
+      "id": "f38",
+      "seq": 38,
+      "kind": "build",
+      "name": "建造 农场 4",
+      "start": 300,
+      "unit": null,
+      "btype": "hhou",
+      "at": [
+       6912,
+       1024
+      ]
+     },
+     {
+      "id": "f32",
+      "seq": 32,
+      "kind": "upgrade",
+      "name": "升级 主城（二本）",
+      "start": 345,
+      "from": "htow",
+      "to": "hkee",
+      "at": [
+       6848,
+       1792
+      ]
+     },
+     {
+      "id": "f39",
+      "seq": 39,
+      "kind": "build",
+      "name": "建造 农场 5",
+      "start": 390,
+      "unit": null,
+      "btype": "hhou",
+      "at": [
+       5888,
+       1600
+      ]
+     },
+     {
+      "id": "f34",
+      "seq": 34,
+      "kind": "build",
+      "name": "建造 神秘藏宝室",
+      "start": 405,
+      "unit": null,
+      "btype": "hvlt"
+     },
+     {
+      "id": "f40",
+      "seq": 40,
+      "kind": "train",
+      "name": "训练 山丘之王（二发英雄）",
+      "start": 485,
+      "utype": "Hmkg",
+      "after": "f32"
+     },
+     {
+      "id": "f33",
+      "seq": 33,
+      "kind": "build",
+      "name": "建造 神秘圣地",
+      "start": 485,
+      "unit": null,
+      "btype": "hars",
+      "after": "f32"
+     },
+     {
+      "id": "f41",
+      "seq": 41,
+      "kind": "build",
+      "name": "建造 神秘圣地 2",
+      "start": 500,
+      "unit": null,
+      "btype": "hars",
+      "after": "f32"
+     },
+     {
+      "id": "f42",
+      "seq": 42,
+      "kind": "train",
+      "name": "训练 牧师",
+      "start": 540,
+      "utype": "hmpr",
+      "after": "f33"
+     },
+     {
+      "id": "f43",
+      "seq": 43,
+      "kind": "train",
+      "name": "训练 女巫",
+      "start": 545,
+      "utype": "hsor",
+      "after": "f33"
+     },
+     {
+      "id": "f44",
+      "seq": 44,
+      "kind": "train",
+      "name": "训练 破法者",
+      "start": 560,
+      "utype": "hspt",
+      "after": "f33"
+     }
+    ]
+   },
+   {
+    "id": "g_user",
+    "name": "我的指令",
+    "src": "手动",
+    "children": []
+   },
+   {
+    "id": "g_ai",
+    "name": "AI 指令",
+    "src": "AI",
+    "children": []
+   }
+  ],
+  "checkpoints": [
+   {
+    "id": "c1",
+    "name": "国王祭坛完成",
+    "event": "f1",
+    "at": "end",
+    "from": 55,
+    "to": 65
+   },
+   {
+    "id": "c2",
+    "name": "大法师出生",
+    "event": "f8",
+    "at": "end",
+    "from": 115,
+    "to": 125
+   },
+   {
+    "id": "c3",
+    "name": "第 2 个步兵出生",
+    "event": "f11",
+    "at": "end",
+    "from": 105,
+    "to": 125
+   },
+   {
+    "id": "c4",
+    "name": "清完近矿",
+    "event": "f22",
+    "at": "end",
+    "from": 135,
+    "to": 190
+   },
+   {
+    "id": "c5",
+    "name": "分基地开工",
+    "event": "f23",
+    "at": "start",
+    "from": 180,
+    "to": 220
+   },
+   {
+    "id": "c6",
+    "name": "分基地完成，分矿采金",
+    "event": "f23",
+    "at": "end",
+    "from": 240,
+    "to": 285
+   },
+   {
+    "id": "c7",
+    "name": "开始升主城",
+    "event": "f32",
+    "at": "start",
+    "from": 330,
+    "to": 375
+   },
+   {
+    "id": "c8",
+    "name": "主城完成",
+    "event": "f32",
+    "at": "end",
+    "from": 470,
+    "to": 515
+   },
+   {
+    "id": "c9",
+    "name": "山丘之王开始训练",
+    "event": "f40",
+    "at": "start",
+    "from": 480,
+    "to": 600
+   },
+   {
+    "id": "c10",
+    "name": "第一个法师开始训练",
+    "event": "f42",
+    "at": "start",
+    "from": 540,
+    "to": 600
+   }
+  ]
+ }
+}

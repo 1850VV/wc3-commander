@@ -494,10 +494,12 @@ class Commander:
             if job and job.get("building") == ev["unit_id"]:
                 self.rt[e["id"]].update(status="done", aEnd=self.t, note="完工")
                 where = "natural" if e.get("then") == "natural" else "main"
-                for uid in [job["worker"], *job.get("helpers", [])]:  # builders go mining (at the natural if told)
+                for uid in [job["worker"], *job.get("helpers", [])]:  # builders go back to work: then = natural | wood | main gold
                     self.roles.pop(uid, None)
                     worker = next((u for u in self.obs["units"] if u["unit_id"] == uid), None)
-                    if worker and not self.harvest(worker, "gold", where):
+                    if worker and e.get("then") == "wood":
+                        self.harvest(worker, "wood")
+                    elif worker and not self.harvest(worker, "gold", where):
                         self.harvest(worker, "gold")
                 del self.jobs[e["id"]]
                 return
@@ -651,9 +653,11 @@ class Commander:
                 cid = self.cid[ev["trained_id"]]
                 then = e.get("then") or "gold"
                 name = self.eco[ev["type_id"]]["name"]
-                self.rt[e["id"]].update(status="done", aEnd=self.t, note=f"{name}{cid} 出生" + (f" → {RES[then]}" if ev["type_id"] == "hpea" else ""))
+                self.rt[e["id"]].update(status="done", aEnd=self.t, note=f"{name}{cid} 出生" + (f" → {'分矿采金' if then == 'natural' else RES[then]}" if ev["type_id"] == "hpea" else ""))
                 if ev["type_id"] == "hpea":
-                    self.roles[ev["trained_id"]] = then  # ordered once it is observed on the map
+                    self.roles[ev["trained_id"]] = "gold" if then == "natural" else then  # ordered once it is observed on the map
+                    if then == "natural":
+                        self.mine_of[ev["trained_id"]] = "natural"
                     self.last_order.pop(ev["trained_id"], None)
                 del self.jobs[e["id"]]
                 return

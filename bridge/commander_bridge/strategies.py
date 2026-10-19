@@ -31,6 +31,8 @@ def save(name: str, plan: dict, store: Path = STORE) -> dict:
     clean = {"start": plan.get("start"), "groups": [
         {**{k: v for k, v in g.items() if k != "children"}, "children": [{k: v for k, v in e.items() if k != "rt"} for e in g.get("children", [])]}
         for g in plan["groups"]]}
+    if plan.get("checkpoints"):  # [{id, name, event, at, from, to}]: targets the console grades a run against
+        clean["checkpoints"] = plan["checkpoints"]
     doc = {"name": safe_name(name), "saved": time.strftime("%Y-%m-%dT%H:%M:%S"), "plan": clean}
     store.mkdir(parents=True, exist_ok=True)
     _path(store, name).write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

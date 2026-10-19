@@ -41,6 +41,11 @@ class StrategiesTest(unittest.TestCase):
         self.assertEqual(doc["plan"]["start"], 0)
         self.assertTrue((self.store / "南方封家 1.json").is_file())
 
+    def test_checkpoints_are_kept(self):
+        plan = dict(PLAN, checkpoints=[{"id": "c1", "name": "国王祭坛完成", "event": "e1", "at": "end", "from": 55, "to": 65}])
+        strategies.save("带检查点", plan, self.store)
+        self.assertEqual(strategies.load("带检查点", self.store)["plan"]["checkpoints"], plan["checkpoints"])
+
     def test_list_is_newest_first(self):
         strategies.save("a", PLAN, self.store)
         strategies.save("b", PLAN, self.store)

@@ -4,12 +4,13 @@
 (function () {
   'use strict';
   const D = window.LT_DATA, Sim = window.CommanderSim, W = new Sim.World(D), ECO = D.economy.units;
-  const T_END = 300, KIND = Sim.KIND, RES = Sim.RES;
+  const T_END = 600, KIND = Sim.KIND, RES = Sim.RES;
   const BUILD_NAMES = {农场: 'hhou', 兵营: 'hbar', 国王祭坛: 'halt', 祭坛: 'halt', 伐木场: 'hlum', 铁匠铺: 'hbla', 神秘藏宝室: 'hvlt', 车间: 'harm', 神秘圣地: 'hars', 狮鹫笼: 'hgra', 侦察塔: 'hwtw'};
   const UNIT_NAMES = {农民: 'hpea', 步兵: 'hfoo', 火枪手: 'hrif', 大法师: 'Hamg', 山丘之王: 'Hmkg', 牧师: 'hmpr', 女巫: 'hsor', 破法者: 'hspt'};
   const $ = id => document.getElementById(id);
 
   let startIndex = 0, groups = Sim.defaultPlan(), G = null, sel = null, placing = null;
+  let checkpoints = []; // from a loaded strategy: [{id, name, event, at, from, to}]
   let playing = true, speed = 2, acc = 0, last = performance.now();
   const live = {on: false, state: null, backend: '', es: null};
   const allEvents = () => groups.flatMap(g => g.children);
@@ -338,6 +339,12 @@
       h += `<div class="subtitle">封家</div><div class="wall"><span class="${wt.cls}">${wt.text}</span>`
         + `<button type="button" data-act="autowall"${wallBusy ? ' disabled' : ''}>自动封家</button></div>`
         + `<div class="hint">按计划里全部工地的位置判断；地图上的圆圈是最窄处。农民 2 格、英雄 3 格是推算值，还没在真游戏里验证。</div>`;
+      if (checkpoints.length) {
+        const res = checkpoints.map(cp => ({cp, r: Sim.checkpoint(cp, allEvents(), v.t)}));
+        const TEXT = {ok: () => '按时', early: r => '早 ' + Math.ceil(r.by) + ' 秒', late: r => '晚 ' + Math.ceil(r.by) + ' 秒', missed: () => '没达成', pending: () => '还没到', missing: () => '计划里没有'};
+        h += `<div class="subtitle">检查点 <span class="hint">${res.filter(x => x.r.state === 'ok' || x.r.state === 'early').length}/${res.length} 达成</span></div><div class="cps">`
+          + res.map(({cp, r}) => `<div class="cp ${r.state}"><span class="num">${fmt(cp.from ?? 0)}–${fmt(cp.to)}</span><span>${cp.name}</span><span>${TEXT[r.state](r)}${r.value != null ? '（' + fmt(r.value) + '）' : ''}</span></div>`).join('') + '</div>';
+      }
       const up = upcomingSites(v.t);
       h += `<div class="subtitle">接下来的工地 <span class="hint">（${UPCOMING} 秒内）</span></div>`;
       h += up.length ? '<div class="upc">' + up.map(e => {
@@ -490,7 +497,7 @@
     const ruler = document.createElement('div'); ruler.className = 'row';
     ruler.innerHTML = '<div class="lab" style="color:var(--muted);font-size:11px">事件 ／ 时间</div>';
     const rt = document.createElement('div'); rt.className = 'track ruler';
-    for (let t = 0; t < T_END; t += 30) { const k = document.createElement('div'); k.className = 'tick'; k.style.left = pct(t); k.textContent = fmt(t); rt.appendChild(k); }
+    for (let t = 0; t < T_END; t += T_END > 300 ? 60 : 30) { const k = document.createElement('div'); k.className = 'tick'; k.style.left = pct(t); k.textContent = fmt(t); rt.appendChild(k); }
     rt.addEventListener('pointerdown', seekFrom); ruler.appendChild(rt); tlBody.appendChild(ruler);
     for (const g of groups) {
       const row = document.createElement('div'); row.className = 'row grp';
@@ -600,6 +607,7 @@
         const j = await (await fetch('/api/strategies/' + encodeURIComponent(nm))).json();
         if (!j.ok) { say('载入失败：' + j.error, true); return; }
         groups = j.plan.groups.map(g => ({...g, open: true, children: g.children.map(e => ({...e, rt: null}))}));
+        checkpoints = j.plan.checkpoints || [];
         Sim.syncSeq(allEvents());
         if (j.plan.start != null) { startIndex = j.plan.start; startSel.value = String(startIndex); }
         sel = null; resim(0); buildTimeline(); renderCmd(); home(); playing = false; bPlay.textContent = '▶ 播放';
@@ -631,7 +639,7 @@
       $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0);
     },
     planGame() { return G; }, // placement checks use the offline model of the same map
-    serialize() { return {start: startIndex, groups: groups.map(g => ({id: g.id, name: g.name, src: g.src, children: g.children.map(({rt, ...e}) => e)}))}; },
+    serialize() { return {start: startIndex, checkpoints, groups: groups.map(g => ({id: g.id, name: g.name, src: g.src, children: g.children.map(({rt, ...e}) => e)}))}; },
     pushPlan() {
       G.planSites && (G = Sim.run(W, startIndex, groups, 0)); // resolve build sites with the same placement rules
       fetch('/api/plan', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(this.serialize())}).catch(() => say('计划没送到本地服务', true));
