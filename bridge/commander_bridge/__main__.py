@@ -18,7 +18,7 @@ def main() -> None:
     p.add_argument("--host", default="127.0.0.1",
                    help="address to listen on; 0.0.0.0 opens the console to the local network (no login: trusted networks only)")
     p.add_argument("--speed", type=float, default=2.0, help="fake backend only: game seconds per real second")
-    p.add_argument("--opponent", choices=("none", "easy", "normal", "insane"), default="none", help="wc3env backend: computer opponent in slot 1")
+    p.add_argument("--opponent", choices=("none", "easy", "normal", "insane"), default="none", help="wc3env backend: computer opponent in slot 1; none keeps slot 1 on the map with its AI off (it never attacks)")
     p.add_argument("--window", choices=("background", "interactive"), default="background",
                    help="wc3env backend: background = visible window that keeps running without focus (for watching); interactive = normal window you can play in")
     p.add_argument("--seed", type=int, default=1, help="wc3env backend: match seed, keep it fixed to compare runs")

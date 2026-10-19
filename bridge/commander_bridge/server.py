@@ -66,6 +66,10 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
     if opponent != "none":
         players += (PlayerConfig(1, control="computer"),)
         difficulty = {"easy": 0, "normal": 1, "insane": 2}[opponent]
+    else:
+        # Lost Temple's lobby puts a computer in slot 1, and an unlisted slot keeps it (it attacked at
+        # ~5 min in the native probe). As an agent slot it stays on the map with its AI off: no attacks.
+        players += (PlayerConfig(1, control="agent"),)
     # "background" keeps a visible window that does not pause when you switch to the browser;
     # "interactive" is the normal game window (you can play, but it may pause without focus).
     config = GameConfig(map="(4)LostTemple.w3m", players=players, mode="realtime", window_mode=window,
@@ -127,7 +131,9 @@ class Runner:
                 with self.lock:
                     actions = self.commander.tick(obs)
                     self.state = self.commander.snapshot()
-                observations, done, info = session.step({0: actions}, ms=step_ms) if self.backend == "fake" else session.step({0: actions})
+                batches = {slot: [] for slot in session.config.agent_slots}  # every agent slot needs a batch; only 0 is ours
+                batches[0] = actions
+                observations, done, info = session.step(batches, ms=step_ms) if self.backend == "fake" else session.step(batches)
                 obs = observations[0]
                 with self.lock:
                     self.commander.feedback(actions, info.get("placements", {}).get(0, []), info.get("rejected", {}).get(0, []))
