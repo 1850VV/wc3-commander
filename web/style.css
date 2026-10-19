@@ -25,6 +25,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .brand h1{font-family:var(--f-display);font-size:20px;margin:0;letter-spacing:.04em}
 .mode{font-size:11px;letter-spacing:.08em;padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--muted)}
 .mode.live{color:var(--ok);border-color:#3f6a35}
+.btn.tactic{color:var(--muted)}
+.btn.tactic.on{color:var(--ok);border-color:#3f6a35}
 .pick{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .pick select{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:4px 6px;color:var(--fg)}
 .res{display:flex;gap:14px;font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:13px}

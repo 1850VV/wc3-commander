@@ -23,7 +23,7 @@ from commander_bridge.engine import Commander  # noqa: E402
 from commander_bridge.server import make_session  # noqa: E402
 
 
-def play(plan_file: str, seconds: int, start: int, edit=None, **world):
+def play(plan_file: str, seconds: int, start: int, edit=None, each=None, **world):
     data = load_data()
     plan = json.loads((HERE / "fixtures" / plan_file).read_text(encoding="utf-8"))
     if edit:
@@ -36,6 +36,8 @@ def play(plan_file: str, seconds: int, start: int, edit=None, **world):
         rejected = []
         commander.sent = []  # every action handed to the game, for assertions
         while obs["game_time_seconds"] < seconds:
+            if each:
+                each(commander, obs["game_time_seconds"])  # e.g. the console's tactic switch
             actions = commander.tick(obs)
             commander.sent += actions
             observations, done, info = session.step({0: actions}, ms=250)
@@ -87,6 +89,23 @@ class OpeningTest(unittest.TestCase):
         roles = [u["role"] for u in snap["units"] if u["type"] == "hpea"]
         self.assertIn("wood", roles)
         self.assertNotIn("idle", roles)
+
+
+class TacticSwitchTest(unittest.TestCase):
+    def test_off_only_watches_and_on_resumes_the_plan(self):
+        sent_off = []
+
+        def switch(c, t):
+            c.enabled = t >= 30  # off for the first 30 seconds, then on
+            if not c.enabled:
+                sent_off.append(len(c.sent))
+
+        c, rejected = play("default-plan-s0.json", 90, 0, each=switch)
+        self.assertEqual(sent_off[-1], 0)  # no order at all while off
+        self.assertGreater(c.snapshot()["t"], 29)  # but the game was still read
+        self.assertTrue(c.sent)  # orders start once it is on
+        self.assertEqual(rejected, [])
+        self.assertTrue(c.snapshot()["enabled"])
 
 
 class EditTest(unittest.TestCase):

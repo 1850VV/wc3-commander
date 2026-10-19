@@ -588,6 +588,8 @@
       live.backend = h.backend;
       const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.textContent = '连接 ' + (h.backend === 'fake' ? '假游戏服务器' : '魔兽争霸三');
       b.onclick = () => (live.on ? this.disconnect(b) : this.connect(b)); $('modeTag').after(b);
+      const tk = live.tacticBtn = document.createElement('button'); tk.className = 'btn tactic on'; tk.type = 'button'; tk.hidden = true;
+      tk.title = '开：按时间轴自动下命令；关：只看游戏、不下任何命令，你自己操作'; tk.onclick = () => this.tactic(!live.tactic); b.after(tk); this.showTactic(true);
       const sv = document.createElement('button'); sv.className = 'btn'; sv.type = 'button'; sv.textContent = '保存布局';
       sv.title = '把整套编排（包括拖好的工地）存到服务端的 strategies 目录'; sv.onclick = () => this.save(); b.after(sv);
       const ld = document.createElement('select'); ld.className = 'btn'; ld.title = '载入保存过的编排（会替换当前整套编排）';
@@ -630,13 +632,18 @@
       live.es = new EventSource('/api/stream');
       live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
       live.es.onerror = () => say('与本地服务的连接中断，正在重试…', true);
-      live.on = true; btn.textContent = '断开'; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
+      live.on = true; btn.textContent = '断开'; this.showTactic(true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'start', start: startIndex})});
     },
     disconnect(btn) {
-      if (live.es) live.es.close(); live.on = false; live.state = null; btn.textContent = '重新连接'; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = false);
+      if (live.es) live.es.close(); live.on = false; live.state = null; btn.textContent = '重新连接'; live.tacticBtn.hidden = true; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = false);
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'stop'})});
       $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0);
+    },
+    showTactic(on) { live.tactic = on; const tk = live.tacticBtn; tk.textContent = on ? '战术：开' : '战术：关'; tk.classList.toggle('on', on); },
+    tactic(on) { // the bridge keeps reading the game either way; off only stops it giving orders
+      this.showTactic(on);
+      fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'tactic', on})}).catch(() => say('开关没送到本地服务', true));
     },
     planGame() { return G; }, // placement checks use the offline model of the same map
     serialize() { return {start: startIndex, checkpoints, groups: groups.map(g => ({id: g.id, name: g.name, src: g.src, children: g.children.map(({rt, ...e}) => e)}))}; },
@@ -646,6 +653,7 @@
     },
     apply(s) {
       live.state = s;
+      if (s.enabled != null && s.enabled !== live.tactic) this.showTactic(s.enabled); // a new game starts with it on
       if (s.start != null && s.start !== startIndex) { startIndex = s.start; startSel.value = String(s.start); home(); say('游戏分配的出生点是' + W.starts[s.start].name + '，已切换'); }
       const evs = new Map(allEvents().map(e => [e.id, e]));
       for (const [id, rt] of Object.entries(s.events || {})) { const e = evs.get(id); if (e) e.rt = rt; }

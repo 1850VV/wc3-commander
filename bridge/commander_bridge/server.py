@@ -3,6 +3,7 @@
   GET  /api/health    which backend is configured, whether a game is running
   POST /api/plan      the console's timeline (groups of events)
   POST /api/control   {"action": "start", "start": 0} or {"action": "stop"}
+                      or {"action": "tactic", "on": true|false}: run the plan or only watch
   GET  /api/stream    server-sent events: {"type": "state"} snapshots and {"type": "log"} lines
   GET  /api/strategies          saved strategies (name, time, start, event count)
   GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
@@ -92,6 +93,7 @@ class Runner:
         self.stop_flag = threading.Event()
         self.listeners: list[queue.Queue] = []
         self.running = False
+        self.tactic = True  # the plan runs as soon as the game is connected; the console can switch it off
 
     def log(self, text: str, level: str = "info") -> None:
         for q in list(self.listeners):
@@ -102,12 +104,21 @@ class Runner:
             self.plan = plan
             self.commander.set_plan(plan)
 
+    def set_tactic(self, on: bool) -> None:
+        """Switch the plan on or off without leaving the game; off only watches."""
+        with self.lock:
+            self.tactic = on
+            self.commander.enabled = on
+            self.state = self.commander.snapshot()
+        self.log("战术已开启：按时间轴执行" if on else "战术已关闭：只观察，不下命令")
+
     def start(self, start: int) -> None:
         self.stop()
         self.stop_flag.clear()
         with self.lock:
             self.commander = Commander(self.data)
             self.commander.set_plan(self.plan)
+            self.commander.enabled = self.tactic = True  # every new game starts with the tactic on
         self.thread = threading.Thread(target=self._run, args=(start,), daemon=True)
         self.thread.start()
 
@@ -176,7 +187,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/health":
-            return self._json(200, {"ok": True, "backend": self.runner.backend, "running": self.runner.running})
+            return self._json(200, {"ok": True, "backend": self.runner.backend, "running": self.runner.running, "tactic": self.runner.tactic})
         if self.path == "/api/stream":
             return self._stream()
         if self.path == "/api/strategies":
@@ -215,6 +226,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.runner.start(int(body.get("start") or 0))
             elif action == "stop":
                 threading.Thread(target=self.runner.stop, daemon=True).start()
+            elif action == "tactic":
+                self.runner.set_tactic(bool(body.get("on", True)))
             else:
                 return self._json(400, {"ok": False, "error": "未知操作"})
             return self._json(200, {"ok": True})

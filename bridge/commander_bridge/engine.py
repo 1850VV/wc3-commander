@@ -53,6 +53,7 @@ class Commander:
         self.last_order: dict[int, float] = {}
         self.log: list[tuple[str, str]] = []
         self.obs: dict | None = None
+        self.enabled = True  # tactic switch: off = watch and report only, no orders
 
     # ---- plan --------------------------------------------------------------------------------
     def set_plan(self, plan: dict) -> None:
@@ -75,6 +76,8 @@ class Commander:
         self.actions: list[dict] = []  # before _ingest: orders given while handling events must be kept
         self.ordered: set[int] = set()
         self._ingest(obs)
+        if not self.enabled:  # switched off: keep reading the game, give no orders, start nothing
+            return []
         due = sorted((e for e in self.events if self.rt[e["id"]]["status"] == "pending" and e["start"] <= self.t + 1e-6 and self.ready(e)),
                      key=lambda e: (e["start"], e.get("seq", 0)))
         for e in due:
@@ -709,7 +712,7 @@ class Commander:
             buildings.append({"id": "u%d" % s["unit_id"], "type": s["type_id"], "x": s["x"], "y": s["y"], "done": not constructing, "progress": progress, "train": train})
         p = o["player"]
         return {
-            "t": self.t, "start": self.start_index, "gold": p["gold"], "wood": p["lumber"], "foodUsed": p["food_used"], "foodCap": p["food_cap"],
+            "t": self.t, "start": self.start_index, "enabled": self.enabled, "gold": p["gold"], "wood": p["lumber"], "foodUsed": p["food_used"], "foodCap": p["food_cap"],
             "units": units, "buildings": buildings,
             "mine": {"x": self.mine["x"], "y": self.mine["y"], "gold": -1} if self.mine else None,
             # what we can see of others: creeps (owner 12) and other players' units (for the record)
