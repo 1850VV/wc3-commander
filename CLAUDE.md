@@ -23,7 +23,8 @@ tools/pc.sh start | status | log | stop | pull                                  
 ## 规则
 
 - 命令被 wc3env 接受不等于执行成功；事件状态只能根据后续观测和游戏事件改变。
-- 建造：事件带 `at`（玩家在地图上放的）或 `exact: true` 时按精确坐标建造、不加 `auto_place`；否则加 `auto_place`，游戏可能挪开几百距离。新建筑先按农民的命令目标认领，再按 `info["placements"]` 回报的坐标，都没有才用 700 的宽半径。`server.Runner` 每步后要调用 `engine.feedback`。
+- 工地：`sim.js` 的 `planSites` 先给带 `at` 的事件占位，再按开始时间给自动工地选址；`at` 放不下时就近改位置并写 `e.siteNote`。控制台在建筑开工（`rt.bid`）前都允许拖动工地（`app.js` 的 `movable`）。
+- 建造：事件带 `at`（玩家在地图上放的）或 `exact: true` 时按精确坐标建造、不加 `auto_place`；否则加 `auto_place`，游戏可能挪开几百距离。新建筑先按农民的命令目标认领，再按 `info["placements"]` 回报的坐标，都没有才用 700 的宽半径。`server.Runner` 每步后要调用 `engine.feedback`。已下令后工地坐标或精确/自动方式变了，引擎会重新下令（`_site_changed`）。
 - 不能给 `inside`（金矿里）的单位下命令，否则 wc3env 会让会话进入故障状态；`engine.tick` 已经过滤。
 - 模拟器和测试世界里的数值假设（矿内 1 秒、每棵树 50 木）未校准，改动时同步更新 README 和页面底部说明。
 - 只用于离线单机，不要加任何联网对局相关功能。控制台默认只监听 127.0.0.1；`--host 0.0.0.0`（`bridge.ps1 -Lan`）只为家里局域网访问，控制台没有登录保护，不要做成默认。

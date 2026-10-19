@@ -168,6 +168,23 @@ class FeedbackTest(unittest.TestCase):
         self.start_farm()
         self.assertEqual(self.c.jobs["f"]["state"], "ordered")
 
+    def test_moving_an_ordered_site_orders_again(self):
+        self.c.obs["player"] = {"gold": 500, "lumber": 150, "food_used": 5, "food_cap": 12}
+        self.c.budget, self.c.actions, self.c.ordered = [500, 150], [], set()
+        moved = {"id": "f", "seq": 1, "kind": "build", "name": "建造 农场", "start": 0, "btype": "hhou", "site": [960, -7616], "at": [960, -7616]}
+        self.c.set_plan({"groups": [{"id": "g", "children": [moved]}]})  # dragged on the console map
+        e = self.c.events[0]
+        self.c._advance(e)
+        self.assertEqual(self.c.jobs["f"]["state"], "wait_res")
+        self.assertIn("重新下令", self.c.rt["f"]["note"])
+        self.assertEqual(self.c.jobs["f"]["tries"], 0)
+        self.c._advance(e)
+        a = self.c.actions[-1]
+        self.assertEqual((a["command"], a["arguments"]), ("build", {"type_id": "hhou", "x": 960.0, "y": -7616.0}))
+        self.c.actions = []
+        self.c._advance(e)  # same site again: no new order
+        self.assertEqual(self.c.actions, [])
+
     def test_refused_exact_build_retries_then_gives_up(self):
         self.c.events[0]["at"] = [832, -7232]
         self.c.feedback([self.action], [], [{"index": 0, "reason": "no_build_site"}])

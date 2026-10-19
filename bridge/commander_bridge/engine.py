@@ -257,6 +257,10 @@ class Commander:
                 self.order(job["worker"], "build", **(args if exact else dict(args, auto_place=True)))
                 job.update(state="ordered", ordered=self.t, tries=job["tries"] + 1, action=self.actions[-1], placed=None)
                 rt["note"] = f"农民{self.cid[job['worker']]} 前往工地" + ("（指定位置）" if exact else "")
+            elif job["state"] == "ordered" and self._site_changed(e, job):
+                # the player moved the site (or pinned/unpinned it) after the order went out: order again
+                job.update(state="wait_res", tries=max(0, job["tries"] - 1))
+                rt["note"] = "工地位置改了，重新下令"
             elif job["state"] == "ordered":
                 self.spend(c["gold"], c["wood"])  # keep the money aside until construction starts
                 worker = next((u for u in self.units() if u["unit_id"] == job["worker"]), None)
@@ -350,6 +354,12 @@ class Commander:
         self.rt[e["id"]].update(bStart=self.t, bid="u%d" % ev["unit_id"], note="建造中 0%")
         if b is not None:
             self.rt[e["id"]]["builtAt"] = [b["x"], b["y"]]
+
+    def _site_changed(self, e, job) -> bool:
+        a = (job.get("action") or {}).get("arguments") or {}
+        if "x" not in a:
+            return False
+        return (a["x"], a["y"]) != (float(e["site"][0]), float(e["site"][1])) or ("auto_place" in a) == self.exact(e)
 
     @staticmethod
     def exact(e) -> bool:

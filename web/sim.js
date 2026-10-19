@@ -298,15 +298,24 @@
     }
 
     /* ---------- events ---------- */
+    /* Resolve every build event's site. Player-placed sites (e.at) are reserved first, so an
+     * earlier auto-placed building never takes a spot the player picked; auto sites keep their
+     * anchor numbering by start order. e.siteNote explains a placed site that had to move. */
     planSites() {
-      const reserved = [], counts = {};
+      const reserved = [], counts = {}, nth = new Map();
       const builds = this.events.filter(e => e.kind === 'build').sort((a, b) => a.start - b.start || a.seq - b.seq);
       for (const e of builds) {
+        delete e.siteNote;
         if (e.resume) { e.site = e.at; continue; }
-        const k = counts[e.btype] = (counts[e.btype] || 0) + 1;
+        nth.set(e, counts[e.btype] = (counts[e.btype] || 0) + 1);
+      }
+      for (const e of [...builds.filter(e => e.at && !e.resume), ...builds.filter(e => !e.at && !e.resume)]) {
         let site = null;
-        if (e.at) { const [x, y] = this.w.snap(e.btype, e.at[0], e.at[1]); if (this.canPlace(e.btype, x, y, reserved).ok) site = [x, y]; }
-        if (!site) { const [ax, ay] = e.at || this.anchor(e.btype, k - 1); site = this.findSite(e.btype, ax, ay, reserved); }
+        if (e.at) {
+          const [x, y] = this.w.snap(e.btype, e.at[0], e.at[1]), chk = this.canPlace(e.btype, x, y, reserved);
+          if (chk.ok) site = [x, y]; else e.siteNote = '指定位置不能建（' + chk.why + '），改到旁边';
+        }
+        if (!site) { const [ax, ay] = e.at || this.anchor(e.btype, nth.get(e) - 1); site = this.findSite(e.btype, ax, ay, reserved); }
         e.site = site;
         if (site) reserved.push({type: e.btype, x: site[0], y: site[1]});
       }

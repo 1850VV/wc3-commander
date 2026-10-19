@@ -100,6 +100,26 @@
     return allEvents().filter(e => e.kind === 'build' && e.site && !(e.rt && e.rt.bid) && e.id !== exceptId).map(e => ({type: e.btype, x: e.site[0], y: e.site[1]}));
   }
 
+  /* ---------- planned build sites: drag, pin, upcoming ---------- */
+  // A site placed by the player (e.at) is built on that exact point; any other site is picked
+  // automatically and Warcraft may still nudge it. Sites can move until the building is started.
+  const UPCOMING = 30; // seconds ahead the overview lists build sites
+  const siteRect = e => W.rectOf(e.site[0], e.site[1], W.buildingTex(e.btype));
+  const inRect = (r, x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+  function movable(e) { const rt = e.rt || {}; return e.kind === 'build' && !e.resume && !!e.site && !rt.bid && rt.status !== 'done'; }
+  function siteAt(wx, wy) { return allEvents().find(e => movable(e) && inRect(siteRect(e), wx, wy)); }
+  function upcomingSites(t) { return allEvents().filter(e => movable(e) && e.start <= t + UPCOMING).sort((a, b) => a.start - b.start || a.seq - b.seq); }
+  function siteGhost(btype, wx, wy, exceptId) {
+    const pos = W.snap(btype, wx, wy), chk = placementGame().canPlace(btype, pos[0], pos[1], plannedReserved(exceptId));
+    return {btype, pos, ok: chk.ok, why: chk.why};
+  }
+  function pinSite(e, pos) {
+    e.at = pos.slice(); planChanged();
+    say('已把' + name(e.btype) + '的工地固定在 ' + pos.join(', ') + '，到时按这个位置精确建造');
+  }
+  function unpinSite(e) { delete e.at; planChanged(); renderCmd(); say(name(e.btype) + '的工地改回自动选址'); }
+  function focusEvent(e) { sel = {type: 'event', id: e.id}; if (e.site) { cam.x = e.site[0]; cam.y = e.site[1]; } renderCmd(); markSel(); }
+
   function draw() {
     const v = V(); syncTrees(v);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#0f1412'; ctx.fillRect(0, 0, CW, CH);
@@ -123,12 +143,18 @@
       if (w > 22) label(mine && v.mine.gold >= 0 ? '金矿 ' + Math.floor(v.mine.gold) : '金矿', x + w / 2, y + h / 2, ls);
     }
     for (const n of W.neutrals) { const [x, y, w, h] = rectScreen(W.rectOf(n.x, n.y, n.tex)); ctx.fillStyle = '#4b3a5e'; ctx.fillRect(x, y, w, h); if (w > 22) label(n.name, x + w / 2, y + h / 2, ls); }
-    // planned build sites
+    // planned build sites: solid = placed by the player (exact), dashed = automatic; brighter when due soon
+    const soon = new Set(upcomingSites(v.t).map(e => e.id)), dragging = drag && drag.site;
     for (const e of allEvents()) {
       if (e.kind !== 'build' || !e.site || (e.rt && e.rt.bid)) continue;
-      const [x, y, w, h] = rectScreen(W.rectOf(e.site[0], e.site[1], W.buildingTex(e.btype)));
-      ctx.fillStyle = 'rgba(214,160,63,.10)'; ctx.fillRect(x, y, w, h); ctx.setLineDash([5, 4]); ctx.strokeStyle = sel && sel.type === 'event' && sel.id === e.id ? '#fff' : '#d6a03f'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
-      if (w > 26) label(name(e.btype) + ' · ' + fmt(e.start), x + w / 2, y + h / 2, ls * .9, '#e8c27a');
+      const [x, y, w, h] = rectScreen(siteRect(e)), picked = sel && sel.type === 'event' && sel.id === e.id, due = soon.has(e.id);
+      ctx.globalAlpha = dragging === e && drag.ghost ? 0.35 : 1;
+      ctx.fillStyle = due ? 'rgba(214,160,63,.24)' : 'rgba(214,160,63,.10)'; ctx.fillRect(x, y, w, h);
+      if (!e.at) ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = picked ? '#fff' : due ? '#f0c060' : '#d6a03f'; ctx.lineWidth = due || e.at ? 2.2 : 1.5; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+      if (e.at) { ctx.fillStyle = '#f0c060'; ctx.beginPath(); ctx.arc(x + 5, y + 5, 3.5, 0, Math.PI * 2); ctx.fill(); } // pin mark
+      if (w > 26) label(name(e.btype) + ' · ' + fmt(e.start) + (e.at ? ' · 指定' : ''), x + w / 2, y + h / 2, ls * .9, '#e8c27a');
+      ctx.globalAlpha = 1;
     }
     for (const b of v.buildings) {
       const [x, y, w, h] = rectScreen(W.rectOf(b.x, b.y, b.tex));
@@ -138,10 +164,12 @@
       if (w > 22) label(name(b.type) + (b.done ? '' : ' ' + Math.floor(b.progress * 100) + '%'), x + w / 2, y + h / 2, ls);
       if (b.train && b.train.total && w > 22) { ctx.fillStyle = '#d6a03f'; ctx.fillRect(x + 3, y + h - 6, (w - 6) * (1 - b.train.left / b.train.total), 3); }
     }
-    if (placing && placing.pos) {
-      const [x, y, w, h] = rectScreen(W.rectOf(placing.pos[0], placing.pos[1], W.buildingTex(placing.btype)));
-      ctx.fillStyle = placing.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)'; ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = placing.ok ? '#7fb069' : '#d0584a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+    const ghost = placing && placing.pos ? placing : dragging && drag.ghost;
+    if (ghost) {
+      const [x, y, w, h] = rectScreen(W.rectOf(ghost.pos[0], ghost.pos[1], W.buildingTex(ghost.btype)));
+      ctx.fillStyle = ghost.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)'; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = ghost.ok ? '#7fb069' : '#d0584a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+      if (!ghost.ok && ghost.why && w > 26) label(ghost.why, x + w / 2, y - 10, ls * .9, '#f0a090');
     }
     const su = sel && sel.type === 'unit' ? v.units.find(u => u.id === sel.id) : null;
     if (su && su.dest) { const a = toScreen(su.x, su.y), b = toScreen(...su.dest); ctx.setLineDash([4, 4]); ctx.strokeStyle = '#d6a03f'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); ctx.setLineDash([]); }
@@ -170,18 +198,33 @@
 
   /* ---------- pointer input on the map ---------- */
   let drag = null;
-  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false}; });
+  cv.addEventListener('pointerdown', e => {
+    cv.setPointerCapture(e.pointerId);
+    const r = cv.getBoundingClientRect(), [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
+    drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false};
+    const site = !placing && siteAt(wx, wy); // grabbing a planned site moves it instead of the map
+    if (site) Object.assign(drag, {site, off: [wx - site.site[0], wy - site.site[1]], ghost: null});
+  });
   cv.addEventListener('pointermove', e => {
     const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
     if (placing) updateGhost(...toWorld(sx, sy));
-    if (!drag) return;
+    if (!drag) { if (!placing) cv.style.cursor = siteAt(...toWorld(sx, sy)) ? 'move' : ''; return; }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 4) drag.moved = true;
-    if (drag.moved && !placing) { cam.x = drag.cx - dx / cam.s; cam.y = drag.cy + dy / cam.s; clampCam(); cv.style.cursor = 'grabbing'; }
+    if (!drag.moved || placing) return;
+    if (drag.site) { const [wx, wy] = toWorld(sx, sy); drag.ghost = siteGhost(drag.site.btype, wx - drag.off[0], wy - drag.off[1], drag.site.id); cv.style.cursor = 'move'; }
+    else { cam.x = drag.cx - dx / cam.s; cam.y = drag.cy + dy / cam.s; clampCam(); cv.style.cursor = 'grabbing'; }
   });
   cv.addEventListener('pointerup', e => {
     const r = cv.getBoundingClientRect(), [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
-    const click = drag && !drag.moved; drag = null; cv.style.cursor = '';
+    const d = drag, click = d && !d.moved; drag = null; cv.style.cursor = '';
+    if (d && d.site && d.moved && d.ghost) {
+      const e2 = d.site, g = d.ghost;
+      if (!movable(e2)) say(name(e2.btype) + '已经开工，不能再改位置', true);
+      else if (!g.ok) say('这里不能放' + name(e2.btype) + '：' + g.why, true);
+      else if (g.pos[0] !== e2.site[0] || g.pos[1] !== e2.site[1]) { pinSite(e2, g.pos); focusEvent(e2); }
+      return;
+    }
     if (!click) return;
     if (placing) { updateGhost(wx, wy); confirmPlace(); return; }
     pick(wx, wy);
@@ -227,6 +270,8 @@
 
   /* ---------- status + command card ---------- */
   const statusEl = $('status'), cmdEl = $('cmd'); let lastStatus = '';
+  // pointerdown, not click: the panel is re-rendered every second while the countdown runs
+  statusEl.addEventListener('pointerdown', p => { const b = p.target.closest('[data-ev]'); const e = b && allEvents().find(x => x.id === b.dataset.ev); if (e) focusEvent(e); });
   function renderStatus() {
     const v = V(); let h = '';
     const item = sel && (sel.type === 'unit' ? v.units.find(u => u.id === sel.id) : sel.type === 'building' ? v.buildings.find(b => b.id === sel.id) : allEvents().find(e => e.id === sel.id));
@@ -236,8 +281,15 @@
       h = `<div class="title">战局概览</div><div class="kv">
         <span>采金</span><span class="num">${c.gold} 名农民</span><span>伐木</span><span class="num">${c.wood} 名农民</span>
         <span>建造</span><span class="num">${c.build} 名农民</span><span>空闲</span><span class="num" style="color:${c.idle ? 'var(--warn)' : 'inherit'}">${c.idle} 名农民</span>
-        <span>主矿剩余</span><span class="num">${v.mine.gold >= 0 ? Math.floor(v.mine.gold) + ' 金' : '游戏不提供'}</span></div>
-        <div class="hint" style="margin-top:6px">拖动地图平移，滚轮缩放。点单位、建筑或虚线工地查看详情。</div>`;
+        <span>主矿剩余</span><span class="num">${v.mine.gold >= 0 ? Math.floor(v.mine.gold) + ' 金' : '游戏不提供'}</span></div>`;
+      const up = upcomingSites(v.t);
+      h += `<div class="subtitle">接下来的工地 <span class="hint">（${UPCOMING} 秒内）</span></div>`;
+      h += up.length ? '<div class="upc">' + up.map(e => {
+        const left = Math.ceil(e.start - v.t), rt = e.rt || {};
+        const when = left > 0 ? '还有 ' + left + ' 秒' : (rt.note || '等待开工');
+        return `<button type="button" data-ev="${e.id}"><b>${fmt(e.start)}</b> ${name(e.btype)} <span class="${e.at ? 'pin' : 'auto'}">${e.at ? '指定' : '自动'}</span> <span class="hint">${when}</span></button>`;
+      }).join('') + '</div><div class="hint">拖动地图上的工地框可以改位置；不拖就按自动位置建造。</div>'
+        : '<div class="hint">没有要开工的建筑。拖动地图平移，滚轮缩放；虚线框是自动选的工地，可以拖动。</div>';
     } else if (sel.type === 'unit') {
       const u = item;
       h = `<div class="title">${name(u.type)} #${u.id}</div><div class="kv"><span>当前任务</span><span>${u.task}</span>
@@ -254,7 +306,10 @@
       const e = item, g = groups.find(g => g.children.includes(e));
       h = `<div class="title">${e.name}</div><div class="kv"><span>类型</span><span>${KIND[e.kind]}事件 · ${g.name}</span>
         <span>计划开始</span><span class="num">${fmt(e.start)}</span><span>实际开始</span><span class="num">${e.rt && e.rt.aStart != null ? fmt(e.rt.aStart) : '—'}</span>
-        <span>状态</span><span>${(e.rt && e.rt.note) || '计划中'}</span>${e.site ? `<span>工地</span><span class="num">${e.site.join(', ')}</span>` : ''}</div>`;
+        <span>状态</span><span>${(e.rt && e.rt.note) || '计划中'}</span>${e.site ? `<span>工地</span><span class="num">${e.site.join(', ')} · ${e.at ? '指定位置（精确建造）' : '自动选址'}</span>` : ''}</div>`;
+      if (e.siteNote) h += `<div class="hint" style="color:var(--warn)">${e.siteNote}</div>`;
+      if (e.rt && e.rt.placed && !e.at) h += `<div class="hint">游戏实际选址：${e.rt.placed.map(Math.round).join(', ')}</div>`;
+      if (movable(e)) h += '<div class="hint">在地图上拖动这个工地框可以改位置。</div>';
     }
     if (h !== lastStatus) { statusEl.innerHTML = h; lastStatus = h; }
   }
@@ -279,6 +334,7 @@
     } else if (sel && sel.type === 'event') {
       const e = allEvents().find(x => x.id === sel.id);
       if (e) btns = [['←', '提前 5 秒', () => shiftEv(e, -5)], ['→', '推后 5 秒', () => shiftEv(e, 5)], ['X', '删除事件', () => delEv(e)]];
+      if (e && e.at && movable(e)) btns.push(['U', '恢复自动选址', () => unpinSite(e)]);
     }
     if (placing) btns.push(['Esc', '取消放置', stopPlace]);
     cmdEl.innerHTML = '';

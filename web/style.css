@@ -63,6 +63,15 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .cmd button kbd{position:absolute;right:4px;top:3px;font-family:var(--f-mono);font-size:10px;color:var(--accent)}
 .cmd .empty{aspect-ratio:1;border:1px dashed var(--line);border-radius:6px}
 .hint{color:var(--muted);font-size:12px;line-height:1.5}
+.status .subtitle{font-size:13px;font-weight:700;margin:8px 0 4px}
+.upc{display:flex;flex-direction:column;gap:3px;margin-bottom:4px}
+.upc button{display:flex;align-items:baseline;gap:6px;text-align:left;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;font-size:12px}
+.upc button:hover{border-color:var(--accent)}
+.upc b{font-family:var(--f-mono);font-weight:600;color:var(--accent)}
+.upc .pin,.upc .auto{font-size:11px;padding:0 6px;border-radius:8px;border:1px solid var(--line)}
+.upc .pin{color:var(--accent);border-color:var(--accent)}
+.upc .auto{color:var(--muted);border-style:dashed}
+.upc .hint{margin-left:auto}
 .push{margin-left:auto}
 
 .tl{background:var(--panel);border:1px solid var(--line);border-radius:8px}
