@@ -3,7 +3,8 @@
 #
 #   tools/pc.sh status    code version, bridge process and its session, health
 #   tools/pc.sh pull      git pull --ff-only in the PC's checkout
-#   tools/pc.sh start     stop any bridge, start it on the PC's desktop (scheduled task), open the tunnel
+#   tools/pc.sh start [args]  stop any bridge, start it on the PC's desktop (scheduled task), open the
+#                         tunnel; args go to the bridge once, e.g. start --window interactive
 #   tools/pc.sh stop      stop the bridge on the PC
 #   tools/pc.sh tunnel    forward http://127.0.0.1:8790/ on this machine to the PC (not needed when the
 #                         bridge was installed with -Lan and this machine is on the same network)
@@ -42,7 +43,9 @@ case "${1:-status}" in
   pull) remote "git -C \"$REPO\" pull --ff-only" ;;
   stop) bridge stop ;;
   start)
+    shift
     bridge stop
+    if [ $# -gt 0 ]; then remote "Set-Content -Encoding utf8 -Path \"$REPO\\bridge\\next-start.txt\" -Value '$*'"; fi
     sleep 2  # let the previous task run end so the task can start again
     remote "schtasks /Run /TN $TASK" >/dev/null
     echo "已请求在 PC 桌面上启动，等待服务就绪…"

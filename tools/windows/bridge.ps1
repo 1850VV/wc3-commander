@@ -5,6 +5,8 @@ Start, stop or inspect the commander bridge on the Windows game PC.
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 start      # on the desktop
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 stop
   powershell -ExecutionPolicy Bypass -File tools\windows\bridge.ps1 install    # once: scheduled task for remote start
+  extra bridge arguments for one start (e.g. --window interactive) can be left in bridge\next-start.txt;
+  "start" uses and deletes it, so a remote start through the scheduled task can still pass options
   add -Lan to start or install to open the console to the local network (http://<this PC's 192.168 address>:8790/);
   there is no login, so only on a trusted home network, and Windows Firewall must allow TCP 8790
 
@@ -73,6 +75,12 @@ switch ($Action) {
         "# $(Get-Date -Format s) start" | Out-File -FilePath $Log -Encoding utf8
         # stderr lines become plain text (no red NativeCommandError) and go to the log as UTF-8
         $hostArgs = if ($Lan) { @("--host", "0.0.0.0") } else { @() }
+        $once = Join-Path $Bridge "next-start.txt"
+        if (Test-Path $once) {
+            $hostArgs += @((Get-Content -Raw -Encoding utf8 $once).Trim() -split "\s+" | Where-Object { $_ })
+            Remove-Item $once
+        }
+        Write-Output ("参数：" + ($hostArgs -join " "))
         & $Python -u -m commander_bridge --backend wc3env @hostArgs 2>&1 | ForEach-Object {
             $line = "$_"
             Write-Output $line
