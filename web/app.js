@@ -627,13 +627,26 @@
         say(j.ok ? `已保存「${j.name}」：${j.events} 个事件` : '没保存成功：' + j.error, !j.ok);
       } catch (_) { say('没保存成功：连不上本地服务', true); }
     },
-    connect(btn) {
-      this.pushPlan();
+    async connect(btn) {
+      let h = {};
+      try { h = await (await fetch('/api/health')).json(); } catch (_) { say('连不上本地服务', true); return; }
+      if (h.running) { // a game is already going: join it with its plan instead of starting a new one
+        try { this.adopt((await (await fetch('/api/plan')).json()).plan); } catch (_) { say('读不到正在运行的计划', true); return; }
+      } else this.pushPlan();
       live.es = new EventSource('/api/stream');
       live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
       live.es.onerror = () => say('与本地服务的连接中断，正在重试…', true);
-      live.on = true; btn.textContent = '断开'; this.showTactic(true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
+      live.on = true; btn.textContent = '断开'; this.showTactic(h.running ? h.tactic !== false : true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
+      if (h.running) { say('已加入正在进行的游戏（' + W.starts[startIndex].name + '，' + allEvents().length + ' 个事件）'); return; }
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'start', start: startIndex})});
+    },
+    adopt(plan) { // take over the plan the bridge is running, keeping the console in step with the game
+      if (!plan || !Array.isArray(plan.groups) || !plan.groups.length) return;
+      groups = plan.groups.map(g => ({...g, open: true, children: g.children.map(e => ({...e, rt: null}))}));
+      checkpoints = plan.checkpoints || [];
+      Sim.syncSeq(allEvents());
+      if (plan.start != null) { startIndex = plan.start; startSel.value = String(startIndex); }
+      sel = null; G = Sim.run(W, startIndex, groups, 0); buildTimeline(); renderCmd(); home();
     },
     disconnect(btn) {
       if (live.es) live.es.close(); live.on = false; live.state = null; btn.textContent = '重新连接'; live.tacticBtn.hidden = true; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = false);

@@ -1,6 +1,7 @@
 """Local HTTP server: serves the console (web/) and connects it to a wc3env game.
 
   GET  /api/health    which backend is configured, whether a game is running
+  GET  /api/plan      the plan the game is running (a console joining a running game adopts it)
   POST /api/plan      the console's timeline (groups of events)
   POST /api/control   {"action": "start", "start": 0} or {"action": "stop"}
                       or {"action": "tactic", "on": true|false}: run the plan or only watch
@@ -190,6 +191,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"ok": True, "backend": self.runner.backend, "running": self.runner.running, "tactic": self.runner.tactic})
         if self.path == "/api/stream":
             return self._stream()
+        if self.path == "/api/plan":
+            with self.runner.lock:
+                return self._json(200, {"ok": True, "plan": self.runner.plan, "running": self.runner.running})
         if self.path == "/api/strategies":
             return self._json(200, {"ok": True, "strategies": strategies.list_all()})
         if self.path.startswith("/api/strategies/"):
