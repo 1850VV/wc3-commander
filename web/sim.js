@@ -13,6 +13,8 @@
     chopSeconds: 1.1,      // seconds per lumber hit (Peasant tree attack cooldown)
     carry: 10,             // gold or lumber per trip
     treeWood: 50,          // lumber per tree (assumption)
+    goldPerMine: 5,        // five peasants per gold mine: more only queue, fewer waste the mine
+    woodTarget: 8,         // eight lumberjacks is enough; more are idle mouths
     startGold: 500, startWood: 150, startWorkers: 5,
   };
   const HALLS = ['htow', 'hkee', 'hcas'];
@@ -97,6 +99,19 @@
       return out;
     }
     rectOf(x, y, texName) { const fp = this.tex(texName); return [x - fp.w * 16, y - fp.h * 16, x + fp.w * 16, y + fp.h * 16]; }
+    /* The solid part of a pathing texture: the walk cells, i.e. what units cannot walk through.
+     * The whole texture is the placement footprint and is larger: `Simple` textures carry a
+     * two-cell (64 unit) walkable but unbuildable ring, and the gold mine's 16x16 texture is only
+     * 8x8 cells of rock. The game's building looks like the solid part, not the whole texture. */
+    bodyRect(x, y, texName) {
+      const fp = this.tex(texName), C = this.C, l = x - fp.w * 16, b = y - fp.h * 16;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      fp.walk.forEach((row, ry) => row.forEach(([a, z]) => {
+        x0 = Math.min(x0, a); x1 = Math.max(x1, z); y0 = Math.min(y0, ry); y1 = Math.max(y1, ry + 1);
+      }));
+      if (x0 === Infinity) return this.rectOf(x, y, texName);
+      return [l + x0 * C, b + y0 * C, l + x1 * C, b + y1 * C];
+    }
     _stamp(x, y, tex) {
       for (const i of this.cellsOf(x, y, tex, 'walk')) this.sBlock[i] = 1;
       for (const i of this.cellsOf(x, y, tex, 'build')) this.sNoBuild[i] = 1;
@@ -453,11 +468,15 @@
     pickWorkers(n, res, mine) {
       const elsewhere = u => u.task.res !== res || (res === 'gold' && u.task.mine !== (mine || this.mine)); // other resource or other mine
       const sc = u => u.task.kind === 'idle' ? 0 : u.task.kind === 'gather' && elsewhere(u) ? 1 : 9, held = this.reserved();
-      return this.workers().filter(u => u.task.kind !== 'build' && sc(u) < 9 && !held.has(u.id)).sort((a, b) => sc(a) - sc(b) || a.id - b.id).slice(0, n);
+      return this.workers().filter(u => u.task.kind !== 'build' && sc(u) < 9 && !held.has(u.id) && !(res !== 'gold' && u.task.res === 'gold'))
+        .sort((a, b) => sc(a) - sc(b) || a.id - b.id).slice(0, n);
     }
     pickBuilder(site) {
-      const held = this.reserved(), pool = this.workers().filter(u => u.task.kind !== 'build' && !u.hidden && !held.has(u.id));
-      pool.sort((a, b) => (a.task.kind === 'idle' ? 0 : 1) - (b.task.kind === 'idle' ? 0 : 1) || (a.task.res === 'gold' ? 0 : 1) - (b.task.res === 'gold' ? 0 : 1) || a.amt - b.amt ||
+      const held = this.reserved();
+      // gold miners are never taken for construction; the plan names them when it wants one
+      const pool = this.workers().filter(u => u.task.kind !== 'build' && !u.hidden && !held.has(u.id) && u.task.res !== 'gold');
+      const rank = u => u.task.kind === 'idle' ? 0 : u.task.res === 'wood' ? 1 : 2;
+      pool.sort((a, b) => rank(a) - rank(b) || a.amt - b.amt ||
         (site ? Math.hypot(a.x - site[0], a.y - site[1]) - Math.hypot(b.x - site[0], b.y - site[1]) : 0) || a.id - b.id);
       return pool[0] || null;
     }
@@ -479,7 +498,7 @@
         const u = e.unit ? this.unit(e.unit) : this.pickBuilder(e.site);
         if (!u) { rt.note = '没有可用农民'; return; }
         if (u.hidden) { rt.note = '农民' + u.id + ' 在金矿里'; return; }
-        u.task = {kind: 'build', ev: e, phase: 'toSite'}; u.path = null;
+        u.task = {kind: 'build', ev: e, phase: 'toSite', prev: u.task}; u.path = null;
         Object.assign(rt, {status: 'running', aStart: this.t, note: '农民' + u.id + ' 前往工地', builder: u.id});
       } else if (e.kind === 'gather') {
         const us = e.units ? e.units.map(id => this.unit(id)).filter(Boolean) : this.pickWorkers(e.count || 1, e.res, e.res === 'gold' ? this.mineOf(e.mine) : null);
@@ -489,6 +508,14 @@
         Object.assign(rt, {status: 'active', aStart: this.t, note: '农民' + us.map(u => u.id).join('、') + ' ' + RES[e.res] + '中'});
       } else if (e.kind === 'train') {
         const ut = e.utype || 'hpea';
+        if (ut === 'hpea' && this.workers().length + this.units.filter(u => u.type === 'hmil').length >= this.workerTarget()) {
+          Object.assign(rt, {status: 'done', aStart: this.t, aEnd: this.t, note: '农民已够（5 金/矿 + 8 木）'});
+          return;
+        }
+        if (ut === 'hfoo' && this.units.filter(u => u.type === 'hfoo').length + this.events.filter(x => x.kind === 'train' && x.utype === 'hfoo' && x.rt.status === 'waiting').length >= 6) {
+          Object.assign(rt, {status: 'done', aStart: this.t, aEnd: this.t, note: '步兵已到 6 个'});
+          return;
+        }
         const prods = this.buildings.filter(b => b.done && (this.w.eco[b.type].trains || []).includes(ut));
         if (!prods.length) { rt.note = '还没有能生产' + this.w.eco[ut].name + '的建筑'; return; }
         const p = prods.sort((a, b) => this.qlen(a) - this.qlen(b))[0];
@@ -501,12 +528,12 @@
         Object.assign(rt, {status: 'done', aStart: this.t, aEnd: this.t, note: this.w.eco[hero.type].name + '学会 ' + (e.abilityName || e.ability)});
       } else if (e.kind === 'militia') {
         // e.count peasants from e.from (default wood) answer Call to Arms for MILITIA_SECONDS
-        const pool = this.workers().filter(u => !u.hidden && u.task.kind === 'gather' && !this.reserved().has(u.id))
+        const pool = this.workers().filter(u => !u.hidden && u.task.kind === 'gather' && !this.reserved().has(u.id) && u.task.res !== 'gold')
           .sort((a, b) => (a.task.res === (e.from || 'wood') ? 0 : 1) - (b.task.res === (e.from || 'wood') ? 0 : 1) || a.id - b.id);
         const us = pool.slice(0, e.count || 4);
         if (!us.length) { rt.note = '没有能敲钟的农民'; return; }
         // as in the game (native probe 2026-10-19): the peasant walks to the town hall, changes there, and the 45 s start then
-        for (const u of us) { u.task = {kind: 'militia', phase: 'toHall', until: Infinity, prev: u.task, ev: e}; u.path = null; }
+        for (const u of us) { u.task = {kind: 'militia', phase: 'toHall', until: Infinity, prev: u.task, ev: e, to: e.to}; u.path = null; }
         Object.assign(rt, {status: 'active', aStart: this.t, note: '民兵 ' + us.map(u => u.id).join('、') + '（45 秒）', militia: us.map(u => u.id)});
       } else if (e.kind === 'clear') {
         // army: heroes and footmen, plus the militia of e.militia (an event id); target: the natural
@@ -535,6 +562,45 @@
     upgradeCost(b, to) { const e = this.w.eco; return [e[to].gold - e[b.type].gold, e[to].wood - e[b.type].wood]; }
     qlen(b) { const q = this.queues.get(b.id); return q ? q.q.length + (q.cur ? 1 : 0) : 0; }
     heroCount() { return this.units.filter(u => /^[A-Z]/.test(u.type)).length; }
+    workerTarget() {
+      const halls = this.buildings.filter(b => b.done && HALLS.includes(b.type)).length;
+      const planned = this.events.some(e => e.kind === 'build' && HALLS.includes(e.btype) && e.rt.status !== 'done');
+      return TUNING.goldPerMine * Math.max(1, halls + (planned ? 1 : 0)) + TUNING.woodTarget;
+    }
+    /* Five on each gold mine and eight on lumber; extras stand by (or switch jobs). */
+    _balanceWorkers() {
+      const byMine = new Map();
+      for (const u of this.units) if (u.task.kind === 'gather' && u.task.res === 'gold') {
+        const m = u.task.mine === this.natural ? 'natural' : 'main';
+        if (!byMine.has(m)) byMine.set(m, []);
+        byMine.get(m).push(u);
+      }
+      for (const us of byMine.values()) {
+        us.sort((a, b) => a.id - b.id);
+        for (const u of us.slice(TUNING.goldPerMine)) {
+          if (u.hidden) continue;
+          const wood = this.units.filter(x => x.task.kind === 'gather' && x.task.res === 'wood').length;
+          u.task = wood < TUNING.woodTarget ? this.gatherTask('wood') : {kind: 'idle'};
+          u.path = null;
+        }
+      }
+      const wood = this.units.filter(u => u.task.kind === 'gather' && u.task.res === 'wood');
+      for (const u of wood.slice(TUNING.woodTarget)) {
+        if (u.hidden) continue;
+        const short = [...byMine.entries()].find(([, us]) => us.length < TUNING.goldPerMine);
+        if (short) u.task = this.gatherTask('gold', short[0] === 'natural' ? this.natural : this.mine);
+        else u.task = {kind: 'idle'};
+        u.path = null;
+      }
+      const main = byMine.get('main') || [];
+      if (main.length < TUNING.goldPerMine) {
+        // the five are topped up at once: a new/idle peasant first, then a lumberjack
+        const held = this.reserved();
+        const pool = this.workers().filter(u => (u.task.kind === 'idle' || (u.task.kind === 'gather' && u.task.res === 'wood')) && !held.has(u.id))
+          .sort((a, b) => (a.task.kind === 'idle' ? 0 : 1) - (b.task.kind === 'idle' ? 0 : 1) || a.id - b.id);
+        if (pool.length) { pool[0].task = this.gatherTask('gold', this.mine); pool[0].path = null; }
+      }
+    }
     costOf(ut) {
       const e = this.w.eco[ut];
       if (/^[A-Z]/.test(ut) && this.heroCount() === 0 && !this._heroQueued && this.w.D.economy.assumptions.first_hero_free) return [0, 0, e.food];
@@ -555,7 +621,7 @@
     step() {
       const due = this.events.filter(e => e.rt.status === 'pending' && e.start <= this.t + 1e-9 && this.ready(e)).sort((a, b) => a.start - b.start || a.seq - b.seq);
       for (const e of due) this.tryStart(e);
-      this._production(); this._units(); this._construction(); this._clearing();
+      this._production(); this._units(); this._construction(); this._clearing(); this._balanceWorkers();
       this.t = Math.round((this.t + DT) * 10) / 10;
     }
     _production() {
@@ -624,7 +690,14 @@
         if (t.kind === 'militia') {
           if (t.phase === 'toHall') {
             const hall = this.dropFor('gold', u);
-            if (this.walk(u, this._ring(w.rectOf(hall.x, hall.y, hall.tex)), 'hall' + hall.id)) { t.phase = 'armed'; t.until = this.t + MILITIA_SECONDS; u.type = 'hmil'; }
+            if (this.walk(u, this._ring(w.rectOf(hall.x, hall.y, hall.tex)), 'hall' + hall.id)) {
+              t.until = this.t + MILITIA_SECONDS; u.type = 'hmil';
+              t.phase = t.to ? 'toStage' : 'armed';
+            }
+          } else if (t.phase === 'toStage') {
+            // walk from the town hall to the altar spawn, so they leave with the hero
+            if (this.walk(u, [w.cellAt(t.to[0], t.to[1])], 'altar' + t.ev.id)) t.phase = 'armed';
+            else if (this.t >= t.until - 1e-9) this._unmilitia(u);
           } else if (this.t >= t.until - 1e-9) this._unmilitia(u);
           continue;
         }
@@ -701,9 +774,10 @@
     /* e.helpers more peasants join a construction once it has started (power build) */
     _sendHelpers(e, builder) {
       const held = this.reserved();
-      const pool = this.workers().filter(u => u !== builder && (u.task.kind === 'gather' || u.task.kind === 'idle') && !u.hidden && !held.has(u.id))
+      const pool = this.workers().filter(u => u !== builder && (u.task.kind === 'gather' || u.task.kind === 'idle') && !u.hidden && !held.has(u.id)
+        && u.task.res !== 'gold')
         .sort((a, b) => (a.task.kind === 'idle' ? 0 : 1) - (b.task.kind === 'idle' ? 0 : 1) || Math.hypot(a.x - e.site[0], a.y - e.site[1]) - Math.hypot(b.x - e.site[0], b.y - e.site[1]));
-      for (const u of pool.slice(0, e.helpers)) { u.task = {kind: 'build', ev: e, phase: 'toSite', helper: true}; u.path = null; }
+      for (const u of pool.slice(0, e.helpers)) { u.task = {kind: 'build', ev: e, phase: 'toSite', helper: true, prev: u.task}; u.path = null; }
     }
     _construction() {
       for (const b of this.buildings) {
@@ -721,7 +795,19 @@
           Object.assign(e.rt, {status: 'done', aEnd: this.t, note: '完工'});
           // then: 'natural' (mine there), 'wood' (chop), otherwise back to the main mine
           for (const u of this.units) if (u.task.kind === 'build' && u.task.ev === e) {
-            u.task = e.then === 'wood' ? this.gatherTask('wood') : this.gatherTask('gold', this.mineOf(e.then === 'natural' ? 'natural' : 'main')); u.path = null;
+            const prev = u.task.prev;
+            // the expansion tower peasant walks over to the hall that is still going up next to him
+            const other = e.btype === 'hwtw'
+              ? this.buildings.find(x => !x.done && HALLS.includes(x.type) && x.ev && x.ev !== e && Math.hypot(x.x - u.x, x.y - u.y) < 1200)
+              : null;
+            if (other && !u.task.helper) { u.task = {kind: 'build', ev: other.ev, phase: 'toSite', helper: true, prev}; u.path = null; continue; }
+            // then: 'natural' | 'wood' | (default) back to the job he had before building, not
+            // always to gold: that is what used to leave six or seven peasants on the mine
+            if (e.then === 'wood') u.task = this.gatherTask('wood');
+            else if (e.then === 'natural') u.task = this.gatherTask('gold', this.natural);
+            else if (prev && prev.kind === 'gather') u.task = prev;
+            else u.task = this.gatherTask('wood'); // was idle: lumber; the balance trims extras
+            u.path = null;
           }
         }
       }

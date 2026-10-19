@@ -1,6 +1,6 @@
 {
  "name": "人族速矿二本 · 南方",
- "saved": "2026-10-19T22:02:54",
+ "saved": "2026-10-20T00:56:53",
  "plan": {
   "start": 0,
   "groups": [
@@ -48,11 +48,11 @@
       "unit": 5,
       "btype": "hhou",
       "at": [
-       1408,
+       1536,
        -6528
       ],
       "site": [
-       1408,
+       1536,
        -6528
       ]
      },
@@ -131,7 +131,7 @@
       "seq": 10,
       "kind": "train",
       "name": "训练 步兵 F1",
-      "start": 75,
+      "start": 70,
       "utype": "hfoo",
       "after": "f2"
      },
@@ -140,7 +140,7 @@
       "seq": 11,
       "kind": "train",
       "name": "训练 步兵 F2",
-      "start": 95,
+      "start": 70,
       "utype": "hfoo"
      },
      {
@@ -148,7 +148,7 @@
       "seq": 12,
       "kind": "train",
       "name": "训练 步兵 F3",
-      "start": 125,
+      "start": 70,
       "utype": "hfoo"
      }
     ]
@@ -176,13 +176,13 @@
       "unit": null,
       "btype": "hhou",
       "at": [
-       1792,
-       -6336
+       1408,
+       -6528
       ],
       "then": "wood",
       "site": [
-       1792,
-       -6336
+       1408,
+       -6528
       ]
      },
      {
@@ -259,33 +259,37 @@
       "id": "f21",
       "seq": 21,
       "kind": "militia",
-      "name": "敲钟：4 个伐木农民变民兵",
-      "start": 125,
-      "count": 4,
-      "from": "wood"
+      "name": "敲钟：5 个伐木农民变民兵",
+      "start": 112,
+      "count": 5,
+      "from": "wood",
+      "to": [
+       736,
+       -7184
+      ]
      },
      {
       "id": "f22",
       "seq": 22,
       "kind": "clear",
       "name": "清近矿（大法师 + 步兵 + 民兵）",
-      "start": 127,
+      "start": 122,
       "militia": "f21"
      },
      {
       "id": "f23",
       "seq": 23,
       "kind": "build",
-      "name": "建造 分基地（4 人协助）",
-      "start": 130,
+      "name": "建造 分基地（3 人协助 + 1 人敲塔）",
+      "start": 190,
       "unit": null,
       "btype": "htow",
       "near": "natural",
-      "helpers": 4,
+      "helpers": 3,
       "then": "natural",
       "after": "f22",
       "site": [
-       -3200,
+       -3136,
        -7424
       ]
      },
@@ -320,15 +324,19 @@
       "id": "f27",
       "seq": 27,
       "kind": "build",
-      "name": "建造 侦察塔（分矿）",
+      "name": "建造 侦察塔（分矿民兵）",
       "start": 225,
       "unit": null,
       "btype": "hwtw",
       "near": "natural",
       "then": "natural",
       "site": [
-       -3200,
-       -7040
+       -3520,
+       -7104
+      ],
+      "at": [
+       -3520,
+       -7104
       ]
      },
      {
@@ -400,8 +408,12 @@
       "btype": "hlum",
       "then": "wood",
       "site": [
-       1760,
-       -6688
+       1120,
+       -7264
+      ],
+      "at": [
+       1120,
+       -7264
       ]
      },
      {
@@ -413,8 +425,12 @@
       "unit": null,
       "btype": "hhou",
       "site": [
-       448,
-       -7104
+       1152,
+       -6528
+      ],
+      "at": [
+       1152,
+       -6528
       ]
      },
      {
@@ -439,8 +455,12 @@
       "unit": null,
       "btype": "hhou",
       "site": [
-       448,
-       -6912
+       1280,
+       -6528
+      ],
+      "at": [
+       1280,
+       -6528
       ]
      },
      {
@@ -476,7 +496,7 @@
       "after": "f32",
       "site": [
        512,
-       -6592
+       -6528
       ]
      },
      {
@@ -489,8 +509,12 @@
       "btype": "hars",
       "after": "f32",
       "site": [
-       512,
-       -6144
+       256,
+       -6976
+      ],
+      "at": [
+       256,
+       -6976
       ]
      },
      {
@@ -519,6 +543,14 @@
       "start": 560,
       "utype": "hspt",
       "after": "f33"
+     },
+     {
+      "id": "f50",
+      "seq": 45,
+      "kind": "train",
+      "name": "训练 步兵 F6",
+      "start": 310,
+      "utype": "hfoo"
      }
     ]
    },

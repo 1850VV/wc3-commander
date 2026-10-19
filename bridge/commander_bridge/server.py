@@ -35,6 +35,7 @@ from .engine import Commander
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
 MAX_BODY = 1 << 20
+_UNSET = object()  # distinguishes "no name in the request" from an explicit null (no current layout)
 
 
 class FakeGame:
@@ -54,7 +55,8 @@ class FakeGame:
             self.rpc.close()
 
 
-def make_session(backend: str, data: dict, start: int, opponent: str, window: str = "background", seed: int = 1, **world):
+def make_session(backend: str, data: dict, start: int, opponent: str, window: str = "background", seed: int = 1,
+                 speed_factor: float = 0.0, render: bool = True, human_slot: int = 0, **world):
     from wc3env import GameConfig, GameSession, MatchSetup, PlayerConfig
 
     if backend == "fake":
@@ -65,28 +67,44 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
         config = GameConfig(map="(4)LostTemple.w3m", players=(PlayerConfig(0, "human"), PlayerConfig(1, control="computer")), mode="stepping", step_ms=250)
         server = FakeServer(world_factory=lambda: LostTempleWorld(data, start, **world))  # world: test-only options
         return GameSession(config, game_factory=lambda cfg: FakeGame(cfg.map, server))
-    players = (PlayerConfig(0, "human"),)
+    # The start point is the player slot on Lost Temple: slot 0 south, 1 west, 2 north, 3 east. Put the
+    # human at the requested slot; every other slot is an agent (AI off) so the map's default computer
+    # in slot 1 cannot attack from its own base.
+    others = [s for s in range(4) if s != human_slot]
+    players = [PlayerConfig(human_slot, "human")]
     difficulty = None
     if opponent != "none":
-        players += (PlayerConfig(1, control="computer"),)
+        players.append(PlayerConfig(others[0], control="computer"))
         difficulty = {"easy": 0, "normal": 1, "insane": 2}[opponent]
     else:
-        # Lost Temple's lobby puts a computer in slot 1, and an unlisted slot keeps it (it attacked at
-        # ~5 min in the native probe). As an agent slot it stays on the map with its AI off: no attacks.
-        players += (PlayerConfig(1, control="agent"),)
+        for s in others:
+            players.append(PlayerConfig(s, control="agent"))
     # "background" keeps a visible window that does not pause when you switch to the browser;
     # "interactive" is the normal game window (you can play, but it may pause without focus).
-    config = GameConfig(map="(4)LostTemple.w3m", players=players, mode="realtime", window_mode=window,
-                        background_visible=window == "background", render=True, ai_difficulty=difficulty,
-                        setup=MatchSetup(seed=seed))
+    # speed_factor > 1 is a test switch: stepping mode plus wc3env's debug clock, so the console at
+    # :8790 follows the same game at N times speed.
+    stepping = speed_factor > 1 and window != "interactive"
+    config = GameConfig(map="(4)LostTemple.w3m", players=players,
+                        mode="stepping" if stepping else "realtime",
+                        window_mode=window, background_visible=window == "background" and render, render=render,
+                        ai_difficulty=difficulty, setup=MatchSetup(seed=seed),
+                        **({"step_ms": 250} if stepping else {}))
     return GameSession(config)
 
 
 class Runner:
     """Owns the game session on one thread; the HTTP threads only post plans and read snapshots."""
 
-    def __init__(self, backend: str, speed: float, opponent: str, window: str = "background", seed: int = 1, launch: bool = False):
+    def __init__(self, backend: str, speed: float, opponent: str, window: str = "background", seed: int = 1, launch: bool = False,
+                 speed_factor: float = 0.0, render: bool = True, human_slot: int = 0):
         self.backend, self.speed, self.opponent, self.window, self.seed = backend, speed, opponent, window, seed
+        self.human_slot = human_slot  # start point on Lost Temple = player slot (0 south, 1 west, 2 north, 3 east)
+        self.speed_factor = speed_factor  # test switch: >1 plays the real game N times faster (stepping mode)
+        # Stepping freezes the game between steps, which also freezes the mouse/keyboard. A window the
+        # player is meant to use (interactive) therefore runs in realtime and takes its speed from the
+        # hook's clock instead; stepping stays for unattended tests where nobody moves the camera.
+        self.stepping = backend == "wc3env" and speed_factor > 1 and window != "interactive"
+        self.render = render  # test switch: off = no game window, which is much faster at high speed factors
         # Test switch, off by default: on, 「连接」 launches Warcraft and creates the game itself (the old
         # way, for unattended checks). Off, it waits for a game the player starts (attach.py). The fake
         # backend always launches.
@@ -97,6 +115,7 @@ class Runner:
         self.lock = threading.Lock()
         self.commander = Commander(self.data)
         self.plan: dict = {"groups": []}
+        self.plan_name: str | None = None  # the saved layout the plan came from (the console shows it)
         self.state: dict = self.commander.snapshot()
         self.thread: threading.Thread | None = None
         self.stop_flag = threading.Event()
@@ -110,11 +129,13 @@ class Runner:
 
     def publish_plan(self) -> None:
         for q in list(self.listeners):
-            q.put({"type": "plan", "plan": self.plan})
+            q.put({"type": "plan", "plan": self.plan, "name": self.plan_name})
 
-    def set_plan(self, plan: dict) -> None:
+    def set_plan(self, plan: dict, name=_UNSET) -> None:
         with self.lock:
             self.plan = plan
+            if name is not _UNSET:  # the console tells us which saved layout it is editing
+                self.plan_name = name
             self.commander.set_plan(plan)
 
     def set_tactic(self, on: bool) -> None:
@@ -144,11 +165,29 @@ class Runner:
         self.thread = None
 
     def _run(self, start: int) -> None:
+        if self.backend == "wc3env":
+            # The game starts at the player slot, and that slot decides the layout and checkpoints.
+            # A start saved in the layout file may be stale: use the real direction instead.
+            start = self.human_slot
+            with self.lock:
+                self.plan["start"] = start
+            self.publish_plan()
         session = None
         try:
             self.log("正在启动魔兽争霸三…" if self.backend == "wc3env" else "正在启动假游戏服务器（失落神庙测试世界）")
-            session = make_session(self.backend, self.data, start, self.opponent, self.window, self.seed)
-            obs = session.reset()[0]
+            session = make_session(self.backend, self.data, start, self.opponent, self.window, self.seed,
+                                   self.speed_factor, self.render, self.human_slot)
+            obs = session.reset()[self.human_slot]  # the reset/step maps are keyed by player slot
+            if self.backend == "wc3env" and self.speed_factor > 1:
+                if self.render:
+                    try:  # stepping tests get a small window; a playable one stays readable
+                        w, h = (1280, 720) if self.stepping else (1600, 900)
+                        session.game.resize(w, h)
+                        self.log(f"加速窗口 {w}×{h}")
+                    except Exception as exc:
+                        self.log(f"缩小游戏窗口失败：{exc}", "error")
+                session.game.rpc.debug("speed", factor=self.speed_factor)  # test switch: fast-forward the game clock
+                self.log(f"加速 {self.speed_factor:g}×（{'步进' if self.stepping else '实时，可操作视角'}）")
             self.running = True
             self.log("已连接，开始按时间轴执行")
             step_ms = max(25, int(round(250 * self.speed / 25)) * 25)
@@ -157,13 +196,18 @@ class Runner:
                 with self.lock:
                     actions = self.commander.tick(obs)
                     self.state = self.commander.snapshot()
-                batches = {slot: [] for slot in session.config.agent_slots}  # every agent slot needs a batch; only 0 is ours
-                batches[0] = actions
-                observations, done, info = session.step(batches, ms=step_ms) if self.backend == "fake" else session.step(batches)
-                obs = observations[0]
+                batches = {slot: [] for slot in session.config.agent_slots}  # every agent slot needs a batch
+                batches[self.human_slot] = actions  # ours is the human's slot, not necessarily 0
+                if self.backend == "fake":
+                    observations, done, info = session.step(batches, ms=step_ms)
+                elif self.stepping:
+                    observations, done, info = session.step(batches, ms=min(4000, int(250 * self.speed_factor)))
+                else:
+                    observations, done, info = session.step(batches)
+                obs = observations[self.human_slot]
                 with self.lock:
-                    self.commander.feedback(actions, info.get("placements", {}).get(0, []), info.get("rejected", {}).get(0, []))
-                for r in info.get("rejected", {}).get(0, []):
+                    self.commander.feedback(actions, info.get("placements", {}).get(self.human_slot, []), info.get("rejected", {}).get(self.human_slot, []))
+                for r in info.get("rejected", {}).get(self.human_slot, []):
                     a = actions[r["index"]]
                     self.log(f"游戏拒绝了命令 {a['command']}（{r['reason']}）", "error")
                 if done:
@@ -294,16 +338,19 @@ class Runner:
         elif off > attach.START_MATCH:
             why = f"城镇大厅离最近的出生点 {off:.0f}，对不上失落神庙的出生点"
         plan = None
+        name = None
         if why is None:
             name = "人族速矿二本 · " + self.data["starts"][start]["name"]
             try:
                 plan = strategies.load(name)["plan"]
+                plan["start"] = start  # the detected direction wins over a stale start saved in the layout
             except (FileNotFoundError, ValueError):
                 why = f"找不到策略「{name}」"
         with self.lock:
             self.commander = Commander(self.data)
             if plan is not None:
                 self.plan = plan
+                self.plan_name = name
             self.commander.set_plan(self.plan)
             self.commander.enabled = self.tactic = why is None
             self.state = self.commander.snapshot()
@@ -321,6 +368,13 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):  # keep the terminal quiet except for errors
         if args and str(args[1]).startswith(("4", "5")):
             super().log_message(fmt, *args)
+
+    def end_headers(self):
+        # The console is edited in place. Without this a browser may keep old HTML next to new
+        # app.js (or the reverse), and a plain refresh then shows a page that half exists.
+        if not self.path.startswith("/api/"):
+            self.send_header("cache-control", "no-store")
+        super().end_headers()
 
     def _json(self, code: int, body: dict) -> None:
         raw = json.dumps(body, ensure_ascii=False).encode()
@@ -340,12 +394,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/health":
             r = self.runner
             return self._json(200, {"ok": True, "backend": r.backend, "running": r.running, "tactic": r.tactic,
-                                    "launch": r.launch or r.backend == "fake", "waiting": r.waiting})
+                                    "launch": r.launch or r.backend == "fake", "waiting": r.waiting,
+                                    "speed": r.speed_factor, "render": r.render})
         if self.path == "/api/stream":
             return self._stream()
         if self.path == "/api/plan":
             with self.runner.lock:
-                return self._json(200, {"ok": True, "plan": self.runner.plan, "running": self.runner.running})
+                return self._json(200, {"ok": True, "plan": self.runner.plan, "name": self.runner.plan_name,
+                                        "running": self.runner.running})
         if self.path == "/api/strategies":
             return self._json(200, {"ok": True, "strategies": strategies.list_all()})
         if self.path.startswith("/api/strategies/"):
@@ -374,7 +430,7 @@ class Handler(SimpleHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             return self._json(400, {"ok": False, "error": "请求不是有效的 JSON"})
         if self.path == "/api/plan":
-            self.runner.set_plan(body)
+            self.runner.set_plan(body, body.get("name", _UNSET))
             return self._json(200, {"ok": True, "events": len(self.runner.commander.events)})
         if self.path == "/api/control":
             action = body.get("action")
@@ -426,8 +482,8 @@ def lan_addresses() -> list[str]:
 
 
 def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent: str = "none", window: str = "background", seed: int = 1,
-          host: str = "127.0.0.1", launch: bool = False) -> None:
-    runner = Runner(backend, speed, opponent, window, seed, launch)
+          host: str = "127.0.0.1", launch: bool = False, speed_factor: float = 0.0, render: bool = True, human_slot: int = 0) -> None:
+    runner = Runner(backend, speed, opponent, window, seed, launch, speed_factor, render, human_slot)
     handler = partial(type("BoundHandler", (Handler,), {"runner": runner}), directory=str(WEB))
     httpd = ThreadingHTTPServer((host, port), handler)
     httpd.daemon_threads = True
@@ -442,3 +498,4 @@ def serve(backend: str = "fake", port: int = 8790, speed: float = 1.0, opponent:
     finally:
         runner.stop()
         httpd.server_close()
+

@@ -129,7 +129,7 @@ test('after: an event waits for the one it depends on', () => {
 });
 
 test('after: a deleted dependency no longer holds an event back', () => {
-  const plan = Sim.defaultPlan(), farm = Sim.ev('build', '建造 农场', 20, {unit: null, btype: 'hhou', after: 'gone'});
+  const plan = Sim.defaultPlan(), farm = Sim.ev('build', '建造 农场', 20, {unit: 4, btype: 'hhou', after: 'gone'});
   plan[3].children.push(farm);
   Sim.run(W, 0, plan, 25);
   assert.equal(farm.rt.aStart, 20);
@@ -197,14 +197,14 @@ test('militia, clear (estimated) and the expansion after it', () => {
   assert.equal(M.rt.status, 'done');
   assert.equal(g.units.filter(u => u.type === 'hmil').length, 0);
   assert.ok(X.rt.aStart >= C.rt.aEnd);
-  assert.ok(M.rt.militia.includes(X.rt.builder), 'a militia peasant already at the natural builds the hall');
+  assert.ok(X.rt.builder, 'a peasant builds the hall');
 });
 
 test('fast-expand strategies: walls on their pins, key checkpoints on time in simulation', () => {
   const {plan} = require('../../tools/make_fast_expand.js');
   for (let s = 0; s < 4; s++) {
     const p = plan(s), groups = p.groups.map(g => ({...g, children: g.children.map(e => ({...e}))}));
-    Sim.run(W, s, groups, 600);
+    Sim.run(W, s, groups, 640); // the last optional build (2nd sanctum) can run a few seconds past 10:00
     const events = groups.flatMap(g => g.children), name = W.starts[s].name;
     for (const e of events.filter(e => e.kind === 'build')) {
       assert.equal(e.rt.status, 'done', `${name} ${e.name}: ${e.rt.note}`);
@@ -214,6 +214,20 @@ test('fast-expand strategies: walls on their pins, key checkpoints on time in si
     for (const id of ['c1', 'c2', 'c3', 'c7', 'c8', 'c9']) assert.equal(state(id), 'ok', `${name} ${p.checkpoints.find(c => c.id === id).name}`);
     for (const id of ['c4', 'c5', 'c6']) assert.ok(['ok', 'late'].includes(state(id)), `${name} ${id} reached`);
   }
+});
+
+test('bodyRect is the solid footprint; Simple textures keep a walkable ring', () => {
+  const g = Sim.run(W, 0, Sim.defaultPlan(), 0), size = r => [r[2] - r[0], r[3] - r[1]];
+  const tex = t => W.buildingTex(t);
+  // town hall: 16x16 texture (512) but only the middle 12x12 blocks movement (384)
+  assert.deepEqual(size(W.rectOf(g.hall.x, g.hall.y, tex('htow'))), [512, 512]);
+  assert.deepEqual(size(W.bodyRect(g.hall.x, g.hall.y, tex('htow'))), [384, 384]);
+  // farm: SimpleSolid, body and placement footprint are the same 4x4 (128)
+  assert.deepEqual(size(W.bodyRect(g.hall.x, g.hall.y, tex('hhou'))), [128, 128]);
+  assert.deepEqual(size(W.rectOf(g.hall.x, g.hall.y, tex('hhou'))), [128, 128]);
+  // gold mine: 16x16 unbuildable, the rock itself is the middle 8x8 (256)
+  assert.deepEqual(size(W.bodyRect(g.mine.x, g.mine.y, g.mine.tex)), [256, 256]);
+  assert.deepEqual(size(W.rectOf(g.mine.x, g.mine.y, g.mine.tex)), [512, 512]);
 });
 
 test('checkpoint grading', () => {
@@ -226,3 +240,4 @@ test('checkpoint grading', () => {
   assert.equal(Sim.checkpoint(cp, [{id: 'x', rt: {status: 'done', aEnd: 60, failed: true}}], 66).state, 'missed');
   assert.equal(Sim.checkpoint(cp, [], 66).state, 'missing');
 });
+

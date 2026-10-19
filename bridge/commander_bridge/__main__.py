@@ -23,7 +23,13 @@ def main() -> None:
                    help="wc3env backend: background = visible window that keeps running without focus (for watching); interactive = normal window you can play in")
     p.add_argument("--launch", action="store_true",
                    help="wc3env backend, test switch: 连接 launches Warcraft and creates the game itself; by default it waits for a game you start with the 「魔兽争霸三（指挥官）」 shortcut")
+    p.add_argument("--speed-factor", type=float, default=0.0,
+                   help="wc3env backend, test switch: play the real game N times faster (stepping mode); the console at :8790 stays in sync, e.g. 8")
+    p.add_argument("--no-render", action="store_false", dest="render", default=True,
+                   help="wc3env backend, test switch: run without a game window; much faster together with --speed-factor, the console still updates")
     p.add_argument("--seed", type=int, default=1, help="wc3env backend: match seed, keep it fixed to compare runs")
+    p.add_argument("--human-slot", type=int, choices=(0, 1, 2, 3), default=0,
+                   help="wc3env backend, test switch: start point / player slot on Lost Temple — 0 south, 1 west, 2 north, 3 east")
     p.add_argument("--wc3env", type=Path, default=Path(os.environ.get("WC3ENV_SRC", Path(__file__).resolve().parents[3] / "wc3env-127a" / "src")),
                    help="path to wc3env-127a/src when wc3env is not pip-installed")
     args = p.parse_args()
@@ -35,7 +41,7 @@ def main() -> None:
         sys.path.insert(0, str(args.wc3env))
     from .server import serve
 
-    serve(args.backend, args.port, args.speed, args.opponent, args.window, args.seed, args.host, args.launch)
+    serve(args.backend, args.port, args.speed, args.opponent, args.window, args.seed, args.host, args.launch, args.speed_factor, args.render, args.human_slot)
 
 
 if __name__ == "__main__":

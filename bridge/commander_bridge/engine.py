@@ -16,6 +16,10 @@ import math
 from .combat import Clear
 
 HALLS = ("htow", "hkee", "hcas")
+# A gold mine pays for five peasants; more only stand in line and fewer leave gold on the table.
+GOLD_PER_MINE = 5
+# Eight lumberjacks keep the tech and farms going; more are just extra mouths.
+WOOD_TARGET = 8
 # Call to Arms for one peasant; to be confirmed by the native probe (tools/probe_orders.py)
 MILITIA_ORDER = "militia"
 MILITIA_SECONDS = 45
@@ -86,6 +90,7 @@ class Commander:
             if e["id"] in self.jobs:
                 self._advance(e)
         self._keep_gathering()
+        self._balance_workers()
         commandable = {u["unit_id"] for u in obs["units"]}
         return [a for a in self.actions if a["unit_id"] in commandable]
 
@@ -199,13 +204,17 @@ class Commander:
             return 0 if role is None else 1 if role in ("gold", "wood") and elsewhere else 9
         held = self.reserved()
         pool = [u for u in self.workers() if score(u) < 9 and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
+        if res != "gold":  # a gold miner is never pulled off the mine
+            pool = [u for u in pool if self.roles.get(u["unit_id"]) != "gold"]
         return sorted(pool, key=lambda u: (score(u), self.cid[u["unit_id"]]))[:n]
 
     def pick_builder(self, site):
+        """Idle/new peasants and lumberjacks build; gold miners are named explicitly by the plan."""
         held = self.reserved()
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) != "build" and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) != "build" and self.roles.get(u["unit_id"]) != "gold"
+                and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
         point = {"x": site[0], "y": site[1]}
-        return min(pool, key=lambda u: (self.roles.get(u["unit_id"]) is not None, self.roles.get(u["unit_id"]) != "gold", dist(u, point)), default=None)
+        return min(pool, key=lambda u: (self.roles.get(u["unit_id"]) not in (None, "wood"), dist(u, point)), default=None)
 
     def drop_for(self, res, near):
         opts = [b for b in self.obs["units"] if b["structure"] and b.get("state") != "constructing"  # an upgrading hall still takes returns
@@ -243,8 +252,27 @@ class Commander:
             return 0, 0, c["food"]
         return c["gold"], c["wood"], c["food"]
 
-    def afford(self, g, w) -> bool:
-        return self.budget[0] >= g and self.budget[1] >= w
+    def _reserve(self):
+        """Keep the natural hall's cost out of ordinary spending while it is about to start."""
+        for e in self.events:
+            if e.get("kind") != "build" or e.get("near") != "natural" or e.get("btype") not in HALLS:
+                continue
+            rt = self.rt.get(e["id"], {})
+            status = rt.get("status")
+            job = self.jobs.get(e["id"]) or {}
+            waiting = status in ("pending", "waiting") or (status == "running" and job.get("state") == "wait_res")
+            if not waiting:  # once the build order went out the cost is already spent
+                continue
+            if self.t < (e.get("start") or 0) - 60:
+                continue
+            c = self.eco.get(e["btype"])
+            if c:
+                return c["gold"], c["wood"]
+        return 0, 0
+
+    def afford(self, g, w, reserve=True) -> bool:
+        rg, rw = self._reserve() if reserve else (0, 0)
+        return self.budget[0] >= g + rg and self.budget[1] >= w + rw
 
     def spend(self, g, w):
         self.budget[0] -= g
@@ -276,8 +304,16 @@ class Commander:
             if not u:
                 rt["note"] = ("农民%s 在金矿里" % e["unit"]) if e.get("unit") and self.inside(e["unit"]) else "没有可用农民"
                 return
+            prior = self.roles.get(u["unit_id"])
             self.roles[u["unit_id"]] = "build"
-            self.jobs[e["id"]] = {"state": "wait_res", "worker": u["unit_id"], "tries": 0}
+            self.jobs[e["id"]] = {"state": "wait_res", "worker": u["unit_id"], "tries": 0, "prior": prior}
+            # Walk to a staging point off the footprint and wait there: units standing on the
+            # building's own cells make Warcraft accept the order and never start construction.
+            if e.get("site"):
+                sx, sy = self._staging_point(e["site"])
+                self.order(u["unit_id"], "move", x=sx, y=sy)
+            if e.get("helpers"):
+                self._prestage_helpers(e, self.jobs[e["id"]])
             rt.update(status="running", aStart=self.t, builder=self.cid[u["unit_id"]], note="等待资源")
         elif kind == "gather":
             us = [self.unit(c) for c in e["units"]] if e.get("units") else self.pick_workers(e.get("count", 1), e["res"], e.get("mine", "main"))
@@ -297,7 +333,15 @@ class Commander:
             rt.update(status="active", aStart=self.t, note="农民" + "、".join(str(self.cid[u["unit_id"]]) for u in us) + " " + RES[e["res"]] + "中")
         elif kind == "train":
             ut = e.get("utype", "hpea")
-            self.jobs[e["id"]] = {"state": "waiting", "producer": None, "hero": ut[0].isupper()}
+            peasants = [u for u in self.units() if u["type_id"] in ("hpea", "hmil")]
+            peasants += [u for u in self.obs.get("inside", []) if u["type_id"] in ("hpea", "hmil")]
+            if ut == "hpea" and len(peasants) >= self._worker_target():
+                rt.update(status="done", aStart=self.t, aEnd=self.t, note="农民已够（5 金/矿 + 8 木）")
+                return
+            if ut == "hfoo" and self._footmen() >= 6:
+                rt.update(status="done", aStart=self.t, aEnd=self.t, note="步兵已到 6 个")
+                return
+            self.jobs[e["id"]] = {"state": "waiting", "producer": None, "hero": ut[0].isupper(), "utype": ut}
             rt.update(status="waiting", aStart=self.t, note="排队中")
         elif kind == "upgrade":
             self.jobs[e["id"]] = {"state": "waiting", "producer": None}
@@ -323,7 +367,7 @@ class Commander:
                         return
                     job["worker"] = (self.pick_builder(e["site"]) or {}).get("unit_id")
                     return
-                if not self.afford(c["gold"], c["wood"]):
+                if not self.afford(c["gold"], c["wood"], reserve=False):  # the hall itself may spend the reserve
                     rt["note"] = f"等待资源 金{int(self.budget[0])}/{c['gold']} 木{int(self.budget[1])}/{c['wood']}"
                     return
                 self.spend(c["gold"], c["wood"])
@@ -442,13 +486,40 @@ class Commander:
         if e.get("helpers") and b is not None:
             self._send_helpers(e, self.jobs[e["id"]], b)
 
+    @staticmethod
+    def _staging_point(site):
+        """Stand clear of the footprint (a town hall's half-size plus a margin) so the build can start."""
+        return float(site[0]), float(site[1]) + 384.0
+
+    def _prestage_helpers(self, e, job):
+        """Pick the helpers and walk them to the staging point before construction starts, so a
+        resource wait (the expansion is often a few tens of wood short) does not become a round trip."""
+        held = self.reserved() | {job["worker"]}
+        px, py = self._staging_point(e["site"])
+        point = {"x": px, "y": py}
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood")
+                and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
+        job["helpers"] = []
+        priors = job.setdefault("helper_prior", {})
+        for u in sorted(pool, key=lambda u: dist(u, point))[: e["helpers"]]:
+            priors[u["unit_id"]] = self.roles.get(u["unit_id"])
+            self.order(u["unit_id"], "move", x=point["x"], y=point["y"])
+            self.roles[u["unit_id"]] = "build"
+            job["helpers"].append(u["unit_id"])
+
     def _send_helpers(self, e, job, b):
         """Power build: e["helpers"] more peasants join a started construction (right-click on it).
         Warcraft charges the extra cost while they build."""
+        if job.get("helpers"):  # pre-staged at the site: only the smart order is missing
+            for uid in job["helpers"]:
+                self.order(uid, "smart", target_id=b["unit_id"])
+            return
         held = self.reserved() | {job["worker"]}
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in ("gold", "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
         job["helpers"] = []
+        priors = job.setdefault("helper_prior", {})
         for u in sorted(pool, key=lambda u: dist(u, b))[: e["helpers"]]:
+            priors[u["unit_id"]] = self.roles.get(u["unit_id"])
             self.order(u["unit_id"], "smart", target_id=b["unit_id"])
             self.roles[u["unit_id"]] = "build"
             job["helpers"].append(u["unit_id"])
@@ -496,14 +567,39 @@ class Commander:
             job = self.jobs.get(e["id"])
             if job and job.get("building") == ev["unit_id"]:
                 self.rt[e["id"]].update(status="done", aEnd=self.t, note="完工")
-                where = "natural" if e.get("then") == "natural" else "main"
-                for uid in [job["worker"], *job.get("helpers", [])]:  # builders go back to work: then = natural | wood | main gold
+                # a finished builder joins the hall that is still going up next to him (the expansion's
+                # tower peasant comes back to help instead of walking home)
+                nearby = None
+                worker_now = next((u for u in self.obs["units"] if u["unit_id"] == job["worker"]), None)
+                if worker_now and e.get("btype") == "hwtw":  # the expansion tower's peasant returns to the hall
+                    for other in self.events:
+                        oj = self.jobs.get(other["id"])
+                        if not oj or not oj.get("building") or oj is job or other.get("btype") not in HALLS:
+                            continue
+                        b2 = next((b for b in self.obs["units"] if b["unit_id"] == oj["building"]), None)
+                        if b2 and dist(b2, worker_now) < 1200:
+                            nearby = b2
+                            break
+                if nearby:
+                    self.order(job["worker"], "smart", target_id=nearby["unit_id"])
+                for uid in [job["worker"], *job.get("helpers", [])]:
+                    if nearby and uid == job["worker"]:
+                        continue  # he is helping the other building
+                    prior = job.get("prior") if uid == job["worker"] else job.get("helper_prior", {}).get(uid)
                     self.roles.pop(uid, None)
                     worker = next((u for u in self.obs["units"] if u["unit_id"] == uid), None)
-                    if worker and e.get("then") == "wood":
+                    if not worker:
+                        continue
+                    if e.get("then") == "wood":
                         self.harvest(worker, "wood")
-                    elif worker and not self.harvest(worker, "gold", where):
-                        self.harvest(worker, "gold")
+                    elif e.get("then") == "natural":
+                        self.harvest(worker, "gold", "natural")
+                    elif prior == "wood":
+                        self.harvest(worker, "wood")  # went back where he came from, not always to gold
+                    elif prior == "gold":
+                        self.harvest(worker, "gold", self.mine_of.get(uid, "main"))
+                    else:
+                        self.harvest(worker, "wood")  # was idle: lumber; the worker balance trims extras
                 del self.jobs[e["id"]]
                 return
 
@@ -559,7 +655,8 @@ class Commander:
     # ---- militia (Call to Arms) -------------------------------------------------------------------
     def _start_militia(self, e, rt):
         held = self.reserved()
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in ("gold", "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
+        # Call to Arms draws from lumber/new peasants; the five gold miners stay on the mine.
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
         pool.sort(key=lambda u: (self.roles.get(u["unit_id"]) != e.get("from", "wood"), self.cid[u["unit_id"]]))
         us = pool[: e.get("count", 4)]
         if not us:
@@ -578,7 +675,10 @@ class Commander:
         for uid, prev in job["units"].items():
             u = here.get(uid)
             if u and u["type_id"] == "hmil":
-                job["seen"].add(uid)
+                if uid not in job["seen"]:
+                    job["seen"].add(uid)
+                    if e.get("to"):  # walk from the town hall to the altar so they leave with the hero
+                        self.order(uid, "move", x=float(e["to"][0]), y=float(e["to"][1]))
             elif u and uid in job["seen"] and uid not in job["reverted"]:  # a peasant again: free a moment for a builder
                 job["reverted"][uid] = self.t
                 if self.roles.get(uid) == "militia":
@@ -672,6 +772,54 @@ class Commander:
             if role in ("gold", "wood") and u.get("order") is None and u["unit_id"] not in self.ordered:
                 if self.t - self.last_order.get(u["unit_id"], -99) >= 2:
                     self.harvest(u, role, self.mine_of.get(u["unit_id"], "main"))
+
+    def _footmen(self) -> int:
+        return sum(1 for u in self.units() if u["type_id"] == "hfoo") + sum(
+            1 for j in self.jobs.values() if j.get("utype") == "hfoo")
+
+    def _worker_target(self) -> int:
+        """Five gold miners per town hall (the expansion one counts while planned) plus eight lumberjacks."""
+        halls = sum(1 for s in self.structures() if s["type_id"] in HALLS)
+        planned = any(e.get("kind") == "build" and e.get("btype") in HALLS
+                      and self.rt.get(e["id"], {}).get("status") not in ("done",) for e in self.events)
+        return GOLD_PER_MINE * max(1, halls + (1 if planned else 0)) + WOOD_TARGET
+
+    def _idle(self, u) -> None:
+        self.roles.pop(u["unit_id"], None)
+        self.order(u["unit_id"], "stop")
+
+    def _balance_workers(self) -> None:
+        """Five peasants per gold mine and eight on lumber. Extras stand by (or switch jobs)."""
+        by_mine: dict[str, list[int]] = {}
+        for uid, role in list(self.roles.items()):
+            if role == "gold":
+                by_mine.setdefault(self.mine_of.get(uid, "main"), []).append(uid)
+        for uids in by_mine.values():
+            uids.sort(key=lambda u: self.cid.get(u, 0))
+            for uid in uids[GOLD_PER_MINE:]:  # more than five: into lumber if it wants them
+                u = next((x for x in self.units() if x["unit_id"] == uid), None)
+                if not u or uid in self.ordered:
+                    continue
+                wood = [x for x in self.units() if self.roles.get(x["unit_id"]) == "wood"]
+                if len(wood) < WOOD_TARGET:
+                    self.harvest(u, "wood")
+                else:
+                    self._idle(u)
+        wood = [u for u in self.workers() if self.roles.get(u["unit_id"]) == "wood" and u["unit_id"] not in self.ordered]
+        for u in wood[WOOD_TARGET:]:  # nine lumberjacks: a mine short of five takes him, else stand by
+            short = next((m for m, us in by_mine.items() if len(us) < GOLD_PER_MINE), None)
+            if short:
+                self.harvest(u, "gold", short)
+            else:
+                self._idle(u)
+        main = by_mine.get("main", [])
+        if len(main) < GOLD_PER_MINE:
+            # the five are topped up at once, from a new/idle peasant first, then a lumberjack
+            pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood")
+                    and u["unit_id"] not in self.ordered and u["unit_id"] not in self.reserved()]
+            pool.sort(key=lambda u: (self.roles.get(u["unit_id"]) is not None, self.cid[u["unit_id"]]))
+            if pool:
+                self.harvest(pool[0], "gold", "main")
 
     # ---- state for the browser ---------------------------------------------------------------
     def snapshot(self) -> dict:

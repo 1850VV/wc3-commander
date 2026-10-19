@@ -16,6 +16,7 @@
     <label class="pick">出生点
       <select id="startSel"></select>
     </label>
+    <span class="plan-name" id="planName" hidden></span>
     <div class="res">
       <span><i class="dot" style="background:var(--gold)"></i>金 <b id="rGold">500</b></span>
       <span><i class="dot" style="background:var(--wood)"></i>木 <b id="rWood">150</b></span>
@@ -31,7 +32,7 @@
 
   <section class="view" id="view">
     <canvas id="cv"></canvas>
-    <div class="tag" id="viewTag">失落神庙 · 二维网格（每格 32 游戏单位）</div>
+    <div class="tag" id="viewTag">失落神庙 · 二维网格（每格 32 单位）· 实心=建筑，虚框=不能建造（能走）</div>
     <div class="zoom"><button class="btn" id="zIn" type="button" aria-label="放大">＋</button><button class="btn" id="zOut" type="button" aria-label="缩小">－</button><button class="btn" id="zHome" type="button">回基地</button></div>
     <div class="place" id="placeTip" hidden></div>
   </section>

@@ -8,18 +8,46 @@
   const BUILD_NAMES = {农场: 'hhou', 兵营: 'hbar', 国王祭坛: 'halt', 祭坛: 'halt', 伐木场: 'hlum', 铁匠铺: 'hbla', 神秘藏宝室: 'hvlt', 车间: 'harm', 神秘圣地: 'hars', 狮鹫笼: 'hgra', 侦察塔: 'hwtw'};
   const UNIT_NAMES = {农民: 'hpea', 步兵: 'hfoo', 火枪手: 'hrif', 大法师: 'Hamg', 山丘之王: 'Hmkg', 牧师: 'hmpr', 女巫: 'hsor', 破法者: 'hspt'};
   const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
   let startIndex = 0, groups = Sim.defaultPlan(), G = null, sel = null, placing = null;
   let checkpoints = []; // from a loaded strategy: [{id, name, event, at, from, to}]
   let playing = true, speed = 2, acc = 0, last = performance.now();
-  const live = {on: false, state: null, backend: '', es: null};
+  const live = {on: false, state: null, backend: '', es: null, current: null, dirty: false};
   const allEvents = () => groups.flatMap(g => g.children);
   const fmt = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
   const nowT = () => Math.min(T_END - 1, Math.round(V().t));
   const name = t => (ECO[t] ? ECO[t].name : t);
 
   function resim(t) { G = Sim.run(W, startIndex, groups, Math.max(0, Math.min(T_END, t))); }
-  function planChanged() { if (live.on) Live.pushPlan(); else resim(G.t); buildTimeline(); }
+  function planChanged() { if (live.on) Live.pushPlan(); else resim(G.t); markDirty(); buildTimeline(); }
+
+  /* ---------- the layout that is loaded (a saved strategy) ----------
+   * 保存 writes back to this name (「另存为…」 makes a new one); the top bar and the overview show
+   * it, and 未保存 while the plan differs from what was loaded or last saved. Plain DOM calls only:
+   * a console opened from an older cached page must not throw here. */
+  function showPlanName() {
+    const nm = live.current, el = $('planName');
+    if (el) {
+      el.hidden = !nm;
+      el.classList.toggle('on', !!nm);
+      el.title = nm || '';
+      el.textContent = '';
+      if (nm) {
+        el.appendChild(document.createTextNode('当前布局 · '));
+        const b = document.createElement('b'); b.textContent = nm; el.appendChild(b);
+        if (live.dirty) { const i = document.createElement('i'); i.className = 'dirty'; i.textContent = '未保存'; el.appendChild(i); }
+      }
+    }
+    const save = $('saveBtn');
+    if (save) save.title = nm ? `保存到当前布局「${nm}」（覆盖这套）` : '还没载入布局：保存时会先问名字';
+  }
+  function setCurrent(name) { live.current = name || null; live.dirty = false; showPlanName(); }
+  function markDirty() { if (live.current && !live.dirty) { live.dirty = true; showPlanName(); } }
+  function planLine() {
+    if (!live.current) return '';
+    return `<div class="planline">当前布局 <b>${esc(live.current)}</b>${live.dirty ? '<span class="dirty">未保存</span>' : ''}</div>`;
+  }
 
   /* ---------- view model: same shape for sim and live ---------- */
   let vCache = null, vStamp = -1;
@@ -108,6 +136,7 @@
   // automatically and Warcraft may still nudge it. Sites can move until the building is started.
   const UPCOMING = 30; // seconds ahead the overview lists build sites
   const siteRect = e => W.rectOf(e.site[0], e.site[1], W.buildingTex(e.btype));
+  const siteBody = e => W.bodyRect(e.site[0], e.site[1], W.buildingTex(e.btype));
   const inRect = (r, x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
   function movable(e) { const rt = e.rt || {}; return e.kind === 'build' && !e.resume && !!e.site && !rt.bid && rt.status !== 'done'; }
   function siteAt(wx, wy) { return allEvents().find(e => movable(e) && inRect(siteRect(e), wx, wy)); }
@@ -180,18 +209,30 @@
     // other start locations
     W.starts.forEach((s, i) => { if (i === startIndex) return; const [x, y, w, h] = rectScreen(W.rectOf(s.x, s.y, W.buildingTex('htow'))); ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); label(s.name + '出生点', x + w / 2, y + h / 2, ls, '#b9c0b5'); });
     for (const m of W.mines) {
-      const [x, y, w, h] = rectScreen(W.rectOf(m.x, m.y, m.tex)); ctx.fillStyle = '#8a7322'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = '#e4c14a'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
+      // the 16x16 texture is the unbuildable area; only its middle 8x8 is rock, and that is what
+      // the game's mine looks like. Dotted outline = placement footprint, solid = collision.
+      const [fx, fy, fw, fh] = rectScreen(W.rectOf(m.x, m.y, m.tex)), [x, y, w, h] = rectScreen(W.bodyRect(m.x, m.y, m.tex));
+      ctx.setLineDash([2, 5]); ctx.strokeStyle = 'rgba(228,193,74,.4)'; ctx.lineWidth = 1; ctx.strokeRect(fx, fy, fw, fh); ctx.setLineDash([]);
+      ctx.fillStyle = '#8a7322'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = '#e4c14a'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
       const mine = m.x === v.mine.x && m.y === v.mine.y, nat = naturalMine();
       const tag = m.x === nat.x && m.y === nat.y ? '分矿 · ' : '';
       if (w > 22) label(tag + (mine && v.mine.gold >= 0 ? '金矿 ' + Math.floor(v.mine.gold) : '金矿'), x + w / 2, y + h / 2, ls);
     }
-    for (const n of W.neutrals) { const [x, y, w, h] = rectScreen(W.rectOf(n.x, n.y, n.tex)); ctx.fillStyle = '#4b3a5e'; ctx.fillRect(x, y, w, h); if (w > 22) label(n.name, x + w / 2, y + h / 2, ls); }
-    // planned build sites: solid = placed by the player (exact), dashed = automatic; brighter when due soon
+    for (const n of W.neutrals) {
+      const [fx, fy, fw, fh] = rectScreen(W.rectOf(n.x, n.y, n.tex)), [x, y, w, h] = rectScreen(W.bodyRect(n.x, n.y, n.tex));
+      if (fw - w > 1 || fh - h > 1) { ctx.setLineDash([2, 5]); ctx.strokeStyle = 'rgba(160,130,190,.35)'; ctx.lineWidth = 1; ctx.strokeRect(fx, fy, fw, fh); ctx.setLineDash([]); }
+      ctx.fillStyle = '#4b3a5e'; ctx.fillRect(x, y, w, h);
+      if (w > 22) label(n.name, x + w / 2, y + h / 2, ls);
+    }
+    // planned build sites: solid body = placed by the player (exact, solid outline), dashed = automatic;
+    // the dotted ring around it is the unbuildable part of the pathing texture (units can still walk there)
     const soon = new Set(upcomingSites(v.t).map(e => e.id)), dragging = drag && drag.site;
     for (const e of allEvents()) {
       if (e.kind !== 'build' || !e.site || (e.rt && e.rt.bid)) continue;
-      const [x, y, w, h] = rectScreen(siteRect(e)), picked = sel && sel.type === 'event' && sel.id === e.id, due = soon.has(e.id);
+      const [fx, fy, fw, fh] = rectScreen(siteRect(e)), [x, y, w, h] = rectScreen(siteBody(e));
+      const picked = sel && sel.type === 'event' && sel.id === e.id, due = soon.has(e.id);
       ctx.globalAlpha = dragging === e && drag.ghost ? 0.35 : 1;
+      ctx.setLineDash([2, 5]); ctx.strokeStyle = 'rgba(214,160,63,.45)'; ctx.lineWidth = 1; ctx.strokeRect(fx, fy, fw, fh); ctx.setLineDash([]);
       ctx.fillStyle = due ? 'rgba(214,160,63,.24)' : 'rgba(214,160,63,.10)'; ctx.fillRect(x, y, w, h);
       if (!e.at) ctx.setLineDash([5, 4]);
       ctx.strokeStyle = picked ? '#fff' : due ? '#f0c060' : '#d6a03f'; ctx.lineWidth = due || e.at ? 2.2 : 1.5; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
@@ -200,7 +241,10 @@
       ctx.globalAlpha = 1;
     }
     for (const b of v.buildings) {
-      const [x, y, w, h] = rectScreen(W.rectOf(b.x, b.y, b.tex));
+      const [fx, fy, fw, fh] = rectScreen(W.rectOf(b.x, b.y, b.tex)), [x, y, w, h] = rectScreen(W.bodyRect(b.x, b.y, b.tex));
+      if (fw - w > 1 || fh - h > 1) { // Simple textures keep a 2-cell walkable ring: show it faintly
+        ctx.setLineDash([2, 5]); ctx.strokeStyle = 'rgba(74,138,214,.3)'; ctx.lineWidth = 1; ctx.strokeRect(fx, fy, fw, fh); ctx.setLineDash([]);
+      }
       if (b.done) { ctx.fillStyle = '#23466e'; ctx.fillRect(x, y, w, h); }
       else { ctx.fillStyle = 'rgba(74,138,214,.15)'; ctx.fillRect(x, y, w, h); ctx.fillStyle = 'rgba(74,138,214,.55)'; ctx.fillRect(x, y + h * (1 - b.progress), w, h * b.progress); }
       ctx.strokeStyle = sel && sel.type === 'building' && sel.id === b.id ? '#d6a03f' : '#4a8ad6'; ctx.lineWidth = sel && sel.id === b.id ? 2.5 : 1.5; ctx.strokeRect(x, y, w, h);
@@ -216,7 +260,9 @@
     }
     const ghost = placing && placing.pos ? placing : dragging && drag.ghost;
     if (ghost) {
-      const [x, y, w, h] = rectScreen(W.rectOf(ghost.pos[0], ghost.pos[1], W.buildingTex(ghost.btype)));
+      const [fx, fy, fw, fh] = rectScreen(W.rectOf(ghost.pos[0], ghost.pos[1], W.buildingTex(ghost.btype)));
+      const [x, y, w, h] = rectScreen(W.bodyRect(ghost.pos[0], ghost.pos[1], W.buildingTex(ghost.btype)));
+      ctx.setLineDash([2, 5]); ctx.strokeStyle = ghost.ok ? 'rgba(127,176,105,.75)' : 'rgba(208,88,74,.75)'; ctx.lineWidth = 1; ctx.strokeRect(fx, fy, fw, fh); ctx.setLineDash([]);
       ctx.fillStyle = ghost.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)'; ctx.fillRect(x, y, w, h);
       ctx.strokeStyle = ghost.ok ? '#7fb069' : '#d0584a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
       if (!ghost.ok && ghost.why && w > 26) label(ghost.why, x + w / 2, y - 10, ls * .9, '#f0a090');
@@ -331,7 +377,7 @@
     if (sel && !item) { sel = null; renderCmd(); }
     if (!sel) {
       const c = v.counts;
-      h = `<div class="title">战局概览</div><div class="kv">
+      h = `<div class="title">战局概览</div>` + planLine() + `<div class="kv">
         <span>采金</span><span class="num">${c.gold} 名农民</span><span>伐木</span><span class="num">${c.wood} 名农民</span>
         <span>建造</span><span class="num">${c.build} 名农民</span><span>空闲</span><span class="num" style="color:${c.idle ? 'var(--warn)' : 'inherit'}">${c.idle} 名农民</span>
         <span>主矿剩余</span><span class="num">${v.mine.gold >= 0 ? Math.floor(v.mine.gold) + ' 金' : '游戏不提供'}</span></div>`;
@@ -534,7 +580,7 @@
         if (started) return;
         const d = Math.round((q.clientX - x0) / w * T_END); if (Math.abs(q.clientX - x0) > 3) moved = true;
         const ns = Math.max(0, Math.min(T_END - 1, s0 + d));
-        if (ns !== e.start) { e.start = ns; if (!dragPending) dragPending = requestAnimationFrame(() => { dragPending = null; if (live.on) Live.pushPlan(); else resim(G.t); }); }
+        if (ns !== e.start) { e.start = ns; markDirty(); if (!dragPending) dragPending = requestAnimationFrame(() => { dragPending = null; if (live.on) Live.pushPlan(); else resim(G.t); }); }
       };
       const up = () => {
         b.removeEventListener('pointermove', mv); b.removeEventListener('pointerup', up); b.removeEventListener('pointercancel', up);
@@ -590,11 +636,14 @@
       b.onclick = () => (live.on ? this.disconnect(b) : this.connect(b)); $('modeTag').after(b);
       const tk = live.tacticBtn = document.createElement('button'); tk.className = 'btn tactic on'; tk.type = 'button'; tk.hidden = true;
       tk.title = '开：按时间轴自动下命令；关：只看游戏、不下任何命令，你自己操作'; tk.onclick = () => this.tactic(!live.tactic); b.after(tk); this.showTactic(true);
-      const sv = document.createElement('button'); sv.className = 'btn'; sv.type = 'button'; sv.textContent = '保存布局';
-      sv.title = '把整套编排（包括拖好的工地）存到服务端的 strategies 目录'; sv.onclick = () => this.save(); b.after(sv);
+      const sv = document.createElement('button'); sv.className = 'btn'; sv.id = 'saveBtn'; sv.type = 'button'; sv.textContent = '保存';
+      sv.onclick = () => this.save(); b.after(sv);
+      const sa = document.createElement('button'); sa.className = 'btn'; sa.type = 'button'; sa.textContent = '另存为…';
+      sa.title = '把这套编排存成一套新布局，当前布局不变'; sa.onclick = () => this.saveAs(); sv.after(sa);
       const ld = document.createElement('select'); ld.className = 'btn'; ld.title = '载入保存过的编排（会替换当前整套编排）';
       ld.innerHTML = '<option value="">载入布局…</option>';
-      ld.onfocus = ld.onpointerdown = () => this.list(ld); ld.onchange = () => { const nm = ld.value; ld.value = ''; if (nm) this.load(nm); }; sv.after(ld);
+      ld.onfocus = ld.onpointerdown = () => this.list(ld); ld.onchange = () => { const nm = ld.value; ld.value = ''; if (nm) this.load(nm); }; sa.after(ld);
+      showPlanName();
     },
     async list(ld) {
       try {
@@ -613,41 +662,57 @@
         Sim.syncSeq(allEvents());
         if (j.plan.start != null) { startIndex = j.plan.start; startSel.value = String(startIndex); }
         sel = null; resim(0); buildTimeline(); renderCmd(); home(); playing = false; bPlay.textContent = '▶ 播放';
+        setCurrent(j.name);
         say(`已载入「${j.name}」（${W.starts[startIndex].name}出生点，${allEvents().length} 个事件），保存于 ${j.saved}`);
       } catch (_) { say('载入失败：连不上本地服务', true); }
     },
-    async save() {
-      const d = new Date(), pad = n => String(n).padStart(2, '0');
-      const nm = prompt('给这套编排起个名字（会存成 strategies/名字.json）', `布局 ${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`);
-      if (!nm) return;
-      if (!live.on) G = Sim.run(W, startIndex, groups, G.t); // make sure every site is resolved
+    resolveSites() { // saved plans must carry every build site: the engine starts events from it
+      if (live.on) G = Sim.run(W, startIndex, groups, 0); else resim(G.t);
+    },
+    async put(nm) {
+      this.resolveSites();
       try {
-        const r = await fetch('/api/strategies/' + encodeURIComponent(nm.trim()), {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify(this.serialize())});
+        const r = await fetch('/api/strategies/' + encodeURIComponent(nm), {method: 'PUT', headers: {'content-type': 'application/json'}, body: JSON.stringify(this.serialize())});
         const j = await r.json();
-        say(j.ok ? `已保存「${j.name}」：${j.events} 个事件` : '没保存成功：' + j.error, !j.ok);
-      } catch (_) { say('没保存成功：连不上本地服务', true); }
+        if (!j.ok) { say('没保存成功：' + j.error, true); return null; }
+        setCurrent(j.name);
+        say(`已保存到「${j.name}」：${j.events} 个事件`);
+        return j.name;
+      } catch (_) { say('没保存成功：连不上本地服务', true); return null; }
+    },
+    async save() { // the plain save goes back to the loaded layout, no question asked
+      if (live.current) return this.put(live.current);
+      return this.saveAs();
+    },
+    async saveAs() {
+      const d = new Date(), pad = n => String(n).padStart(2, '0');
+      const def = live.current ? live.current + ' 副本' : `布局 ${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
+      const nm = prompt('保存为新布局（会存成 strategies/名字.json）', def);
+      if (!nm || !nm.trim()) return;
+      return this.put(nm.trim());
     },
     async connect(btn) {
       let h = {};
       try { h = await (await fetch('/api/health')).json(); } catch (_) { say('连不上本地服务', true); return; }
       if (h.running || h.waiting) { // a game is already going (or awaited): join it with its plan instead of starting anew
-        try { this.adopt((await (await fetch('/api/plan')).json()).plan); } catch (_) { say('读不到正在运行的计划', true); return; }
+        try { const j = await (await fetch('/api/plan')).json(); this.adopt(j.plan, j.name); } catch (_) { say('读不到正在运行的计划', true); return; }
       } else if (h.launch) this.pushPlan(); // test switch / fake server: send this plan and launch a game
       // otherwise the bridge waits for the game you start and picks the strategy for your start itself
       live.es = new EventSource('/api/stream');
-      live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'plan') this.adopt(msg.plan); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
+      live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'plan') this.adopt(msg.plan, msg.name); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
       live.es.onerror = () => say('与本地服务的连接中断，正在重试…', true);
       live.on = true; btn.textContent = '断开'; this.showTactic(h.running ? h.tactic !== false : true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
       if (h.running) { say('已加入正在进行的游戏（' + W.starts[startIndex].name + '，' + allEvents().length + ' 个事件）'); return; }
       if (h.waiting) { say('正在等待你开游戏…'); return; }
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'start', start: startIndex})});
     },
-    adopt(plan) { // take over the plan the bridge is running, keeping the console in step with the game
+    adopt(plan, nm) { // take over the plan the bridge is running, keeping the console in step with the game
       if (!plan || !Array.isArray(plan.groups) || !plan.groups.length) return;
       groups = plan.groups.map(g => ({...g, open: true, children: g.children.map(e => ({...e, rt: null}))}));
       checkpoints = plan.checkpoints || [];
       Sim.syncSeq(allEvents());
       if (plan.start != null) { startIndex = plan.start; startSel.value = String(startIndex); }
+      if (nm) setCurrent(nm);
       sel = null; G = Sim.run(W, startIndex, groups, 0); buildTimeline(); renderCmd(); home();
     },
     disconnect(btn) {
@@ -664,7 +729,7 @@
     serialize() { return {start: startIndex, checkpoints, groups: groups.map(g => ({id: g.id, name: g.name, src: g.src, children: g.children.map(({rt, ...e}) => e)}))}; },
     pushPlan() {
       G.planSites && (G = Sim.run(W, startIndex, groups, 0)); // resolve build sites with the same placement rules
-      fetch('/api/plan', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(this.serialize())}).catch(() => say('计划没送到本地服务', true));
+      fetch('/api/plan', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({...this.serialize(), name: live.current})}).catch(() => say('计划没送到本地服务', true));
     },
     apply(s) {
       live.state = s;
@@ -688,18 +753,23 @@
   $('bReset').onclick = () => { if (live.on) return; resim(0); sel = null; renderCmd(); };
   const startSel = $('startSel');
   W.starts.forEach((s, i) => { const o = document.createElement('option'); o.value = i; o.textContent = s.name; startSel.appendChild(o); });
-  startSel.onchange = () => { startIndex = +startSel.value; sel = null; if (live.on) Live.pushPlan(); else resim(G.t); home(); renderCmd(); };
+  startSel.onchange = () => { startIndex = +startSel.value; sel = null; markDirty(); if (live.on) Live.pushPlan(); else resim(G.t); home(); renderCmd(); };
   $('foot').textContent = `地图与数值：失落神庙通行网格 ${W.W}×${W.H}、${W.trees.length} 棵树、${W.mines.length} 座金矿，单位造价与工期取自 1.27a 数据（来自 warcraft-commander 提取）。` +
     `模拟假设：每趟采金/伐木 ${Sim.TUNING.carry}，金矿每次进一个农民、矿内 ${Sim.TUNING.mineSeconds} 秒（未校准），伐木每下 ${Sim.TUNING.chopSeconds} 秒，每棵树 ${Sim.TUNING.treeWood} 木；不模拟单位碰撞和战斗。`;
 
+  /* Paint at 10 fps beside a live game (the bridge pushes ~4 states/s) and 30 fps offline: the map
+   * is redrawn from scratch, and at 4K a 60 fps repaint is what made the console feel heavy. */
+  let lastPaint = 0;
   function frame(now) {
+    requestAnimationFrame(frame);
     const dt = Math.min(0.25, (now - last) / 1000); last = now;
     if (!live.on && playing && G.t < T_END) { acc += dt * speed; while (acc >= Sim.DT && G.t < T_END) { G.step(); acc -= Sim.DT; } }
     if (!live.on && G.t >= T_END && playing) { playing = false; bPlay.textContent = '▶ 重播'; }
+    if (now - lastPaint < (live.on ? 100 : 33)) return;
+    lastPaint = now;
     const v = V();
     draw(); renderStatus(); updateTimeline();
     $('rGold').textContent = Math.floor(v.gold); $('rWood').textContent = Math.floor(v.wood); $('rFood').textContent = v.foodUsed + '/' + v.foodCap; $('clock').textContent = fmt(v.t);
-    requestAnimationFrame(frame);
   }
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
 })();

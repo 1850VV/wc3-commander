@@ -29,7 +29,7 @@ function plan(start) {
 
   // opening: P1-P3 gold, P4 altar, P5 farm, P6 barracks
   const altar = ev('build', '建造 国王祭坛 · 农民4', 0, {unit: 4, btype: 'halt', at: wall.altar});
-  const barracks = ev('build', '建造 兵营 · 新农民', 16, {unit: null, btype: 'hbar', at: wall.barracks});
+  const barracks = ev('build', '建造 兵营 · 新农民', 16, {unit: 6, btype: 'hbar', at: wall.barracks});
   const open = [
     ev('gather', '采金 · 农民1、2、3', 0, {units: [1, 2, 3], res: 'gold'}),
     altar,
@@ -42,9 +42,11 @@ function plan(start) {
   const army = [
     hero,
     ev('learn', '大法师学水元素', 115, {hero: 'Hamg', ability: 'AHwe', abilityName: '水元素'}),
-    ev('train', '训练 步兵 F1', 75, {utype: 'hfoo', after: barracks.id}),
-    ev('train', '训练 步兵 F2', 95, {utype: 'hfoo'}),
-    ev('train', '训练 步兵 F3', 125, {utype: 'hfoo'}),
+    // The barracks is the bottleneck; going for the first footman as soon as it stands up (instead of
+    // waiting for a fixed 1:15) lets F2 finish around the Archmage's birth instead of after it.
+    ev('train', '训练 步兵 F1', 70, {utype: 'hfoo', after: barracks.id}),
+    ev('train', '训练 步兵 F2', 70, {utype: 'hfoo'}),
+    ev('train', '训练 步兵 F3', 70, {utype: 'hfoo'}),
   ];
   const eco = [
     peasant(45, 'wood'),
@@ -53,13 +55,19 @@ function plan(start) {
     farm('建造 农场 3', 95, {then: 'wood'}),
     peasant(90, 'wood'), peasant(105, 'wood'), peasant(120, 'wood'),
   ];
-  const militia = ev('militia', '敲钟：4 个伐木农民变民兵', 125, {count: 4, from: 'wood'});
-  const clear = ev('clear', '清近矿（大法师 + 步兵 + 民兵）', 127, {militia: militia.id});
-  const hall = ev('build', '建造 分基地（4 人协助）', 130, {unit: null, btype: 'htow', near: 'natural', helpers: 4, then: 'natural', after: clear.id});
+  // Timing trick: the altar is done ≈0:64 and the Archmage takes 55 s, so he is born ≈1:58. Start
+  // Call to Arms at 1:52: the five peasants reach the hall, change, and are at the altar (where he
+  // spawns) right as he is born, so hero, footmen and militia leave for the natural together. Do not
+  // send them to the camp early: they must not clear it before the hero gets there.
+  const militia = ev('militia', '敲钟：5 个伐木农民变民兵', 112,
+    {count: 5, from: 'wood', to: [wall.altar[0], wall.altar[1] - 240]});
+  const clear = ev('clear', '清近矿（大法师 + 步兵 + 民兵）', 122, {militia: militia.id});
+  // The army needs a moment to walk off the natural after the clear; the town hall goes up there.
+  const hall = ev('build', '建造 分基地（3 人协助 + 1 人敲塔）', 190, {unit: null, btype: 'htow', near: 'natural', helpers: 3, then: 'natural', after: clear.id});
   const expand = [
     militia, clear, hall,
     peasant(135, 'wood'), peasant(150, 'wood'), peasant(165, 'wood'),
-    ev('build', '建造 侦察塔（分矿）', 225, {unit: null, btype: 'hwtw', near: 'natural', then: 'natural'}),
+    ev('build', '建造 侦察塔（分矿民兵）', 225, {unit: null, btype: 'hwtw', near: 'natural', then: 'natural'}),
     ev('upgrade', '侦察塔升级为防御塔', 260, {from: 'hwtw', to: 'hatw'}),
     peasant(250, 'natural'), peasant(265, 'natural'), peasant(280, 'natural'),
   ];
@@ -68,6 +76,7 @@ function plan(start) {
   const vault = ev('build', '建造 神秘藏宝室', 405, {unit: null, btype: 'hvlt'});
   const tech = [
     ev('train', '训练 步兵 F4', 270, {utype: 'hfoo'}), ev('train', '训练 步兵 F5', 290, {utype: 'hfoo'}),
+    ev('train', '训练 步兵 F6', 310, {utype: 'hfoo'}),
     ev('build', '建造 伐木场', 285, {unit: null, btype: 'hlum', then: 'wood'}),
     farm('建造 农场 4', 300, {}),
     keep,

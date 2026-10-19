@@ -19,10 +19,11 @@ NEUTRAL_HOSTILE = 12
 ORDERS = {"water": "waterelemental", "water_ability": "AHwe"}
 CAMP_RADIUS = 900           # creeps this close to the camp point belong to it
 ENGAGE = 1100               # start fighting when a camp creep is this close to the army
+HERO_LEAD = 900.0           # the militia do not start the fight until the hero is this close
 MILITIA_RETREAT = 0.35      # militia below this share of hit points walk home
 HERO_RETREAT = 0.30         # hero below this: everyone home, event failed
 CLEAR_QUIET = 3.0           # seconds without a visible camp creep after the fight = cleared
-TIMEOUT = 150.0             # seconds from the start of the march
+TIMEOUT = 240.0             # seconds from the start of the march (the west camp takes ~2.5 min)
 MANUAL_PAUSE = 5.0
 REORDER = 1.5               # do not repeat the same order to a unit more often than this
 # Lost Temple natural camps are forest trolls: healers and trappers die first, then the weakest.
@@ -57,8 +58,14 @@ class Clear:
     def _order(self, cmd, unit, t, command, **arguments):
         key = (command, tuple(sorted(arguments.items())))
         last = self.given.get(unit["unit_id"])
-        if last and last[0] == key and t - last[1] < REORDER:
-            return
+        if last and last[0] == key:
+            march = command == "attack" and "target_id" not in arguments
+            # Warcraft keeps an attack-move going. Re-sending it every REORDER seconds restarts the
+            # order and makes the column stutter, so while the unit is already attacking we leave it.
+            if march and (unit.get("order") or {}).get("name") == "attack":
+                return
+            if t - last[1] < REORDER:
+                return
         cmd.order(unit["unit_id"], command, **arguments)
         self.given[unit["unit_id"]] = (key, t)
 
@@ -90,6 +97,13 @@ class Clear:
         for ev in obs.get("events", []):  # water elementals fight with us
             if ev.get("kind") == "summon" and ev.get("unit_id") in self.members and ev.get("summoned_id"):
                 self.members.append(ev["summoned_id"])
+        # the second footman (or a later one) may finish training after the march began: it joins
+        # where it is and walks to the camp instead of waiting at the barracks
+        for u in obs["units"]:
+            if u["unit_id"] in self.members or u.get("structure"):
+                continue
+            if u.get("hero") or u["type_id"] == "hfoo":
+                self.members.append(u["unit_id"])
         army = [own[m] for m in self.members if m in own and m not in self.retreated]
         heroes = [u for u in army if u.get("hero")]
         creeps = self._creeps(obs)
@@ -103,13 +117,16 @@ class Clear:
             if h["hp"] < HERO_RETREAT * h["max_hp"]:
                 return self._finish(cmd, army, t, "failed: 英雄血量过低，全队撤回", retreat=True)
 
-        near = creeps and min(dist(c, u) for c in creeps for u in army) <= ENGAGE if army else False
+        hero_close = any(dist(h, self.camp) <= HERO_LEAD for h in heroes)
+        near = creeps and hero_close and min(dist(c, u) for c in creeps for u in army) <= ENGAGE if army else False
         if self.phase == "march" and near:
             self.phase = "fight"
         if self.phase == "march":
-            self.note = "部队前往野怪点"
+            self.note = "大法师已到，进攻野怪点" if hero_close else "部队前往野怪点（等大法师）"
             for u in army:
                 if not self._by_hand(u, t):
+                    # everyone leaves the altar together and walks straight at the camp; the fight
+                    # itself only starts once the hero is close, so the militia cannot clear alone
                     self._order(cmd, u, t, "attack", x=self.camp["x"], y=self.camp["y"])
             return
 
@@ -150,6 +167,8 @@ class Clear:
     def _finish(self, cmd, army, t, result, retreat=False) -> None:
         self.result = result
         self.note = {"done": "清完野怪"}.get(result, result.replace("failed: ", "失败："))
+        # On a win the army stays where it is: the militia wait at the natural, turn back into
+        # peasants there, and four of them build the hall while one raises the tower.
         if retreat:
             for u in army:
                 cmd.order(u["unit_id"], "move", x=self.home["x"], y=self.home["y"])

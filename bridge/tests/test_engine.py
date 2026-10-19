@@ -211,7 +211,7 @@ class FastExpandTest(unittest.TestCase):
         for name in ("建造 国王祭坛 · 农民4", "建造 兵营 · 新农民", "训练 大法师（首发免费）", "大法师学水元素", "清近矿（大法师 + 步兵 + 民兵）"):
             self.assertEqual(by[name]["status"], "done", (name, by[name]))
         self.assertFalse(by["清近矿（大法师 + 步兵 + 民兵）"].get("failed"))
-        hall = by["建造 分基地（4 人协助）"]
+        hall = by["建造 分基地（3 人协助 + 1 人敲塔）"]
         self.assertIn(hall["status"], ("running", "done"), hall)
         self.assertGreater(hall["bStart"], by["清近矿（大法师 + 步兵 + 民兵）"]["aEnd"] - 0.5)
 
@@ -248,6 +248,44 @@ class ClearUnitTest(unittest.TestCase):
         cmd.orders.clear()
         cl.tick(cmd, self.obs(army, creeps), 9.0)
         self.assertIn((3, "move", {"x": 2000, "y": 0}), cmd.orders)
+
+    def test_militia_does_not_start_the_fight_before_the_hero(self):
+        from commander_bridge.combat import Clear
+        cl, cmd = Clear((0, 0), (2000, 0), [1, 2], t=0), self.Cmd()
+        creep = {"unit_id": 90, "type_id": "nftr", "owner": 12, "x": 0, "y": 0, "hp": 100, "max_hp": 100}
+        army = [self.unit(1, "Hamg", 2000, 0, hero=True), self.unit(2, "hmil", 100, 0)]
+        cl.tick(cmd, self.obs(army, [creep]), 1.0)
+        self.assertEqual(cl.phase, "march")
+        self.assertNotIn(90, {o[2].get("target_id") for o in cmd.orders if o[1] == "attack"})
+        self.assertIn((2, "attack", {"x": 0, "y": 0}), cmd.orders)  # walks at the camp, not the creep
+        army[0].update(x=100, y=0)  # the hero arrives
+        cmd.orders.clear()
+        cl.tick(cmd, self.obs(army, [creep]), 3.0)
+        self.assertEqual(cl.phase, "fight")
+        self.assertIn(90, {o[2].get("target_id") for o in cmd.orders if o[1] == "attack"})
+
+    def test_after_the_clear_the_army_stays_at_the_natural(self):
+        from commander_bridge.combat import Clear
+        cl, cmd = Clear((0, 0), (2000, 0), [1], t=0), self.Cmd()
+        cl._finish(cmd, [self.unit(1, "Hamg", 0, 0, hero=True)], 2.0, "done")
+        self.assertNotIn((1, "move", {"x": 2000, "y": 0}), cmd.orders)
+
+    def test_a_footman_finished_after_the_march_joins_it(self):
+        from commander_bridge.combat import Clear
+        cl, cmd = Clear((0, 0), (2000, 0), [1], t=0), self.Cmd()
+        obs = self.obs([self.unit(1, "Hamg", 100, 0, hero=True), self.unit(4, "hfoo", 300, 0)], [])
+        cl.tick(cmd, obs, 1.0)
+        self.assertIn(4, cl.members)
+        self.assertIn(4, [o[0] for o in cmd.orders if o[1] == "attack"])
+
+    def test_march_order_is_not_repeated_while_the_unit_is_moving(self):
+        from commander_bridge.combat import Clear
+        cl, cmd = Clear((0, 0), (2000, 0), [1], t=0), self.Cmd()
+        u = self.unit(1, "Hamg", 100, 0, hero=True, order={"name": "attack", "target_id": None, "x": 0, "y": 0})
+        cl.tick(cmd, self.obs([u], []), 1.0)
+        sent = len(cmd.orders)
+        cl.tick(cmd, self.obs([u], []), 2.0)
+        self.assertEqual(len(cmd.orders), sent)  # re-issuing every 1.5 s is what made the column stutter
 
 
 class ReservedWorkerTest(unittest.TestCase):
