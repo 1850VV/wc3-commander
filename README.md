@@ -35,7 +35,7 @@ python -m http.server 8000
 需要 Python 3.11+ 和本地的 wc3env-127a 源码。在 Mac / Linux 上运行需要它的跨平台导入修复（`cross-platform-import` 分支：让协议、会话和假服务器不依赖 Windows 也能导入）。
 
 ```sh
-git clone https://github.com/1850VV/wc3env-127a ../wc3env-127a
+git clone -b cross-platform-import https://github.com/1850VV/wc3env-127a ../wc3env-127a
 cd bridge
 WC3ENV_SRC=../../wc3env-127a/src python -m commander_bridge --backend fake --speed 4
 # 打开 http://127.0.0.1:8790/ ，点「连接 假游戏服务器」
