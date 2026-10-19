@@ -1,0 +1,205 @@
+{
+  "verification_date": "2026-10-19",
+  "timezone": "Asia/Shanghai",
+  "source_run": "20261019-1204",
+  "tested_commander_commit": "fcdb1f37c39e49a485aed5ca1c4524caf8fdaf20",
+  "result": "PASS_STARTUP_STEPS_1_TO_4",
+  "not_verified": [
+    "complete opening gameplay acceptance",
+    "raw native events_lost counter"
+  ],
+  "privacy": "Only local path prefixes are replaced with descriptive placeholders. Original evidence stays local. No game binaries, maps, .env files or repository-wide inventories are included.",
+  "placeholder_meanings": {
+    "<WORKSPACE_ROOT>": "parent directory containing wc3-commander and wc3env-127a",
+    "<USER_PROFILE>": "Windows user profile directory",
+    "<WC3_GAME_DIR>": "locally installed Warcraft III 1.27a directory",
+    "<WC3_OUTPUT_DIR>": "wc3env isolated process-output parent directory"
+  },
+  "files": [
+    {
+      "path": "evidence/REPORT.txt",
+      "source_sha256": "e7047b3b4b22c9469026304072bab2d60aad52ce23036ac21bbdb91fdd0ec8b6",
+      "published_sha256": "b6ae805eea1972278da38336fab0889a7c214d930ba9fbfced8e49a6bebe8800",
+      "published_bytes": 6061,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/preflight.json",
+      "source_sha256": "25625571bf96cd61334b079f7504b109168eda2877df9945a197ad7b97e8b28a",
+      "published_sha256": "0055d35df8b773b7f0f32b0f848f05073e6fafbdeb587765a5ae2f64210abb8f",
+      "published_bytes": 558,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step1-pip.log",
+      "source_sha256": "7ce54c863b258bdca729b9bd504e40aa3ee4dac0991ffd73189839c35e391a60",
+      "published_sha256": "b6fb9eabfe607b76e5f5230fb826d681fcf13799f7cb05aefb0550b7ac793de8",
+      "published_bytes": 1483,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step1-pip-result.json",
+      "source_sha256": "a6eea708b2eed7efd546342271f6e1c0457da434d5b8d2b3e746668342265720",
+      "published_sha256": "350f9f4649ac9f1ecd8604a9ee128ebdb6b6469bf8cb7b3785265226369bd624",
+      "published_bytes": 230,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step1-native.log",
+      "source_sha256": "3525cb8d1867b4302e97dad7480a4e2b293c38c718891f2e749c1ebc0503b927",
+      "published_sha256": "5ea1a004993ff85c6bbb6ac19890d1a1c4f606df0e137450af32519daa6cbb77",
+      "published_bytes": 421,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step1-native-result.json",
+      "source_sha256": "16e0420f7e3e198236accb1d1c348b31b2ae58d6d376a660bd64be3ccca0569d",
+      "published_sha256": "d6ff05ff4788c27c87fd2a0e306191178c23848352f018498c189406992e763c",
+      "published_bytes": 283,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step1-hook-11328.log",
+      "source_sha256": "bfbf647d4286e059c6154c02a985b58da7f8eabfca6c8f2c18059fba26cdb22c",
+      "published_sha256": "92b6bfd5d943982776ee1fde08a1462994aa9953de0f474470b39eac96ac4fe5",
+      "published_bytes": 1276,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step2-fetch.log",
+      "source_sha256": "5921a132cd2ae562656eed3d4ab25095ee0d187331c2000e5278c72efbd41abc",
+      "published_sha256": "aa46076c6fa367a1646acde2c67a7fb10415f9c29205cdc780a57add6af554bb",
+      "published_bytes": 92,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step3-maps-before.json",
+      "source_sha256": "2572d22ac6efa941dee23817466b4403cff58b55584664200b6b0e43e5ffe869",
+      "published_sha256": "3d3eea031b91f8ec00f744c64a3faa4ca30046817cd5a64aac10b4eb7719d0f9",
+      "published_bytes": 294,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step4-service.json",
+      "source_sha256": "9ddce793f2534859a6fba30131888d1b719b8f0e92a742b8d4e97db4e28108e8",
+      "published_sha256": "6b52c66f8021456bbcc82f3dff5445fcd194da1eb5b9aa6e93c24b1fbd23c72b",
+      "published_bytes": 485,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step4-health-before.json",
+      "source_sha256": "87435100d0fcf604aeccb45e81eaa58c2b9923e794be54e07a7377fe8063b97d",
+      "published_sha256": "d226ed67cc2a605c7c52f003200d272d1a4aca0691fab4efc4decfc0dd45be1c",
+      "published_bytes": 60,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step4-health-connected.json",
+      "source_sha256": "1c44020b18cdd7482cf635b90b2b6785c79b0262aa892b499d3cba6acc4ee29b",
+      "published_sha256": "fcbc8aa02b1d066713522e3c352616d5d5368b45c69d55abb21b0b814c33a4d0",
+      "published_bytes": 59,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step4-processes.json",
+      "source_sha256": "f2194c6e54b883c1a17440873a67c100cfb793f8eb678c722035de24f83dfea1",
+      "published_sha256": "47e6d1329fd253ffbf68f2922f2c51bd1ea70d2e727393df3c992b46d28da18a",
+      "published_bytes": 1107,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/step4-hook-20788.log",
+      "source_sha256": "622a20f185770f834214a05ed5751b47a375b056798830a131f60031f6bddb10",
+      "published_sha256": "de7ff5f62126989ed1a458eef3cec67ae5e78b55ccd6e0670022518fc0868a45",
+      "published_bytes": 3692,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/bridge-stdout.log",
+      "source_sha256": "e584b93748661e81feac483c857bc63b6ca0d87979602c96f4e12e627ac18d81",
+      "published_sha256": "ecd6a2209b773a4819e6f58083ffd4c63223446e5fb21f79b76b94aca0b3d4c3",
+      "published_bytes": 83,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/bridge-stderr.log",
+      "source_sha256": "93c20ac6d0c6b579e674e4eeb99a3e9889c99f8a510d0fe1b25b336df9d56871",
+      "published_sha256": "0603c4fdd8602e195fda4df18e466cd6a18ca377bbabbf8b19c2cebeadae6266",
+      "published_bytes": 71,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/bridge-stream.jsonl",
+      "source_sha256": "571e05e4bea3bdf35e43ee1bbf01b0691fd72c89dc8abc6b13b1ea8316372e28",
+      "published_sha256": "dbc5817be5337ae5dcbe72c2b5e53e1376acc80ecfc1916198d4a05ed6dd868a",
+      "published_bytes": 1026821,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/final-state.json",
+      "source_sha256": "13b6d2936eafc3e1cb7a0f296ea63d39d62b9608f0c140d29dc79443be012e19",
+      "published_sha256": "7d6e59059b0ae27282d5cf9b8a52ed9dca16db4e5578a08718e52dfbcfbfb5b6",
+      "published_bytes": 3244,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/game-window.json",
+      "source_sha256": "13763ccb4e68cad5b254b94d10d16519352d442707dfc2cf0bb27404ca0d668c",
+      "published_sha256": "472d5707db423a4df83736000805676361f06bf37a01ad408819bb3391027c8c",
+      "published_bytes": 168,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/game-window.jpg",
+      "source_sha256": "d3538978a273a1141a989d783bd5cb6e050235a3df2c4dba071656100f3f67b6",
+      "published_sha256": "d3538978a273a1141a989d783bd5cb6e050235a3df2c4dba071656100f3f67b6",
+      "published_bytes": 376805,
+      "transformation": "unchanged JPEG bytes; corrected filename extension from .png to .jpg",
+      "source_name": "game-window.png"
+    },
+    {
+      "path": "evidence/console-connected-top.jpg",
+      "source_sha256": "46e744557b00372755cb4560282e26fd3b0a2fe6134b75a3a34b92b10a4cfe1c",
+      "published_sha256": "46e744557b00372755cb4560282e26fd3b0a2fe6134b75a3a34b92b10a4cfe1c",
+      "published_bytes": 84070,
+      "transformation": "unchanged JPEG bytes; corrected filename extension from .png to .jpg",
+      "source_name": "console-connected-top.png"
+    },
+    {
+      "path": "evidence/console-connected.jpg",
+      "source_sha256": "82640995ca605e598356024ab3b0865faa28eb397c1673356b3d7a44c0214789",
+      "published_sha256": "82640995ca605e598356024ab3b0865faa28eb397c1673356b3d7a44c0214789",
+      "published_bytes": 77574,
+      "transformation": "unchanged JPEG bytes; corrected filename extension from .png to .jpg",
+      "source_name": "console-connected.png"
+    },
+    {
+      "path": "evidence/commander-bridge-tests.log",
+      "source_sha256": "8d9704cbdaba47dc2f1d75551d8c9cd1708e0b596c10bf02d786005fde4d9961",
+      "published_sha256": "7f256f5c18078f3ad895e672a174bd1d05742249bfe6a8f11fd9d279be01e91d",
+      "published_bytes": 105,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/commander-web-tests.log",
+      "source_sha256": "a8361462f96e9d610ddc577dff6f468d95ae937540fea8a6764681e78f0ebbda",
+      "published_sha256": "846f16fbb71d3d6f71990f883dbb4d8d3004c1816e8ab24542c9b8905180b168",
+      "published_bytes": 979,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/commander-web-tests-explicit-files.log",
+      "source_sha256": "1c9f98301e10f3e7326ebca98458b739544ea4fd325a5fb3a762ef21e5907f92",
+      "published_sha256": "6e433764070ada37da83dba0727b16cdf322afee92429f0778d879565c1b1d66",
+      "published_bytes": 439,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    },
+    {
+      "path": "evidence/stream-recorder.log",
+      "source_sha256": "2fed55e08b6362e709ec615e3ffa027dc134546204461f2530094a3a131e3748",
+      "published_sha256": "18e17198fcdf38b836b3b1e6272497595c3cee5fc1294b485625523e018683f1",
+      "published_bytes": 107,
+      "transformation": "local path redaction and UTF-8/LF or JSON normalization"
+    }
+  ]
+}

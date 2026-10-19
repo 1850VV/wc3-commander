@@ -1,0 +1,87 @@
+wc3-commander local startup verification
+Date: 2026-10-19 (Asia/Shanghai)
+Final observation: 12:08:11 +08:00
+Scope: requested steps 1-4, real wc3env backend, browser Connect click, visible native window.
+
+RESULT: PASS for all four requested startup steps.
+
+1. wc3env installation and native stepping: PASS
+Working directory: <WORKSPACE_ROOT>\wc3env-127a
+Interpreter: <WORKSPACE_ROOT>\wc3env-127a\.venv\Scripts\python.exe
+Version: CPython 3.12.10, 64-bit
+Branch: codex/archmage-kiting-mvp
+Commands:
+  python -m pip install -e .
+  python -m wc3env --instances 1 --steps 20 --stepms 250 --speed 64
+Both exit codes: 0.
+Native output: 1 instances x 20 steps of 250 ms: 5 game s in 0.36 s wall = 14x realtime aggregate
+Native output: instance 0 pid 11328: 20/20 exact, 17.9 ms/step, 13.8 frames/step, ok
+WC3_SOUND=0 was applied to this test process per CONTRIBUTING.md.
+The CLI closed only its owned test instance. No Warcraft or bridge process existed at preflight.
+Evidence: step1-pip.log, step1-pip-result.json, step1-native.log, step1-native-result.json, step1-hook-11328.log.
+
+2. Target repository: PASS
+Path: <WORKSPACE_ROOT>\wc3-commander
+Remote: https://github.com/1850VV/wc3-commander
+Branch: main, tracking origin/main
+HEAD: fcdb1f37c39e49a485aed5ca1c4524caf8fdaf20
+The initial directory contained only .git, no commits, no remote and no work files.
+Preserved its original Git config, added the requested origin, fetched, and populated main from origin/main.
+No duplicate clone or overwrite of user source files was performed.
+Read README.md and docs/实机验收.md; no local AGENTS.md or contribution file exists in this repository.
+Final git status is clean. No Issue, PR, commit, or push was created.
+Evidence: commander-empty-git-config.txt, step2-fetch.log, final-state.json.
+
+3. Game path and map uniqueness: PASS
+WC3_GAME_DIR: <WC3_GAME_DIR>
+Map count, both initial and final: 1
+Map: <WC3_GAME_DIR>\Maps\(4)LostTemple.w3m
+Map length: 245236 bytes
+Map SHA256: e305ac0b9360b36a052a27f9ba4538eddf0c3f7ec5bb3c20d4b01416733bffa4
+No map copy, rename, or deletion was needed.
+War3.exe version: 1.27.0.52240
+War3.exe SHA256: ea8f5192efede23f84bc60140c2d4a0085ea68b86f430c1d60c354a555922def
+Game.dll version: 1.27.0.52240
+Game.dll SHA256: e04d1716603c075eb0c8e1e21cf1093a664adc5249efab396bfa08d7b09d0c3a
+Hook DLL SHA256: 8ca108ef54703fa645a1004e9a7902ea80199a8ccb2c66b4f0afc961930c4ae4
+Version and hash checks were retained without changes.
+Evidence: step3-maps-before.json, final-state.json, native launch logs.
+
+4. Bridge, browser and visible native game: PASS
+Working directory: <WORKSPACE_ROOT>\wc3-commander\bridge
+Interpreter: same wc3env .venv interpreter used in step 1.
+Command: python -m commander_bridge --backend wc3env
+Started helper hidden with stdout/stderr redirected; set WC3_GAME_DIR, PYTHONUNBUFFERED=1, PYTHONIOENCODING=utf-8 and WC3_SOUND=0 in its process environment.
+URL: http://127.0.0.1:8790/
+Browser interaction: opened visible in-app browser and clicked the actual button labelled 连接 魔兽争霸三 once.
+Browser observed: 实机 · wc3env, 断开, 已连接，开始按时间轴执行.
+Health before click: {"ok": true, "backend": "wc3env", "running": false}
+Health after click and at final check: {"ok": true, "backend": "wc3env", "running": true}
+Bridge launcher PID: 34404
+Bridge listener/worker PID: 26572, listening on 127.0.0.1:8790
+Warcraft PID: 20788, parent 26572, created 12:06:40 +08:00
+Warcraft command: <WC3_OUTPUT_DIR>\game-577dd816a08844a4abda886a1071da64\Runtime\War3.exe -window -loadfile Maps\(4)LostTemple.w3m
+Native window: Warcraft III, observed through Windows computer-use. Activated it and captured an actual game scene with HUD/minimap/resource values.
+Captured 366 SSE records, including fresh startup and connected messages and game time progression from 0 to 86.2 seconds.
+Final captured resources: 185 gold, 50 wood, 15/18 food. This is current-run state evidence, not mock data.
+Service, game and browser tab are left running. Only the temporary read-only SSE recorder was stopped.
+Evidence: step4-service.json, step4-health-before.json, step4-health-connected.json, step4-processes.json, final-state.json, bridge-stream.jsonl, bridge-stdout.log, bridge-stderr.log, step4-hook-20788.log, game-window.png, game-window.json, console-connected-top.png.
+
+Supplementary checks
+- README command `node --test web/tests`: FAILED on Node 24.15.0 with MODULE_NOT_FOUND for the directory. Exit 1 retained in commander-web-tests.log.
+- Equivalent explicit-file command `node --test web/tests/sim.test.js`: PASS, 6/6, exit 0; commander-web-tests-explicit-files.log.
+- `python -m unittest discover -s bridge/tests -t bridge` with WC3ENV_SRC=..\wc3env-127a\src: PASS, 7/7, exit 0; commander-bridge-tests.log.
+- Browser requested favicon.ico and received 404. No connection exception or SSE error message appeared during the captured interval.
+- All previously tracked and non-ignored untracked wc3env files were SHA256-compared against preflight: no content changes. Existing user modifications remain preserved.
+- No project source edits were made. Editable package installation changed the selected .venv as requested. Runtime output remains in the configured game output directory.
+
+Acceptance boundary
+This verifies startup, browser connection, visible game rendering and continuing current-run state updates.
+The broader five-event/two-minute gameplay acceptance from documentation was not performed as a separate acceptance exercise.
+Native raw-event completeness (events_lost=0) was not independently audited; the bridge snapshot stream does not expose that counter.
+Do not interpret passing unit tests, dashboard completion labels or this startup PASS as proof of every gameplay behavior.
+
+Private/public inputs
+Public source: 1850VV/wc3-commander at the exact HEAD above.
+Local existing inputs: wc3env-127a worktree and compiled hook, its local .env, and the installed Warcraft binaries/assets/map.
+The licensed game installation and local runtime assets are not supplied by the commander repository.

@@ -1,0 +1,26 @@
+[
+  {
+    "ProcessId": 34404,
+    "ParentProcessId": 38368,
+    "Name": "python.exe",
+    "CreationDate": "2026-10-19T12:06:05.388868+08:00",
+    "ExecutablePath": "<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe",
+    "CommandLine": "\"<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe\" -m commander_bridge --backend wc3env"
+  },
+  {
+    "ProcessId": 26572,
+    "ParentProcessId": 34404,
+    "Name": "python.exe",
+    "CreationDate": "2026-10-19T12:06:05.42584+08:00",
+    "ExecutablePath": "<USER_PROFILE>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "CommandLine": "\"<USER_PROFILE>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe\" -m commander_bridge --backend wc3env"
+  },
+  {
+    "ProcessId": 20788,
+    "ParentProcessId": 26572,
+    "Name": "War3.exe",
+    "CreationDate": "2026-10-19T12:06:40.491748+08:00",
+    "ExecutablePath": "<WC3_OUTPUT_DIR>\\game-577dd816a08844a4abda886a1071da64\\Runtime\\War3.exe",
+    "CommandLine": "<WC3_OUTPUT_DIR>\\game-577dd816a08844a4abda886a1071da64\\Runtime\\War3.exe -window -loadfile Maps\\(4)LostTemple.w3m"
+  }
+]

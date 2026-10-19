@@ -1,0 +1,8 @@
+{
+  "command": "python -m wc3env --instances 1 --steps 20 --stepms 250 --speed 64",
+  "python": "<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe",
+  "cwd": "<WORKSPACE_ROOT>\\wc3env-127a",
+  "exitCode": 0,
+  "sound": 0,
+  "timestamp": "2026-10-19T12:05:21.8919057+08:00"
+}

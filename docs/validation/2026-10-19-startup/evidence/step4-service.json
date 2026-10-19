@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-10-19T12:06:05.3949206+08:00",
+  "pid": 34404,
+  "command": "python -m commander_bridge --backend wc3env",
+  "python": "<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe",
+  "cwd": "<WORKSPACE_ROOT>\\wc3-commander\\bridge",
+  "gameDir": "<WC3_GAME_DIR>",
+  "sound": 0,
+  "stdout": "<WORKSPACE_ROOT>\\wc3-commander-validation\\20261019-1204\\bridge-stdout.log",
+  "stderr": "<WORKSPACE_ROOT>\\wc3-commander-validation\\20261019-1204\\bridge-stderr.log"
+}

@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-10-19T12:04:59.9762573+08:00",
+  "cwd": "<WORKSPACE_ROOT>\\wc3env-127a",
+  "python": "<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe",
+  "branch": "codex/archmage-kiting-mvp",
+  "head": "85fcefdf1f9019dd92a40e109d544ec656d0d158",
+  "status": [
+    " M README.md",
+    " M docs/port-127a.md",
+    "?? docs/WC3ENV_127A_VALIDATION.md",
+    "?? docs/features-127a.md",
+    "?? tools/validate_127a_native.py",
+    "?? tools/validate_127a_recovery.py"
+  ],
+  "gameDir": "<WC3_GAME_DIR>",
+  "gameProcesses": [],
+  "port8790": []
+}

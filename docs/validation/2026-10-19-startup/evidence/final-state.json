@@ -1,0 +1,130 @@
+{
+  "timestamp": "2026-10-19T12:08:11.7656740+08:00",
+  "health": {
+    "ok": true,
+    "backend": "wc3env",
+    "running": true
+  },
+  "mapCount": 1,
+  "mapPaths": [
+    "<WC3_GAME_DIR>\\Maps\\(4)LostTemple.w3m"
+  ],
+  "commanderBranch": "main",
+  "commanderHead": "fcdb1f37c39e49a485aed5ca1c4524caf8fdaf20",
+  "commanderStatus": [],
+  "wc3envChangedFiles": [],
+  "streamRecordCount": 366,
+  "firstGameTime": 0,
+  "lastGameTime": 86.2,
+  "lastResources": {
+    "foodUsed": 15,
+    "gold": 185,
+    "wood": 50,
+    "foodCap": 18
+  },
+  "lastUnitCount": 9,
+  "lastBuildings": [
+    {
+      "id": "u27087",
+      "type": "hhou",
+      "x": 1344.0,
+      "y": -7744.0,
+      "done": false,
+      "progress": 0.8371428571428573,
+      "train": null
+    },
+    {
+      "id": "u26507",
+      "type": "hbar",
+      "x": 640.0,
+      "y": -6912.0,
+      "done": true,
+      "progress": 1.0,
+      "train": null
+    },
+    {
+      "id": "u22634",
+      "type": "halt",
+      "x": 1248.0,
+      "y": -6304.0,
+      "done": true,
+      "progress": 1.0,
+      "train": {
+        "name": "大法师",
+        "left": 34.22,
+        "total": 55.0,
+        "queue": 0
+      }
+    },
+    {
+      "id": "u25119",
+      "type": "hhou",
+      "x": 1216.0,
+      "y": -7424.0,
+      "done": true,
+      "progress": 1.0,
+      "train": null
+    },
+    {
+      "id": "u26675",
+      "type": "htow",
+      "x": 1280.0,
+      "y": -6848.0,
+      "done": true,
+      "progress": 1.0,
+      "train": {
+        "name": "农民",
+        "left": 5.219999999999999,
+        "total": 15.0,
+        "queue": 0
+      }
+    }
+  ],
+  "streamMessages": [
+    {
+      "captured_at": "2026-10-19T12:06:40.206776+08:00",
+      "type": "log",
+      "level": "info",
+      "text": "正在启动魔兽争霸三…"
+    },
+    {
+      "captured_at": "2026-10-19T12:06:44.747719+08:00",
+      "type": "log",
+      "level": "info",
+      "text": "已连接，开始按时间轴执行"
+    }
+  ],
+  "port": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 8790,
+      "OwningProcess": 26572
+    }
+  ],
+  "processes": [
+    {
+      "ProcessId": 34404,
+      "ParentProcessId": 38368,
+      "Name": "python.exe",
+      "CreationDate": "2026-10-19T12:06:05.388868+08:00",
+      "ExecutablePath": "<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe",
+      "CommandLine": "\"<WORKSPACE_ROOT>\\wc3env-127a\\.venv\\Scripts\\python.exe\" -m commander_bridge --backend wc3env"
+    },
+    {
+      "ProcessId": 26572,
+      "ParentProcessId": 34404,
+      "Name": "python.exe",
+      "CreationDate": "2026-10-19T12:06:05.42584+08:00",
+      "ExecutablePath": "<USER_PROFILE>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "CommandLine": "\"<USER_PROFILE>\\AppData\\Local\\Programs\\Python\\Python312\\python.exe\" -m commander_bridge --backend wc3env"
+    },
+    {
+      "ProcessId": 20788,
+      "ParentProcessId": 26572,
+      "Name": "War3.exe",
+      "CreationDate": "2026-10-19T12:06:40.491748+08:00",
+      "ExecutablePath": "<WC3_OUTPUT_DIR>\\game-577dd816a08844a4abda886a1071da64\\Runtime\\War3.exe",
+      "CommandLine": "<WC3_OUTPUT_DIR>\\game-577dd816a08844a4abda886a1071da64\\Runtime\\War3.exe -window -loadfile Maps\\(4)LostTemple.w3m"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-10-19T12:05:50.0160848+08:00",
+  "gameDir": "<WC3_GAME_DIR>",
+  "count": 1,
+  "files": [
+    {
+      "path": "<WC3_GAME_DIR>\\Maps\\(4)LostTemple.w3m",
+      "length": 245236,
+      "sha256": "E305AC0B9360B36A052A27F9BA4538EDDF0C3F7EC5BB3C20D4B01416733BFFA4"
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+DllMain attach
+wc3hook loaded: pid=20788 exe=<WC3_OUTPUT_DIR>\game-577dd816a08844a4abda886a1071da64\Runtime\War3.exe base=005D0000 cmdline=<WC3_OUTPUT_DIR>\game-577dd816a08844a4abda886a1071da64\Runtime\War3.exe -window -loadfile Maps\(4)LostTemple.w3m
+mutex hooks: create=MH_OK open=MH_OK
+user folder redirected to <WC3_OUTPUT_DIR>\game-577dd816a08844a4abda886a1071da64
+window mode: background render=1
+signalled wc3hook-ready-20788
+clock hooks: qpc=MH_OK tick=MH_OK systime=MH_OK sleep=MH_OK
+rdtsc helper patched; tsc/qpc = 379.277
+turn producer: MH_OK, time writer: MH_OK
+GameUpdate hook: MH_OK
+FireEvent hook: MH_OK, spell effect: MH_OK, registered check: MH_OK
+RemovePlayer hook: MH_OK
+1.27a engine initialized base=57430000
+pipe: waiting on \\.\pipe\wc3hook-20788
+OpenMutexA name=NVIDIA/Ansel/20788
+pipe: client connected
+OpenMutexA name=NVIDIA/Ansel/20788
+background window: 000C0C42 subclassed (ok)
+OpenMutexA name=NVIDIA/Ansel/20788
+OpenMutexA name=Global\{52813408-3561-4705-820a-2b3b78be92ba}_0
+CreateMutexA name=CDdf212806D6EmB31yE0c
+CreateMutexA name=CDdf212806D6EmB31yE0c
+OpenMutexA name={2627E361-24E2-4F14-99ED-A20D0685D8DD}_v22_0
+D3D9 device: Present hook installed
+D3D9 presentation: enabled
+setup: configure 4 players seed=1
+setup: player 0 race preference 1
+setup: configure 4 players seed=1
+setup: player 0 race preference 1
+stepmode 1 (gametime 0)
+held at gametime 1000 after 20 frames
+stepmode 0 (gametime 1000)
+abilities: variant ids at +0x34
+act: packet player=0 wire=1 bytes=317
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=76 status=1
+act: packet player=0 wire=1 bytes=69
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=395 status=1
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=720 status=1
+act: packet player=0 wire=1 bytes=69
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=1043 status=1
+act: packet player=0 wire=1 bytes=53
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=1377 status=1
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=1715 status=1
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=2039 status=1
+act: packet player=0 wire=1 bytes=122
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=2367 status=1
+act: packet player=0 wire=1 bytes=69
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=2690 status=1
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=3017 status=1
+act: packet player=0 wire=1 bytes=122
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=3344 status=1
+act: packet player=0 wire=1 bytes=69
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=3668 status=1
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=4000 status=1
+act: packet player=0 wire=1 bytes=69
+act: packet player=0 wire=1 bytes=53
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=4328 status=1
+act: packet player=0 wire=1 bytes=69
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=4664 status=1
+act: packet player=0 wire=1 bytes=69
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=4992 status=1
+act: packet player=0 wire=1 bytes=53
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=5315 status=1
+heartbeat: step_target=1000 stepmode=0 stepping=0 frozen=0 speed=1 render=1 frames=5644 status=1

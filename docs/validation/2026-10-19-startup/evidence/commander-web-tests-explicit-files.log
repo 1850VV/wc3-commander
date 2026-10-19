@@ -1,0 +1,14 @@
+✔ default opening finishes on all four start locations (47.2431ms)
+✔ replay is deterministic (16.2724ms)
+✔ build times follow 1.27a data (4.7814ms)
+✔ construction pauses without a builder and resumes (11.8294ms)
+✔ training reports a missing requirement (6.8159ms)
+✔ placement keeps the mining lane clear (3.553ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 167.9632

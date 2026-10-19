@@ -1,0 +1,12 @@
+round 2: 1/1 alive, 0.1 s
+round 4: 1/1 alive, 0.1 s
+round 6: 1/1 alive, 0.1 s
+round 8: 1/1 alive, 0.2 s
+round 10: 1/1 alive, 0.2 s
+round 12: 1/1 alive, 0.2 s
+round 14: 1/1 alive, 0.3 s
+round 16: 1/1 alive, 0.3 s
+round 18: 1/1 alive, 0.3 s
+round 20: 1/1 alive, 0.4 s
+1 instances x 20 steps of 250 ms: 5 game s in 0.36 s wall = 14x realtime aggregate
+  instance 0 pid 11328: 20/20 exact, 17.9 ms/step, 13.8 frames/step, ok

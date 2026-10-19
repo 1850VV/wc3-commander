@@ -1,0 +1,24 @@
+Obtaining file:///<WORKSPACE_ROOT>/wc3env-127a
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: wc3env
+  Building editable for wc3env (pyproject.toml): started
+  Building editable for wc3env (pyproject.toml): finished with status 'done'
+  Created wheel for wc3env: filename=wc3env-0.1.0+wc3127a-0.editable-py3-none-win_amd64.whl size=7058 sha256=76b4f9ee304188716c390f9ff7045e49540a8811d0b44afb52294f2efac9f2d4
+  Stored in directory: <USER_PROFILE>\AppData\Local\Temp\pip-ephem-wheel-cache-e_nmohlt\wheels\54\c0\ad\cac5e595dfea99351ec192fef1d520e9f6f43d44bdb400df0b
+Successfully built wc3env
+Installing collected packages: wc3env
+  Attempting uninstall: wc3env
+    Found existing installation: wc3env 0.1.0
+    Uninstalling wc3env-0.1.0:
+      Successfully uninstalled wc3env-0.1.0
+Successfully installed wc3env-0.1.0+wc3127a
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: <WORKSPACE_ROOT>\wc3env-127a\.venv\Scripts\python.exe -m pip install --upgrade pip
