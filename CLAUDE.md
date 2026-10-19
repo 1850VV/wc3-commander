@@ -23,6 +23,8 @@ tools/pc.sh start | status | log | stop | pull                                  
 ## 规则
 
 - 命令被 wc3env 接受不等于执行成功；事件状态只能根据后续观测和游戏事件改变。
+- 事件字段：`after`（等哪个事件完成，模拟器 `ready()`/引擎 `ready()`）；`kind: 'upgrade'` + `to`（可选 `from`、`at`），升级占建筑队列、扣差价，引擎下 `train type_id=to`，按 `upgrade_start/finish` 改状态；建造的 `near: 'natural'`、`helpers: N`、`then: 'natural'`；采集的 `mine: 'natural'`。分矿 = 离主基地最近的另一座金矿（sim `natural`，引擎 `natural()`）。协助建造的速度和费用 `ASSIST` 是推算值。
+- 引擎 `tick()` 先清空动作列表再处理游戏事件（`_ingest`），处理事件时下的命令才不会丢。
 - 自动挑农民（`pickBuilder`/`pickWorkers`，引擎 `pick_builder`/`pick_workers`）会避开还没开始的事件点名要用的农民（`reserved`）。
 - 策略：`strategies/<名字>.json`（`strategies.py`），保存的是计划本身。工地坐标是绝对坐标，所以一套布局只对一个出生点有效；目前四个出生点各存一套。
 - 工地：`sim.js` 的 `planSites` 先给带 `at` 的事件占位，再按开始时间给自动工地选址；`at` 放不下时就近改位置并写 `e.siteNote`。控制台在建筑开工（`rt.bid`）前都允许拖动工地（`app.js` 的 `movable`）。

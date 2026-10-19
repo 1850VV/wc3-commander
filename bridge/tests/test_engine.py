@@ -105,6 +105,43 @@ class EditTest(unittest.TestCase):
         self.assertEqual(by_name(c, "建造 农场 · 农民2")[0]["status"], "done")
 
 
+class AfterTest(unittest.TestCase):
+    def test_event_waits_for_its_dependency(self):
+        def farm_after_barracks(plan):
+            plan["groups"][3]["children"].append({"id": "x1", "seq": 999, "kind": "build", "name": "建造 农场", "start": 0, "unit": None, "btype": "hhou", "site": [1600, -6784], "after": "e3"})
+        c, rejected = play("default-plan-s0.json", 120, 0, farm_after_barracks)
+        self.assertEqual(rejected, [])
+        self.assertEqual(c.rt["e3"]["status"], "done")
+        self.assertGreaterEqual(c.rt["x1"]["aStart"], c.rt["e3"]["aEnd"])
+        self.assertIn(c.rt["x1"]["status"], ("running", "done"))
+
+
+class UpgradeTest(unittest.TestCase):
+    def test_town_hall_becomes_a_keep_from_upgrade_events(self):
+        def keep(plan):
+            plan["groups"][3]["children"].append({"id": "u1", "seq": 999, "kind": "upgrade", "name": "升级 主城", "start": 120, "to": "hkee"})
+        c, rejected = play("default-plan-s0.json", 330, 0, keep)
+        self.assertEqual(rejected, [])
+        rt = c.rt["u1"]
+        self.assertEqual(rt["status"], "done", rt)
+        self.assertGreaterEqual(rt["aEnd"] - rt["trainStart"], 139)
+        self.assertIn("hkee", [b["type"] for b in c.snapshot()["buildings"]])
+
+
+class ExpansionTest(unittest.TestCase):
+    def test_expansion_with_helpers_then_mining_at_the_natural(self):
+        def expand(plan):  # site as the console's sim.js would resolve it (naturalAnchor, south start)
+            plan["groups"][3]["children"].append({"id": "x1", "seq": 999, "kind": "build", "name": "建造 分基地", "start": 140, "unit": None,
+                                                  "btype": "htow", "near": "natural", "site": [-3200, -7424], "helpers": 2, "then": "natural"})
+        c, rejected = play("default-plan-s0.json", 420, 0, expand)
+        self.assertEqual(rejected, [])
+        rt = c.rt["x1"]
+        self.assertEqual(rt["status"], "done", rt)
+        self.assertLess(rt["aEnd"] - rt["bStart"], 175)  # helpers sped it up (one builder: 180 s)
+        self.assertGreaterEqual(list(c.mine_of.values()).count("natural"), 3)
+        self.assertIsNotNone(c.natural())
+
+
 class ReservedWorkerTest(unittest.TestCase):
     def test_automatic_builder_skips_a_peasant_a_later_event_names(self):
         def early_farm(plan):  # 0:00 farm with no peasant; the 0:01 barracks calls for peasant 3

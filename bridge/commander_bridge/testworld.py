@@ -74,7 +74,7 @@ class LostTempleWorld:
     def _food(self):
         used = sum(self.eco[u["type_id"]]["food"] for u in self.units.values() if not u["structure"])
         used += sum(self.eco[u["_queue"][0]]["food"] for u in self.units.values() if u["structure"] and u["_queue"] and u["_qleft"] > 0)
-        cap = sum(self.eco[u["type_id"]]["foodMade"] for u in self.units.values() if u["structure"] and u["_state"] is None)
+        cap = sum(self.eco[u["type_id"]]["foodMade"] for u in self.units.values() if u["structure"] and u["_state"] != "constructing")
         return used, min(100, cap)
 
     def _walk(self, u, x, y, stop, dt):
@@ -88,7 +88,7 @@ class LostTempleWorld:
         return d - s <= stop + 1e-6
 
     def _drop(self, u, res):
-        opts = [b for b in self.units.values() if b["structure"] and b["_state"] is None and (b["type_id"] in HALLS or (res == "lumber" and b["type_id"] == "hlum"))]
+        opts = [b for b in self.units.values() if b["structure"] and b["_state"] != "constructing" and (b["type_id"] in HALLS or (res == "lumber" and b["type_id"] == "hlum"))]
         return min(opts, key=lambda b: math.hypot(b["x"] - u["x"], b["y"] - u["y"])) if opts else None
 
     def _half(self, type_id):
@@ -119,10 +119,15 @@ class LostTempleWorld:
             elif kind == "build":
                 self._build(u, job, dt)
         for b in self.units.values():
+            if b["structure"] and b["_state"] == "upgrading":
+                b["_qleft"] -= dt
+                if b["_qleft"] <= 0:
+                    b.update(type_id=b.pop("_upgrade"), _state=None, _qleft=0.0)
+                    self.events.append({"kind": "upgrade_finish", "unit_id": b["unit_id"], "type_id": b["type_id"]})
             if b["structure"] and b["_state"] == "constructing":
                 builders = [u for u in self.units.values() if u["_job"] and u["_job"]["kind"] == "build" and u["_job"].get("site") == b["unit_id"]]
-                if builders:
-                    b["_progress"] += dt / self.eco[b["type_id"]]["time"]
+                if builders:  # power build: each extra builder adds 0.6x speed (assumption, as sim.js ASSIST)
+                    b["_progress"] += dt / self.eco[b["type_id"]]["time"] * (1 + 0.6 * (len(builders) - 1))
                 if b["_progress"] >= 1:
                     b["_state"] = None
                     self.events.append({"kind": "construct_finish", "unit_id": b["unit_id"], "type_id": b["type_id"]})
@@ -236,7 +241,7 @@ class LostTempleWorld:
             pub["order"] = order
             pub["abilities"] = []
             if u["structure"]:
-                pub.update(state=u["_state"], state_seconds=self.eco[u["type_id"]]["time"] if u["_state"] else 0.0,
+                pub.update(state=u["_state"], state_seconds=self.eco[u.get("_upgrade") or u["type_id"]]["time"] if u["_state"] else 0.0,
                            queue=list(u["_queue"]), queue_seconds=self.eco[u["_queue"][0]]["time"] if u["_queue"] else 0.0)
             if u["_inside"]:
                 inside.append({"unit_id": u["unit_id"], "type_id": u["type_id"], "x": u["x"], "y": u["y"], "hp": u["hp"], "order": order})
@@ -294,6 +299,16 @@ class LostTempleWorld:
                 else:
                     dx, dy = self.auto_place_shift if args.get("auto_place") and self.auto_place_shift else (0.0, 0.0)
                     u["_job"] = {"kind": "build", "type_id": t, "x": float(args["x"]) + dx, "y": float(args["y"]) + dy}
+            elif cmd == "train" and args.get("type_id") in (self.eco.get(u["type_id"], {}).get("upgrades") or []):
+                t, c, now = args["type_id"], self.eco[args["type_id"]], self.eco[u["type_id"]]
+                g, w = c["gold"] - now["gold"], c["wood"] - now["wood"]
+                if u["_state"] is not None or u["_queue"]:
+                    rejected.append({"index": i, "reason": "bad_arguments"})
+                elif self.gold >= g and self.lumber >= w:  # an upgrade occupies the building
+                    self.gold -= g
+                    self.lumber -= w
+                    u.update(_state="upgrading", _upgrade=t, _qleft=c["time"])
+                    self.events.append({"kind": "upgrade_start", "unit_id": u["unit_id"], "type_id": u["type_id"]})
             elif cmd == "train":
                 t = args.get("type_id")
                 if not u["structure"] or u["_state"] is not None or t not in (self.eco[u["type_id"]]["trains"] or []) or t not in self.eco:

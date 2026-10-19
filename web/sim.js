@@ -17,12 +17,16 @@
   };
   const HALLS = ['htow', 'hkee', 'hcas'];
   // Wall-in check. A unit needs a gap of floor(collision / 16) + 1 cells (assumption, to be checked
-// in the real game): collision 16-31 (peasant 16, footman 31) needs 2 cells, collision 32 (every
-// hero, grunt, rifleman; from wc3env reference-127a.json) needs 3. Buildings sit on a 64-unit grid,
-// so gaps between them are whole multiples of 2 cells: a 2-cell gap is the human wall.
-const WALL = {radius: 40, cap: 40, lane: 64, search: 14, worker: 2, hero: 3, farms: 4};
-const cellsFor = collision => Math.floor(collision / 16) + 1;
-  const KIND = {build: '建造', gather: '采集', train: '生产'};
+  // in the real game): collision 16-31 (peasant 16, footman 31) needs 2 cells, collision 32 (every
+  // hero, grunt, rifleman; from wc3env reference-127a.json) needs 3. Buildings sit on a 64-unit grid,
+  // so gaps between them are whole multiples of 2 cells: a 2-cell gap is the human wall.
+  const WALL = {radius: 40, cap: 40, lane: 64, search: 14, worker: 2, hero: 3, farms: 4};
+  const cellsFor = collision => Math.floor(collision / 16) + 1;
+  const WALL_NATURAL_GAP = 576; // mine centre to expansion hall centre (assumption; the native solver places it in the game)
+  // Power build: each extra builder adds 0.6x speed and 15% of the price (fits the 1-5 builder
+  // table for a town hall: 180/113/82/64/53 s, 385/443/500/558/613 gold), to be checked in the game.
+  const ASSIST = {speed: 0.6, cost: 0.15};
+  const KIND = {build: '建造', gather: '采集', train: '生产', upgrade: '升级'};
   const RES = {gold: '采金', wood: '伐木'};
 
   function decodeRows(rows, w, h) {
@@ -125,6 +129,8 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
       const [hx, hy] = [s.x, s.y];
       this.hall = this._addBuilding('htow', hx, hy, true, null);
       this.mine = w.nearestMine(hx, hy);
+      // the natural expansion: the closest other mine
+      this.natural = w.mines.filter(m => m !== this.mine).sort((a, b) => Math.hypot(a.x - hx, a.y - hy) - Math.hypot(b.x - hx, b.y - hy))[0];
       this.basis = this._basis();
       const {dir, perp} = this.basis, half = w.tex(w.buildingTex('htow')).w * 16;
       for (let k = 0; k < TUNING.startWorkers; k++) {
@@ -394,6 +400,12 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
               verdict: K < WALL.worker ? 'sealed' : K < WALL.hero ? 'walled' : 'open'};
     }
 
+    /* where an expansion hall goes: beside the natural mine, on the side facing home */
+    naturalAnchor() {
+      const m = this.natural, dx = this.hall.x - m.x, dy = this.hall.y - m.y, d = Math.hypot(dx, dy) || 1;
+      return [m.x + dx / d * WALL_NATURAL_GAP, m.y + dy / d * WALL_NATURAL_GAP];
+    }
+
     /* generic anchor relative to the hall, rotated by the hall->mine direction */
     anchor(type, k) {
       const {dir, perp} = this.basis, h = this.hall;
@@ -421,7 +433,7 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
           const [x, y] = this.w.snap(e.btype, e.at[0], e.at[1]), chk = this.canPlace(e.btype, x, y, reserved, 0);
           if (chk.ok) site = [x, y]; else e.siteNote = '指定位置不能建（' + chk.why + '），改到旁边';
         }
-        if (!site) { const [ax, ay] = e.at || this.anchor(e.btype, nth.get(e) - 1); site = this.findSite(e.btype, ax, ay, reserved); }
+        if (!site) { const [ax, ay] = e.at || (e.near === 'natural' ? this.naturalAnchor() : this.anchor(e.btype, nth.get(e) - 1)); site = this.findSite(e.btype, ax, ay, reserved); }
         e.site = site;
         if (site) reserved.push({type: e.btype, x: site[0], y: site[1]});
       }
@@ -435,8 +447,9 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
       for (const e of this.events) if (e.rt.status === 'pending') { if (e.unit) ids.add(e.unit); for (const id of e.units || []) ids.add(id); }
       return ids;
     }
-    pickWorkers(n, res) {
-      const sc = u => u.task.kind === 'idle' ? 0 : u.task.kind === 'gather' && u.task.res !== res ? 1 : 9, held = this.reserved();
+    pickWorkers(n, res, mine) {
+      const elsewhere = u => u.task.res !== res || (res === 'gold' && u.task.mine !== (mine || this.mine)); // other resource or other mine
+      const sc = u => u.task.kind === 'idle' ? 0 : u.task.kind === 'gather' && elsewhere(u) ? 1 : 9, held = this.reserved();
       return this.workers().filter(u => u.task.kind !== 'build' && sc(u) < 9 && !held.has(u.id)).sort((a, b) => sc(a) - sc(b) || a.id - b.id).slice(0, n);
     }
     pickBuilder(site) {
@@ -445,7 +458,8 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
         (site ? Math.hypot(a.x - site[0], a.y - site[1]) - Math.hypot(b.x - site[0], b.y - site[1]) : 0) || a.id - b.id);
       return pool[0] || null;
     }
-    gatherTask(res) { return {kind: 'gather', res, phase: 'toRes'}; }
+    gatherTask(res, mine) { return {kind: 'gather', res, phase: 'toRes', mine: res === 'gold' ? mine || this.mine : null}; }
+    mineOf(where) { return where === 'natural' ? this.natural : this.mine; }
     tryStart(e) {
       const rt = e.rt;
       if (e.kind === 'build' && e.resume) {
@@ -465,9 +479,10 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
         u.task = {kind: 'build', ev: e, phase: 'toSite'}; u.path = null;
         Object.assign(rt, {status: 'running', aStart: this.t, note: '农民' + u.id + ' 前往工地', builder: u.id});
       } else if (e.kind === 'gather') {
-        const us = e.units ? e.units.map(id => this.unit(id)).filter(Boolean) : this.pickWorkers(e.count || 1, e.res);
+        const us = e.units ? e.units.map(id => this.unit(id)).filter(Boolean) : this.pickWorkers(e.count || 1, e.res, e.res === 'gold' ? this.mineOf(e.mine) : null);
         if (!us.length) { rt.note = '没有可分配的农民'; return; }
-        for (const u of us) if (!(u.task.kind === 'gather' && u.task.res === e.res)) { u.task = this.gatherTask(e.res); u.path = null; }
+        const m = e.res === 'gold' ? this.mineOf(e.mine) : null;
+        for (const u of us) if (!(u.task.kind === 'gather' && u.task.res === e.res && u.task.mine === m)) { u.task = this.gatherTask(e.res, m); u.path = null; }
         Object.assign(rt, {status: 'active', aStart: this.t, note: '农民' + us.map(u => u.id).join('、') + ' ' + RES[e.res] + '中'});
       } else if (e.kind === 'train') {
         const ut = e.utype || 'hpea';
@@ -477,8 +492,21 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
         if (!this.queues.has(p.id)) this.queues.set(p.id, {cur: null, q: []});
         this.queues.get(p.id).q.push(e);
         Object.assign(rt, {status: 'waiting', aStart: this.t, note: '排队中 · ' + this.w.eco[p.type].name, producer: p.id});
+      } else if (e.kind === 'upgrade') {
+        // e.to: target type; e.from (optional): which kind of building; e.at (optional): which one
+        const eco = this.w.eco, can = b => b.done && (eco[b.type].upgrades || []).includes(e.to) && (!e.from || b.type === e.from);
+        let opts = this.buildings.filter(can);
+        if (e.at) opts = opts.filter(b => Math.hypot(b.x - e.at[0], b.y - e.at[1]) < 64);
+        opts = opts.filter(b => ![...this.queues.values()].some(Q => [Q.cur && Q.cur.ev, ...Q.q].some(x => x && x.kind === 'upgrade' && x.rt.producer === b.id)));
+        if (!opts.length) { rt.note = '没有可以升级成' + eco[e.to].name + '的建筑'; return; }
+        const p = opts.sort((a, b) => this.qlen(a) - this.qlen(b))[0];
+        if (!this.queues.has(p.id)) this.queues.set(p.id, {cur: null, q: []});
+        this.queues.get(p.id).q.push(e);
+        Object.assign(rt, {status: 'waiting', aStart: this.t, note: '排队中 · ' + eco[p.type].name, producer: p.id});
       }
     }
+    /* what an upgrade still costs: the target's price minus what the building already cost */
+    upgradeCost(b, to) { const e = this.w.eco; return [e[to].gold - e[b.type].gold, e[to].wood - e[b.type].wood]; }
     qlen(b) { const q = this.queues.get(b.id); return q ? q.q.length + (q.cur ? 1 : 0) : 0; }
     heroCount() { return this.units.filter(u => /^[A-Z]/.test(u.type)).length; }
     costOf(ut) {
@@ -487,8 +515,19 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
       return [e.gold, e.wood, e.food];
     }
 
+    /* e.after names an event this one waits for: it starts at its planned time or when that event
+     * is finished (built, trained, upgraded, cleared; gathering counts once it has begun), whichever
+     * is later. A missing event (deleted) no longer holds it back. */
+    ready(e) {
+      if (!e.after) return true;
+      const d = this.events.find(x => x.id === e.after);
+      if (!d) { e.rt.note = '依赖的事件已删除，按时间开始'; return true; }
+      if (finished(d)) return true;
+      e.rt.note = '等「' + d.name + '」完成';
+      return false;
+    }
     step() {
-      const due = this.events.filter(e => e.rt.status === 'pending' && e.start <= this.t + 1e-9).sort((a, b) => a.start - b.start || a.seq - b.seq);
+      const due = this.events.filter(e => e.rt.status === 'pending' && e.start <= this.t + 1e-9 && this.ready(e)).sort((a, b) => a.start - b.start || a.seq - b.seq);
       for (const e of due) this.tryStart(e);
       this._production(); this._units(); this._construction();
       this.t = Math.round((this.t + DT) * 10) / 10;
@@ -498,8 +537,13 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
         const Q = this.queues.get(b.id); if (!Q) continue;
         if (Q.cur) {
           Q.cur.left -= DT; const e = Q.cur.ev;
-          e.rt.note = '训练中 ' + Math.ceil(Math.max(0, Q.cur.left)) + '秒';
-          if (Q.cur.left <= 1e-6) {
+          e.rt.note = (e.kind === 'upgrade' ? '升级中 ' : '训练中 ') + Math.ceil(Math.max(0, Q.cur.left)) + '秒';
+          if (Q.cur.left <= 1e-6 && e.kind === 'upgrade') { // the building becomes the new type in place
+            const from = b.type; b.type = e.to; b.tex = this.w.buildingTex(e.to) || b.tex;
+            this.foodCap = Math.min(100, this.foodCap - (this.w.eco[from].foodMade || 0) + (this.w.eco[e.to].foodMade || 0));
+            Object.assign(e.rt, {status: 'done', aEnd: this.t, note: this.w.eco[from].name + '升级为' + this.w.eco[e.to].name});
+            Q.cur = null;
+          } else if (Q.cur.left <= 1e-6) {
             const ut = e.utype || 'hpea', {dir} = this.basis, half = this.w.tex(b.tex).w * 16;
             const u = {id: this.nextId++, type: ut, x: b.x + dir[0] * (half + 40), y: b.y + dir[1] * (half + 40), task: {kind: 'idle'}, carry: null, amt: 0, path: null, hidden: false};
             this._unstick(u); this.units.push(u);
@@ -508,7 +552,17 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
             Q.cur = null;
           }
         }
-        if (!Q.cur && Q.q.length) {
+        if (!Q.cur && Q.q.length && Q.q[0].kind === 'upgrade') {
+          const e = Q.q[0], [g, l] = this.upgradeCost(b, e.to);
+          const missing = (this.w.eco[e.to].requires || []).filter(r => !this.buildings.some(b => b.done && b.type === r));
+          if (missing.length) e.rt.note = '需要 ' + missing.map(r => this.w.eco[r] ? this.w.eco[r].name : r).join('、');
+          else if (this.gold < g || this.wood < l) e.rt.note = '等待资源 金' + Math.floor(this.gold) + '/' + g + ' 木' + Math.floor(this.wood) + '/' + l;
+          else {
+            this.gold -= g; this.wood -= l; Q.q.shift();
+            Q.cur = {ev: e, left: this.w.eco[e.to].time, total: this.w.eco[e.to].time};
+            Object.assign(e.rt, {status: 'running', trainStart: this.t, note: '升级中'});
+          }
+        } else if (!Q.cur && Q.q.length) {
           const e = Q.q[0], ut = e.utype || 'hpea', [g, l, f] = this.costOf(ut);
           const missing = (this.w.eco[ut].requires || []).filter(r => !this.buildings.some(b => b.done && b.type === r));
           if (missing.length) e.rt.note = '需要 ' + missing.map(r => this.w.eco[r] ? this.w.eco[r].name : r).join('、');
@@ -537,7 +591,7 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
       return best;
     }
     _units() {
-      const w = this.w, mineRect = w.rectOf(this.mine.x, this.mine.y, this.mine.tex);
+      const w = this.w;
       const tgt = new Map(); for (const u of this.units) if (u.task.tree != null) tgt.set(u.task.tree, (tgt.get(u.task.tree) || 0) + 1);
       for (const u of this.units) {
         const t = u.task;
@@ -546,22 +600,23 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
             if (u.amt > 0 && u.carry !== t.res) { t.phase = 'toDrop'; continue; }
             if (u.amt >= TUNING.carry) { t.phase = 'toDrop'; continue; }
             if (t.res === 'gold') {
-              if (this.walk(u, this._ring(mineRect), 'mine')) t.phase = 'queue';
+              const m = t.mine || this.mine;
+              if (this.walk(u, this._ring(w.rectOf(m.x, m.y, m.tex)), 'mine' + m.id)) t.phase = 'queue';
             } else {
               if (t.tree == null || this.treeWood[t.tree] <= 0) { const d = this.dropFor('wood', u); t.tree = this.nearestTree(d.x, d.y, tgt); if (t.tree < 0) { u.task = {kind: 'idle'}; continue; } tgt.set(t.tree, (tgt.get(t.tree) || 0) + 1); u.path = null; }
               const tr = w.trees[t.tree];
               if (this.walk(u, this._ring(w.rectOf(tr.x, tr.y, w.D.treeTex)), 'tree' + t.tree)) { t.phase = 'chop'; t.timer = TUNING.chopSeconds; }
             }
           } else if (t.phase === 'queue') {
-            const inside = this.mineInside.get(this.mine.id);
-            if (inside == null && this.mineGold.get(this.mine.id) > 0) { this.mineInside.set(this.mine.id, u.id); u.hidden = true; t.phase = 'mine'; t.timer = TUNING.mineSeconds; }
+            const m = t.mine || this.mine, inside = this.mineInside.get(m.id);
+            if (inside == null && this.mineGold.get(m.id) > 0) { this.mineInside.set(m.id, u.id); u.hidden = true; t.phase = 'mine'; t.timer = TUNING.mineSeconds; }
           } else if (t.phase === 'mine') {
             t.timer -= DT;
             if (t.timer <= 1e-6) {
-              const g = Math.min(TUNING.carry, this.mineGold.get(this.mine.id)); this.mineGold.set(this.mine.id, this.mineGold.get(this.mine.id) - g);
-              u.carry = 'gold'; u.amt = g; u.hidden = false; this.mineInside.delete(this.mine.id); t.phase = 'toDrop';
-              const ring = this._ring(mineRect); // exit on the side facing the hall
-              let best = ring[0], bd = Infinity; for (const i of ring) { const [x, y] = w.center(i), d = Math.hypot(x - this.hall.x, y - this.hall.y); if (d < bd) { bd = d; best = i; } }
+              const m = t.mine || this.mine, g = Math.min(TUNING.carry, this.mineGold.get(m.id)); this.mineGold.set(m.id, this.mineGold.get(m.id) - g);
+              u.carry = 'gold'; u.amt = g; u.hidden = false; this.mineInside.delete(m.id); t.phase = 'toDrop';
+              const drop = this.dropFor('gold', m), ring = this._ring(w.rectOf(m.x, m.y, m.tex)); // exit on the side facing the drop-off
+              let best = ring[0], bd = Infinity; for (const i of ring) { const [x, y] = w.center(i), d = Math.hypot(x - drop.x, y - drop.y); if (d < bd) { bd = d; best = i; } }
               [u.x, u.y] = w.center(best); u.path = null;
             }
           } else if (t.phase === 'chop') {
@@ -584,6 +639,11 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
           if (t.phase === 'toSite') {
             if (this.walk(u, this._ring(w.rectOf(e.site[0], e.site[1], tex)), 'site' + e.id)) t.phase = 'waitRes';
           }
+          if (t.phase === 'waitRes' && e.rt.bid && t.helper) { // a power-build helper pays its share on arrival
+            const c = w.eco[e.btype], g = Math.round(c.gold * ASSIST.cost), l = Math.round(c.wood * ASSIST.cost);
+            if (this.gold >= g && this.wood >= l) { this.gold -= g; this.wood -= l; t.phase = 'building'; }
+            continue;
+          }
           if (t.phase === 'waitRes' && e.rt.bid) t.phase = 'building'; // resuming an existing site
           if (t.phase === 'waitRes') {
             const c = w.eco[e.btype];
@@ -592,24 +652,35 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
               this.gold -= c.gold; this.wood -= c.wood;
               const b = this._addBuilding(e.btype, e.site[0], e.site[1], false, e);
               e.rt.bStart = this.t; e.rt.bid = b.id; t.phase = 'building';
+              if (e.helpers) this._sendHelpers(e, u);
             } else e.rt.note = '等待资源 金' + Math.floor(this.gold) + '/' + c.gold + ' 木' + Math.floor(this.wood) + '/' + c.wood;
           }
         }
       }
     }
+    /* e.helpers more peasants join a construction once it has started (power build) */
+    _sendHelpers(e, builder) {
+      const held = this.reserved();
+      const pool = this.workers().filter(u => u !== builder && u.task.kind === 'gather' && !u.hidden && !held.has(u.id))
+        .sort((a, b) => Math.hypot(a.x - e.site[0], a.y - e.site[1]) - Math.hypot(b.x - e.site[0], b.y - e.site[1]));
+      for (const u of pool.slice(0, e.helpers)) { u.task = {kind: 'build', ev: e, phase: 'toSite', helper: true}; u.path = null; }
+    }
     _construction() {
       for (const b of this.buildings) {
         if (b.done) continue;
         const c = this.w.eco[b.type], e = b.ev;
-        // Human construction needs a peasant working on it; it pauses when the builder leaves.
-        if (!this.units.some(u => u.task.kind === 'build' && u.task.ev === e && u.task.phase === 'building')) { e.rt.note = '暂停 ' + Math.floor(b.progress * 100) + '%：没有农民在建造'; continue; }
-        b.progress += DT / c.time;
-        e.rt.note = '建造中 ' + Math.min(99, Math.floor(b.progress * 100)) + '%';
+        // Human construction needs a peasant working on it; it pauses when the builders leave. Each
+        // extra builder speeds it up (ASSIST).
+        const crew = this.units.filter(u => u.task.kind === 'build' && u.task.ev === e && u.task.phase === 'building');
+        if (!crew.length) { e.rt.note = '暂停 ' + Math.floor(b.progress * 100) + '%：没有农民在建造'; continue; }
+        b.progress += DT / c.time * (1 + ASSIST.speed * (crew.length - 1));
+        const waiting = this.units.filter(u => u.task.kind === 'build' && u.task.ev === e && u.task.helper && u.task.phase === 'waitRes').length;
+        e.rt.note = '建造中 ' + Math.min(99, Math.floor(b.progress * 100)) + '%' + (crew.length > 1 ? ' · ' + crew.length + ' 人' : '') + (waiting ? ' · ' + waiting + ' 人等资源协助' : '');
         if (b.progress >= 1 - 1e-6) {
           b.progress = 1; b.done = true; this.foodCap = Math.min(100, this.foodCap + (c.foodMade || 0));
           Object.assign(e.rt, {status: 'done', aEnd: this.t, note: '完工'});
-          const u = this.unit(e.rt.builder);
-          if (u && u.task.kind === 'build' && u.task.ev === e) { u.task = this.gatherTask('gold'); u.path = null; }
+          const next = this.mineOf(e.then === 'natural' ? 'natural' : 'main');
+          for (const u of this.units) if (u.task.kind === 'build' && u.task.ev === e) { u.task = this.gatherTask('gold', next); u.path = null; }
         }
       }
     }
@@ -620,6 +691,8 @@ const cellsFor = collision => Math.floor(collision / 16) + 1;
     }
     mineGoldLeft() { return this.mineGold.get(this.mine.id); }
   }
+
+  const finished = e => !!e.rt && (e.rt.status === 'done' || (e.kind === 'gather' && e.rt.status === 'active'));
 
   function segRectDist([a, b], r) {
     // distance between segment ab and rectangle r=[l,b,r,t]

@@ -40,6 +40,9 @@ class Commander:
         self.start_index: int | None = None
         self.hall = None
         self.mine = None
+        self.mines: dict[int, dict] = {}         # gold mines seen so far, by unit_id
+        self.natural_at: tuple | None = None     # map position of the natural expansion's mine
+        self.mine_of: dict[int, str] = {}        # gold worker -> "main" | "natural"
         self.built_at: dict[int, float] = {}     # structure unit_id -> construct_start time
         self.train_at: dict[int, float] = {}     # producer unit_id -> train_start time
         self.last_order: dict[int, float] = {}
@@ -63,11 +66,11 @@ class Commander:
         if self.t0 is None:
             self.t0 = obs["game_time_seconds"]
         self.t = round(obs["game_time_seconds"] - self.t0, 2)
-        self._ingest(obs)
         self.budget = [obs["player"]["gold"], obs["player"]["lumber"]]
-        self.actions: list[dict] = []
+        self.actions: list[dict] = []  # before _ingest: orders given while handling events must be kept
         self.ordered: set[int] = set()
-        due = sorted((e for e in self.events if self.rt[e["id"]]["status"] == "pending" and e["start"] <= self.t + 1e-6),
+        self._ingest(obs)
+        due = sorted((e for e in self.events if self.rt[e["id"]]["status"] == "pending" and e["start"] <= self.t + 1e-6 and self.ready(e)),
                      key=lambda e: (e["start"], e.get("seq", 0)))
         for e in due:
             self._start(e)
@@ -89,9 +92,15 @@ class Commander:
                 self.hall = halls[0]
                 starts = self.data["starts"]
                 self.start_index = min(range(len(starts)), key=lambda i: math.hypot(starts[i]["x"] - self.hall["x"], starts[i]["y"] - self.hall["y"]))
-        mines = [u for u in obs.get("visible_enemies", []) if u["type_id"] == "ngol"]
-        if self.hall and mines:
-            self.mine = min(mines, key=lambda m: dist(m, self.hall))
+        for m in obs.get("visible_enemies", []):
+            if m["type_id"] == "ngol":
+                self.mines[m["unit_id"]] = m
+        if self.hall and self.mines:
+            self.mine = min(self.mines.values(), key=lambda m: dist(m, self.hall))
+        if self.hall and self.natural_at is None:  # the closest other mine on the map is the natural
+            spots = sorted(self.data["mines"], key=lambda m: math.hypot(m["x"] - self.hall["x"], m["y"] - self.hall["y"]))
+            if len(spots) > 1:
+                self.natural_at = (spots[1]["x"], spots[1]["y"])
         for ev in obs.get("events", []):
             k = ev["kind"]
             if k == "construct_start":
@@ -105,6 +114,10 @@ class Commander:
             elif k == "train_finish":
                 self._map(ev["trained_id"])
                 self._finish_training(ev)
+            elif k == "upgrade_start":
+                self._bind_upgrade(ev)
+            elif k == "upgrade_finish":
+                self._finish_upgrade(ev)
             elif k == "death":
                 self.roles.pop(ev["unit_id"], None)
         for u in own:
@@ -141,6 +154,23 @@ class Commander:
     def workers(self):
         return [u for u in self.units() if u["type_id"] == "hpea"]
 
+    def ready(self, e) -> bool:
+        """An event with "after" waits until that event is finished (built, trained, upgraded,
+        cleared; gathering counts once it has begun). A deleted dependency no longer holds it back."""
+        dep = e.get("after")
+        if not dep:
+            return True
+        d = next((x for x in self.events if x["id"] == dep), None)
+        rt = self.rt[e["id"]]
+        if d is None:
+            rt["note"] = "依赖的事件已删除，按时间开始"
+            return True
+        status = self.rt[dep]["status"]
+        if status == "done" or (d["kind"] == "gather" and status == "active"):
+            return True
+        rt["note"] = f"等「{d['name']}」完成"
+        return False
+
     def reserved(self) -> set[int]:
         """Unit ids named by events that have not started: automatic picks leave them alone (a 0:00
         farm must not take peasant 3 just before the 0:01 barracks event calls for him)."""
@@ -151,10 +181,11 @@ class Commander:
                 cids.update(e.get("units") or [])
         return {self.uid[c] for c in cids if c in self.uid}
 
-    def pick_workers(self, n, res):
-        def score(u):
+    def pick_workers(self, n, res, where="main"):
+        def score(u):  # idle first, then workers on the other resource or at the other mine
             role = self.roles.get(u["unit_id"])
-            return 0 if role is None else 1 if role in ("gold", "wood") and role != res else 9
+            elsewhere = role != res or (res == "gold" and self.mine_of.get(u["unit_id"], "main") != where)
+            return 0 if role is None else 1 if role in ("gold", "wood") and elsewhere else 9
         held = self.reserved()
         pool = [u for u in self.workers() if score(u) < 9 and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
         return sorted(pool, key=lambda u: (score(u), self.cid[u["unit_id"]]))[:n]
@@ -166,14 +197,23 @@ class Commander:
         return min(pool, key=lambda u: (self.roles.get(u["unit_id"]) is not None, self.roles.get(u["unit_id"]) != "gold", dist(u, point)), default=None)
 
     def drop_for(self, res, near):
-        opts = [b for b in self.structures() if b["type_id"] in HALLS or (res == "wood" and b["type_id"] == "hlum")]
+        opts = [b for b in self.obs["units"] if b["structure"] and b.get("state") != "constructing"  # an upgrading hall still takes returns
+                and (b["type_id"] in HALLS or (res == "wood" and b["type_id"] == "hlum"))]
         return min(opts, key=lambda b: dist(b, near), default=self.hall)
 
-    def harvest(self, u, res) -> bool:
+    def natural(self):
+        """The natural expansion's mine, once it has been seen."""
+        if not self.natural_at:
+            return None
+        return next((m for m in self.mines.values() if math.hypot(m["x"] - self.natural_at[0], m["y"] - self.natural_at[1]) < 256), None)
+
+    def harvest(self, u, res, where: str = "main") -> bool:
         if res == "gold":
-            if not self.mine:
+            mine = self.natural() if where == "natural" else self.mine
+            if not mine:
                 return False
-            self.order(u["unit_id"], "harvest", target_id=self.mine["unit_id"])
+            self.order(u["unit_id"], "harvest", target_id=mine["unit_id"])
+            self.mine_of[u["unit_id"]] = where
         else:
             drop = self.drop_for("wood", u) or u
             trees = [d for d in self.obs.get("destructables", []) if d.get("resource") == "lumber"]
@@ -229,7 +269,7 @@ class Commander:
             self.jobs[e["id"]] = {"state": "wait_res", "worker": u["unit_id"], "tries": 0}
             rt.update(status="running", aStart=self.t, builder=self.cid[u["unit_id"]], note="等待资源")
         elif kind == "gather":
-            us = [self.unit(c) for c in e["units"]] if e.get("units") else self.pick_workers(e.get("count", 1), e["res"])
+            us = [self.unit(c) for c in e["units"]] if e.get("units") else self.pick_workers(e.get("count", 1), e["res"], e.get("mine", "main"))
             us = [u for u in us if u]
             if e.get("units") and not us:
                 rt["note"] = "农民在金矿里，出来后再分配"
@@ -237,12 +277,19 @@ class Commander:
             if not us:
                 rt["note"] = "没有可分配的农民"
                 return
+            where = e.get("mine", "main")
+            if e["res"] == "gold" and where == "natural" and not self.natural():
+                rt["note"] = "还看不到分矿的金矿，稍后再派"
+                return
             for u in us:
-                self.harvest(u, e["res"])
+                self.harvest(u, e["res"], where)
             rt.update(status="active", aStart=self.t, note="农民" + "、".join(str(self.cid[u["unit_id"]]) for u in us) + " " + RES[e["res"]] + "中")
         elif kind == "train":
             ut = e.get("utype", "hpea")
             self.jobs[e["id"]] = {"state": "waiting", "producer": None, "hero": ut[0].isupper()}
+            rt.update(status="waiting", aStart=self.t, note="排队中")
+        elif kind == "upgrade":
+            self.jobs[e["id"]] = {"state": "waiting", "producer": None}
             rt.update(status="waiting", aStart=self.t, note="排队中")
 
     # ---- advancing jobs ----------------------------------------------------------------------
@@ -295,6 +342,8 @@ class Commander:
                 worker = next((u for u in self.units() if u["unit_id"] == job["worker"]), None)
                 building = worker and worker.get("order") and worker["order"].get("target_id") == b["unit_id"]
                 rt["note"] = f"建造中 {pct}%" if building or worker is None else f"可能暂停 {pct}%：农民没在建造"
+        elif e["kind"] == "upgrade":
+            self._advance_upgrade(e, job, rt)
         elif e["kind"] == "train":
             ut = e.get("utype", "hpea")
             if job["state"] == "waiting":
@@ -366,6 +415,19 @@ class Commander:
         self.rt[e["id"]].update(bStart=self.t, bid="u%d" % ev["unit_id"], note="建造中 0%")
         if b is not None:
             self.rt[e["id"]]["builtAt"] = [b["x"], b["y"]]
+        if e.get("helpers") and b is not None:
+            self._send_helpers(e, self.jobs[e["id"]], b)
+
+    def _send_helpers(self, e, job, b):
+        """Power build: e["helpers"] more peasants join a started construction (right-click on it).
+        Warcraft charges the extra cost while they build."""
+        held = self.reserved() | {job["worker"]}
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in ("gold", "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
+        job["helpers"] = []
+        for u in sorted(pool, key=lambda u: dist(u, b))[: e["helpers"]]:
+            self.order(u["unit_id"], "smart", target_id=b["unit_id"])
+            self.roles[u["unit_id"]] = "build"
+            job["helpers"].append(u["unit_id"])
 
     def _site_changed(self, e, job) -> bool:
         a = (job.get("action") or {}).get("arguments") or {}
@@ -410,10 +472,62 @@ class Commander:
             job = self.jobs.get(e["id"])
             if job and job.get("building") == ev["unit_id"]:
                 self.rt[e["id"]].update(status="done", aEnd=self.t, note="完工")
-                worker = next((u for u in self.obs["units"] if u["unit_id"] == job["worker"]), None)
-                self.roles.pop(job["worker"], None)
-                if worker:
-                    self.harvest(worker, "gold")
+                where = "natural" if e.get("then") == "natural" else "main"
+                for uid in [job["worker"], *job.get("helpers", [])]:  # builders go mining (at the natural if told)
+                    self.roles.pop(uid, None)
+                    worker = next((u for u in self.obs["units"] if u["unit_id"] == uid), None)
+                    if worker and not self.harvest(worker, "gold", where):
+                        self.harvest(worker, "gold")
+                del self.jobs[e["id"]]
+                return
+
+    # ---- upgrades (town hall -> keep, scout tower -> arcane tower ...) ---------------------------
+    # Warcraft takes the upgrade as a train order with the target type; it occupies the building,
+    # costs the price difference, and reports upgrade_start/finish for the structure.
+    def _advance_upgrade(self, e, job, rt):
+        to = e["to"]
+        if job["state"] == "waiting":
+            busy = {j.get("producer") for j in self.jobs.values() if j is not job}
+            opts = [s for s in self.structures() if to in (self.eco.get(s["type_id"], {}).get("upgrades") or [])
+                    and (not e.get("from") or s["type_id"] == e["from"]) and not s.get("queue") and s["unit_id"] not in busy]
+            if e.get("at"):
+                opts = [s for s in opts if math.hypot(s["x"] - e["at"][0], s["y"] - e["at"][1]) < 64]
+            if not opts:
+                rt["note"] = "等待空闲的可升级建筑"
+                return
+            missing = [r for r in self.eco[to]["requires"] if not any(s["type_id"] == r for s in self.structures())]
+            if missing:
+                rt["note"] = "需要 " + "、".join(self.eco[r]["name"] if r in self.eco else r for r in missing)
+                return
+            b = opts[0]
+            g, w = self.eco[to]["gold"] - self.eco[b["type_id"]]["gold"], self.eco[to]["wood"] - self.eco[b["type_id"]]["wood"]
+            if not self.afford(g, w):
+                rt["note"] = f"等待资源 金{int(self.budget[0])}/{g} 木{int(self.budget[1])}/{w}"
+                return
+            self.spend(g, w)
+            self.order(b["unit_id"], "train", type_id=to)
+            job.update(state="ordered", producer=b["unit_id"], ordered=self.t)
+            rt["note"] = "已下令 · " + self.eco[b["type_id"]]["name"]
+        elif job["state"] == "ordered" and self.t - job["ordered"] > 3:
+            job.update(state="waiting", producer=None)
+            rt["note"] = "游戏没有开始升级，重试"
+        elif job["state"] == "upgrading":
+            left = self.eco[to]["time"] - (self.t - job["started"])
+            rt["note"] = f"升级中 {max(0, math.ceil(left))}秒"
+
+    def _bind_upgrade(self, ev):
+        for e in self.events:
+            job = self.jobs.get(e["id"])
+            if job and e["kind"] == "upgrade" and job["state"] == "ordered" and job["producer"] == ev["unit_id"]:
+                job.update(state="upgrading", started=self.t)
+                self.rt[e["id"]].update(status="running", trainStart=self.t, note="升级中")
+                return
+
+    def _finish_upgrade(self, ev):
+        for e in self.events:
+            job = self.jobs.get(e["id"])
+            if job and e["kind"] == "upgrade" and job.get("producer") == ev["unit_id"] and job["state"] == "upgrading":
+                self.rt[e["id"]].update(status="done", aEnd=self.t, note="升级为" + self.eco[e["to"]]["name"])
                 del self.jobs[e["id"]]
                 return
 
@@ -445,7 +559,7 @@ class Commander:
             role = self.roles.get(u["unit_id"])
             if role in ("gold", "wood") and u.get("order") is None and u["unit_id"] not in self.ordered:
                 if self.t - self.last_order.get(u["unit_id"], -99) >= 2:
-                    self.harvest(u, role)
+                    self.harvest(u, role, self.mine_of.get(u["unit_id"], "main"))
 
     # ---- state for the browser ---------------------------------------------------------------
     def snapshot(self) -> dict:

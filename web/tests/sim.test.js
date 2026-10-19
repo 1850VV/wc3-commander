@@ -117,3 +117,62 @@ test('an automatic builder does not take a peasant a later event names', () => {
   assert.notEqual(farm.rt.builder, 3);
   assert.equal(byName(g, '建造 兵营').rt.builder, 3);
 });
+
+test('after: an event waits for the one it depends on', () => {
+  const plan = Sim.defaultPlan(), bar = plan[0].children.find(e => e.btype === 'hbar');
+  const farm = Sim.ev('build', '建造 农场（兵营后）', 0, {unit: null, btype: 'hhou', after: bar.id});
+  plan[3].children.push(farm);
+  Sim.run(W, 0, plan, 140);
+  assert.equal(bar.rt.status, 'done');
+  assert.ok(farm.rt.aStart >= bar.rt.aEnd, `${farm.rt.aStart} >= ${bar.rt.aEnd}`);
+  assert.equal(farm.rt.status, 'done');
+});
+
+test('after: a deleted dependency no longer holds an event back', () => {
+  const plan = Sim.defaultPlan(), farm = Sim.ev('build', '建造 农场', 20, {unit: null, btype: 'hhou', after: 'gone'});
+  plan[3].children.push(farm);
+  Sim.run(W, 0, plan, 25);
+  assert.equal(farm.rt.aStart, 20);
+});
+
+test('upgrade: town hall to keep takes 140 s, costs the difference and holds the queue', () => {
+  const plan = Sim.defaultPlan(), up = Sim.ev('upgrade', '升级 主城', 150, {to: 'hkee'}), peon = Sim.ev('train', '训练农民', 151, {utype: 'hpea'});
+  plan[3].children.push(up, peon);
+  const g = Sim.run(W, 0, plan, 320);
+  assert.equal(up.rt.status, 'done');
+  assert.equal(g.hall.type, 'hkee');
+  assert.ok(Math.abs(up.rt.aEnd - up.rt.trainStart - 140) < 0.2);
+  assert.ok(peon.rt.trainStart >= up.rt.aEnd - 0.1, 'the peasant waits behind the upgrade');
+  const eco = window.LT_DATA.economy.units;
+  assert.deepEqual(g.upgradeCost({type: 'htow'}, 'hkee'), [eco.hkee.gold - eco.htow.gold, eco.hkee.wood - eco.htow.wood]);
+  assert.deepEqual(g.upgradeCost({type: 'htow'}, 'hkee'), [320, 210]);
+});
+
+test('expansion: hall beside the natural, helpers speed it up, builders then mine there', () => {
+  const run = helpers => {
+    const plan = Sim.defaultPlan(), hall = Sim.ev('build', '建造 分基地', 100, {unit: null, btype: 'htow', near: 'natural', helpers, then: 'natural'});
+    plan[3].children.push(hall);
+    const g = Sim.run(W, 0, plan, 0);
+    while (g.t < 600 && hall.rt.status !== 'done') { if (Math.abs(g.t - 150) < 0.05) { g.gold += 2000; g.wood += 2000; } g.step(); }
+    for (let k = 0; k < 400; k++) g.step(); // 40 s of mining afterwards
+    return {g, hall};
+  };
+  const solo = run(0), crew = run(3);
+  for (const {g, hall} of [solo, crew]) {
+    assert.equal(hall.rt.status, 'done');
+    assert.ok(Math.hypot(hall.site[0] - g.natural.x, hall.site[1] - g.natural.y) < 900, 'hall beside the natural mine');
+    assert.ok(g.mineGold.get(g.natural.id) < 12500, 'gold mined at the natural');
+  }
+  assert.equal(Math.round(solo.hall.rt.aEnd - solo.hall.rt.bStart), 180);
+  assert.ok(crew.hall.rt.aEnd - crew.hall.rt.bStart < 100, 'three helpers cut the build time');
+  assert.ok(crew.g.units.filter(u => u.task.kind === 'gather' && u.task.mine === crew.g.natural).length >= 4);
+});
+
+test('gather at the natural sends workers to that mine', () => {
+  const plan = Sim.defaultPlan(), go = Sim.ev('gather', '采金 · 分矿', 30, {count: 2, res: 'gold', mine: 'natural'});
+  plan[3].children.push(go);
+  const early = Sim.run(W, 0, plan, 40); // later build events may borrow one of them as a builder
+  assert.equal(go.rt.status, 'active');
+  assert.equal(early.units.filter(u => u.task.kind === 'gather' && u.task.mine === early.natural).length, 2);
+  assert.ok(Sim.run(W, 0, plan, 120).mineGold.get(early.natural.id) < 12500);
+});

@@ -6,7 +6,7 @@
   const D = window.LT_DATA, Sim = window.CommanderSim, W = new Sim.World(D), ECO = D.economy.units;
   const T_END = 300, KIND = Sim.KIND, RES = Sim.RES;
   const BUILD_NAMES = {农场: 'hhou', 兵营: 'hbar', 国王祭坛: 'halt', 祭坛: 'halt', 伐木场: 'hlum', 铁匠铺: 'hbla', 神秘藏宝室: 'hvlt', 车间: 'harm', 神秘圣地: 'hars', 狮鹫笼: 'hgra', 侦察塔: 'hwtw'};
-  const UNIT_NAMES = {农民: 'hpea', 步兵: 'hfoo', 火枪手: 'hrif', 大法师: 'Hamg', 山丘之王: 'Hmkg'};
+  const UNIT_NAMES = {农民: 'hpea', 步兵: 'hfoo', 火枪手: 'hrif', 大法师: 'Hamg', 山丘之王: 'Hmkg', 牧师: 'hmpr', 女巫: 'hsor', 破法者: 'hspt'};
   const $ = id => document.getElementById(id);
 
   let startIndex = 0, groups = Sim.defaultPlan(), G = null, sel = null, placing = null;
@@ -25,7 +25,7 @@
   function V() {
     if (live.on && live.state) return live.view;
     if (vCache && vStamp === G.t && vCache.g === G) return vCache;
-    const trainOf = b => { const Q = G.queues.get(b.id); return Q && Q.cur ? {name: name(Q.cur.ev.utype || 'hpea'), left: Q.cur.left, total: Q.cur.total, queue: Q.q.length} : (Q && Q.q.length ? {name: '', left: 0, total: 0, queue: Q.q.length} : null); };
+    const trainOf = b => { const Q = G.queues.get(b.id); return Q && Q.cur ? {name: (Q.cur.ev.kind === 'upgrade' ? '升级为' : '') + name(Q.cur.ev.to || Q.cur.ev.utype || 'hpea'), left: Q.cur.left, total: Q.cur.total, queue: Q.q.length} : (Q && Q.q.length ? {name: '', left: 0, total: 0, queue: Q.q.length} : null); };
     vCache = {
       g: G, t: G.t, gold: G.gold, wood: G.wood, foodUsed: G.foodUsed, foodCap: G.foodCap, counts: G.counts(),
       mine: {x: G.mine.x, y: G.mine.y, gold: G.mineGoldLeft()}, hall: G.hall,
@@ -118,6 +118,10 @@
     say('已把' + name(e.btype) + '的工地固定在 ' + pos.join(', ') + '，到时按这个位置精确建造');
   }
   function unpinSite(e) { delete e.at; planChanged(); renderCmd(); say(name(e.btype) + '的工地改回自动选址'); }
+  /* the start's natural expansion (closest other mine), as sim.js picks it */
+  let natKey = -1, natMine = null;
+  function naturalMine() { if (natKey !== startIndex) { natKey = startIndex; natMine = new Sim.Game(W, {start: startIndex, events: []}).natural; } return natMine; }
+
   /* ---------- wall-in ---------- */
   // Checked on the plan's final layout: every build event's site (where the game actually put it,
   // once known), on an otherwise empty map around the hall. Cached until the layout changes.
@@ -174,8 +178,9 @@
     W.starts.forEach((s, i) => { if (i === startIndex) return; const [x, y, w, h] = rectScreen(W.rectOf(s.x, s.y, W.buildingTex('htow'))); ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); label(s.name + '出生点', x + w / 2, y + h / 2, ls, '#b9c0b5'); });
     for (const m of W.mines) {
       const [x, y, w, h] = rectScreen(W.rectOf(m.x, m.y, m.tex)); ctx.fillStyle = '#8a7322'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = '#e4c14a'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
-      const mine = m.x === v.mine.x && m.y === v.mine.y;
-      if (w > 22) label(mine && v.mine.gold >= 0 ? '金矿 ' + Math.floor(v.mine.gold) : '金矿', x + w / 2, y + h / 2, ls);
+      const mine = m.x === v.mine.x && m.y === v.mine.y, nat = naturalMine();
+      const tag = m.x === nat.x && m.y === nat.y ? '分矿 · ' : '';
+      if (w > 22) label(tag + (mine && v.mine.gold >= 0 ? '金矿 ' + Math.floor(v.mine.gold) : '金矿'), x + w / 2, y + h / 2, ls);
     }
     for (const n of W.neutrals) { const [x, y, w, h] = rectScreen(W.rectOf(n.x, n.y, n.tex)); ctx.fillStyle = '#4b3a5e'; ctx.fillRect(x, y, w, h); if (w > 22) label(n.name, x + w / 2, y + h / 2, ls); }
     // planned build sites: solid = placed by the player (exact), dashed = automatic; brighter when due soon
@@ -354,9 +359,11 @@
     } else {
       const e = item, g = groups.find(g => g.children.includes(e));
       h = `<div class="title">${e.name}</div><div class="kv"><span>类型</span><span>${KIND[e.kind]}事件 · ${g.name}</span>
-        <span>计划开始</span><span class="num">${fmt(e.start)}</span><span>实际开始</span><span class="num">${e.rt && e.rt.aStart != null ? fmt(e.rt.aStart) : '—'}</span>
+        <span>计划开始</span><span class="num">${fmt(e.start)}${e.after ? '，并等「' + ((allEvents().find(x => x.id === e.after) || {}).name || '已删除的事件') + '」完成' : ''}</span><span>实际开始</span><span class="num">${e.rt && e.rt.aStart != null ? fmt(e.rt.aStart) : '—'}</span>
         <span>状态</span><span>${(e.rt && e.rt.note) || '计划中'}</span>${e.site ? `<span>工地</span><span class="num">${e.site.join(', ')} · ${e.at ? '指定位置（精确建造）' : '自动选址'}</span>` : ''}</div>`;
       if (e.siteNote) h += `<div class="hint" style="color:var(--warn)">${e.siteNote}</div>`;
+      const extra = [e.near === 'natural' && '建在分矿', e.helpers && e.helpers + ' 个农民协助建造', e.then === 'natural' && '完工后去分矿采金', e.mine === 'natural' && '在分矿采金'].filter(Boolean);
+      if (extra.length) h += `<div class="hint">${extra.join('；')}</div>`;
       if (e.rt && e.rt.placed && !e.at) h += `<div class="hint">游戏实际选址：${e.rt.placed.map(Math.round).join(', ')}</div>`;
       if (movable(e)) h += '<div class="hint">在地图上拖动这个工地框可以改位置。</div>';
     }
@@ -380,6 +387,7 @@
       const trains = (ECO[b.type].trains || []).filter(t => ECO[t]);
       if (Sim.HALLS.includes(b.type)) btns = [trainBtn('P', 'hpea', 'gold'), trainBtn('W', 'hpea', 'wood')];
       else btns = trains.map((t, i) => trainBtn('QWERTY'[i], t));
+      (ECO[b.type].upgrades || []).forEach((to, i) => btns.push(['U' + (i || ''), '升级为' + name(to), () => addTo('g_user', Sim.ev('upgrade', '升级 ' + name(to), nowT(), {from: b.type, to, at: [b.x, b.y]}))]));
     } else if (sel && sel.type === 'event') {
       const e = allEvents().find(x => x.id === sel.id);
       if (e) btns = [['←', '提前 5 秒', () => shiftEv(e, -5)], ['→', '推后 5 秒', () => shiftEv(e, 5)], ['X', '删除事件', () => delEv(e)]];
@@ -387,6 +395,15 @@
     }
     if (placing) btns.push(['Esc', '取消放置', stopPlace]);
     cmdEl.innerHTML = '';
+    const evSel = sel && sel.type === 'event' && allEvents().find(x => x.id === sel.id);
+    if (evSel && (!evSel.rt || evSel.rt.status === 'pending')) { // start condition: planned time, or after another event
+      const box = document.createElement('label'); box.className = 'after';
+      box.append('开始条件 ');
+      const s = document.createElement('select');
+      s.innerHTML = '<option value="">按计划时间 ' + fmt(evSel.start) + '</option>' + allEvents().filter(x => x !== evSel && x.after !== evSel.id)
+        .map(x => `<option value="${x.id}"${evSel.after === x.id ? ' selected' : ''}>等「${x.name}」完成（且不早于 ${fmt(evSel.start)}）</option>`).join('');
+      s.onchange = () => setAfter(evSel, s.value); box.appendChild(s); cmdEl.appendChild(box);
+    }
     if (!btns.length) { cmdEl.innerHTML = '<div class="hint" style="grid-column:1/-1">选中农民、建筑或时间轴事件后，这里出现可用命令。每个命令都会变成时间轴上的一个事件。</div>'; return; }
     const n = Math.max(9, Math.ceil(btns.length / 3) * 3);
     for (let i = 0; i < n; i++) {
@@ -410,19 +427,29 @@
     planChanged(); say('已加入时间轴：' + fmt(e.start) + ' ' + e.name); return e;
   }
   function shiftEv(e, d) { e.start = Math.max(0, Math.min(T_END - 1, e.start + d)); planChanged(); }
-  function delEv(e) { groups.forEach(g => g.children = g.children.filter(x => x !== e)); sel = null; planChanged(); renderCmd(); say('已删除：' + e.name); }
+  function delEv(e) {
+    groups.forEach(g => g.children = g.children.filter(x => x !== e));
+    const waiting = allEvents().filter(x => x.after === e.id);
+    for (const x of waiting) delete x.after; // they fall back to their planned time
+    sel = null; planChanged(); renderCmd();
+    say('已删除：' + e.name + (waiting.length ? '；' + waiting.map(x => '「' + x.name + '」').join('') + '不再等它，改回按计划时间开始' : ''));
+  }
+  function setAfter(e, id) { if (id) e.after = id; else delete e.after; planChanged(); renderCmd(); say(id ? `「${e.name}」改为等「${allEvents().find(x => x.id === id).name}」完成后再开始` : `「${e.name}」改回按计划时间开始`); }
   const msgEl = $('msg');
   function say(t, err) { msgEl.textContent = t; msgEl.className = 'msg' + (err ? ' err' : ''); }
   function parseCmd(text, gid) {
     let s = text.trim(), at = nowT(), r;
     const m = s.match(/^@\s*(\d+)\s*/); if (m) { at = Math.min(T_END - 1, +m[1]); s = s.slice(m[0].length); }
-    if ((r = s.match(/^(造|训练)\s*(农民|步兵|火枪手|大法师|山丘之王)\s*(?:→|->|去|>)?\s*(采金|伐木)?/))) {
+    if ((r = s.match(/^(造|训练)\s*(农民|步兵|火枪手|大法师|山丘之王|牧师|女巫|破法者)\s*(?:→|->|去|>)?\s*(采金|伐木)?/))) {
       const ut = UNIT_NAMES[r[2]], then = ut === 'hpea' ? (r[3] === '伐木' ? 'wood' : 'gold') : undefined;
       return addTo(gid, Sim.ev('train', '训练' + r[2] + (then ? ' → ' + RES[then] : ''), at, {utype: ut, then}));
     }
+    if ((r = s.match(/^(?:建造|建|造)\s*分基地\s*(\d+)?/))) { const n = Math.max(0, Math.min(5, +(r[1] || 0))); return addTo(gid, Sim.ev('build', '建造 分基地' + (n ? '（' + n + ' 人协助）' : ''), at, {unit: null, btype: 'htow', near: 'natural', helpers: n || undefined, then: 'natural'})); }
+    if ((r = s.match(/^采金\s*(\d+)?\s*分矿/))) { const n = Math.max(1, Math.min(12, +(r[1] || 1))); return addTo(gid, Sim.ev('gather', '采金 × ' + n + ' · 分矿', at, {count: n, res: 'gold', mine: 'natural'})); }
+    if ((r = s.match(/^升级\s*(主城|城堡|防御塔|炮塔)/))) { const to = {主城: 'hkee', 城堡: 'hcas', 防御塔: 'hatw', 炮塔: 'hgtw'}[r[1]]; return addTo(gid, Sim.ev('upgrade', '升级 ' + name(to), at, {to})); }
     if ((r = s.match(/^(采金|伐木)\s*(\d+)?/))) { const res = r[1] === '采金' ? 'gold' : 'wood', n = Math.max(1, Math.min(12, +(r[2] || 1))); return addTo(gid, Sim.ev('gather', r[1] + ' × ' + n, at, {count: n, res})); }
     if ((r = s.match(/^(建造|建|造)\s*(国王祭坛|神秘藏宝室|神秘圣地|农场|兵营|祭坛|伐木场|铁匠铺|车间|狮鹫笼|侦察塔)/))) { const t = BUILD_NAMES[r[2]]; return addTo(gid, Sim.ev('build', '建造 ' + name(t), at, {unit: null, btype: t})); }
-    say('没看懂这条指令。支持：造农民 → 采金/伐木、训练 步兵/火枪手/大法师、采金 N、伐木 N、建造 农场/兵营/伐木场/铁匠铺，前面可加 @秒数 定时。', true);
+    say('没看懂这条指令。支持：造农民 → 采金/伐木、训练 步兵/火枪手/大法师/牧师/女巫/破法者、采金 N、采金 N 分矿、伐木 N、建造 农场/兵营/伐木场/铁匠铺、建造 分基地 N（N 个农民协助）、升级 主城/防御塔，前面可加 @秒数 定时。', true);
     return null;
   }
   const cliIn = $('cliIn');
@@ -507,7 +534,7 @@
     const rt = e.rt || {}, s = rt.aStart ?? e.start, t = V().t;
     if (e.kind === 'gather') return [s, T_END];
     if (rt.status === 'done') return [s, Math.max(rt.aEnd, s + 1)];
-    if (e.kind === 'train') { const d = ECO[e.utype || 'hpea'].time; return [s, rt.trainStart != null ? rt.trainStart + d : Math.max(t, s) + d]; }
+    if (e.kind === 'train' || e.kind === 'upgrade') { const d = ECO[e.to || e.utype || 'hpea'].time; return [s, rt.trainStart != null ? rt.trainStart + d : Math.max(t, s) + d]; }
     const d = ECO[e.btype].time; return [s, rt.bStart != null ? rt.bStart + d : Math.max(t, s) + d + 4];
   }
   const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
