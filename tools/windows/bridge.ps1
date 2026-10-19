@@ -72,15 +72,18 @@ switch ($Action) {
         }
     }
     "install" {
+        $ErrorActionPreference = "Stop"  # no native programs here; any failure must stop before "registered"
         $ps = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-        $action = New-ScheduledTaskAction -Execute $ps -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" start" -WorkingDirectory $Bridge
-        $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
-        Register-ScheduledTask -TaskName $Task -Action $action -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+        # not $action/$settings: variable names ignore case and $Action is this script's parameter
+        $run = New-ScheduledTaskAction -Execute $ps -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" start" -WorkingDirectory $Bridge
+        $who = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+        $limits = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName $Task -Action $run -Principal $who -Settings $limits -Force -ErrorAction Stop | Out-Null
         Write-Output "已注册计划任务 $Task：只在你登录时、在你的桌面会话里运行；没有定时触发，只在被调用时启动。"
         Write-Output "远程启动：schtasks /Run /TN $Task    删除：bridge.ps1 uninstall"
     }
     "uninstall" {
+        $ErrorActionPreference = "Stop"
         Unregister-ScheduledTask -TaskName $Task -Confirm:$false -ErrorAction Stop
         Write-Output "已删除计划任务 $Task"
     }
