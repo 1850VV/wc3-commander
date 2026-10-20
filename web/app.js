@@ -14,7 +14,8 @@
   let checkpoints = []; // from a loaded strategy: [{id, name, event, at, from, to}]
   let playing = true, speed = 2, acc = 0, last = performance.now();
   const live = {on: false, state: null, backend: '', es: null, current: null, dirty: false,
-    arbMode: false, arb: null, arbN: -1, feedback: []}; // arbMode: the bridge's arbiter plays; the timeline shows its decisions
+    arbMode: false, arb: null, arbN: -1, feedback: [], // arbMode: the bridge's arbiter plays; the timeline shows its decisions
+    replay: null}; // a recorded arbiter game being replayed: {id, meta, frames, t, end, consistency}
   const ORDER_NAME = {harvest: '采集', build: '建造', train: '训练', move: '移动', attack: '攻击', smart: '右键', cast: '施放', learn: '学技能', stop: '停止'};
   function orderText(o) {
     const a = o.args || {}, what = a.type_id ? name(a.type_id) : a.order || a.ability_id || '';
@@ -60,6 +61,7 @@
   let vCache = null, vStamp = -1;
   function V() {
     if (live.on && live.state) return live.view;
+    if (live.replay) return Replay.view();
     if (vCache && vStamp === G.t && vCache.g === G) return vCache;
     const trainOf = b => { const Q = G.queues.get(b.id); return Q && Q.cur ? {name: (Q.cur.ev.kind === 'upgrade' ? '升级为' : '') + name(Q.cur.ev.to || Q.cur.ev.utype || 'hpea'), left: Q.cur.left, total: Q.cur.total, queue: Q.q.length} : (Q && Q.q.length ? {name: '', left: 0, total: 0, queue: Q.q.length} : null); };
     vCache = {
@@ -392,8 +394,18 @@
           <span>没有出处（多余）</span><span class="num" style="color:${o.untaggedCount ? 'var(--warn)' : 'inherit'}">${o.untaggedCount || 0}</span>
           <span>重复命令</span><span class="num" style="color:${o.repeatCount ? 'var(--warn)' : 'inherit'}">${o.repeatCount || 0}</span>
           <span>被游戏拒绝</span><span class="num" style="color:${(o.rejected || []).length ? 'var(--warn)' : 'inherit'}">${(o.rejected || []).length}</span></div>`;
-        h += `<div class="subtitle">最近的决策 <span class="hint">共 ${dec.length} 条，点一条看详情</span></div><div class="upc">`
-          + dec.slice(-10).reverse().map(d => `<button type="button"${d.event ? ` data-ev="${d.event}"` : ''}><b>${fmt(d.t)}</b> ${d.rule} ${esc(d.action)} <span class="hint">${esc(d.why)}</span></button>`).join('') + '</div>';
+        const shown = live.replay ? dec.filter(d => d.t <= v.t) : dec;
+        if (live.replay && live.replay.consistency) {
+          const c = live.replay.consistency, list = (rows, cls) => rows.slice(0, 8).map(r => `<button type="button" class="${cls}"${r.event ? ` data-ev="${r.event}"` : ''}><b>${fmt(r.t)}</b> ${esc(r.what)} <span class="hint">${esc(r.why || '游戏里发生了，但没有对应的决策')}</span></button>`).join('');
+          h += `<div class="subtitle">对账 <span class="hint">游戏回报的事件 ↔ 指挥官的决策</span></div><div class="kv">
+            <span>对上的</span><span class="num">${c.matched}</span>
+            <span>游戏里有、决策里没有</span><span class="num" style="color:${c.gameOnly.length ? 'var(--warn)' : 'inherit'}">${c.gameOnly.length}</span>
+            <span>决策下了令、游戏里没发生</span><span class="num" style="color:${c.oursOnly.length ? 'var(--warn)' : 'inherit'}">${c.oursOnly.length}</span>
+            <span>阵亡</span><span class="num">${c.deaths.length}</span></div>`
+            + (c.gameOnly.length || c.oursOnly.length ? '<div class="upc">' + list(c.oursOnly, 'bad') + list(c.gameOnly, 'bad') + '</div>' : '');
+        }
+        h += `<div class="subtitle">最近的决策 <span class="hint">共 ${shown.length} 条，点一条看详情</span></div><div class="upc">`
+          + shown.slice(-10).reverse().map(d => `<button type="button"${d.event ? ` data-ev="${d.event}"` : ''}><b>${fmt(d.t)}</b> ${d.rule} ${esc(d.action)} <span class="hint">${esc(d.why)}</span></button>`).join('') + '</div>';
       }
       h += `<div class="kv">
         <span>采金</span><span class="num">${c.gold} 名农民</span><span>伐木</span><span class="num">${c.wood} 名农民</span>
@@ -607,7 +619,9 @@
   function seekFrom(ev) {
     if (live.on) return; // cannot rewind a live game
     if (ev.target !== ev.currentTarget && !ev.currentTarget.classList.contains('ruler')) return;
-    const r = ev.currentTarget.getBoundingClientRect(); resim(Math.round((ev.clientX - r.left) / r.width * T_END));
+    const r = ev.currentTarget.getBoundingClientRect(), t = Math.round((ev.clientX - r.left) / r.width * T_END);
+    if (live.replay) { Replay.seek(t); return; }
+    resim(t);
   }
   let dragPending = null;
   function attachDrag(b, e, track) {
@@ -650,6 +664,7 @@
         if (!r.el.classList.contains(st)) { r.el.classList.remove(...STAT); r.el.classList.add(st); }
         setText(r.el, st === 'pending' ? (e.rt && e.rt.note ? e.name + ' · ' + e.rt.note : e.name) : (e.rt.note || e.name));
         r.el.title = e.name + ' · ' + ((e.rt && e.rt.note) || '计划中');
+        r.el.classList.toggle('future', !!live.replay && e.start > V().t); // replay: not decided yet at this moment
       } else {
         const ch = r.g.children; if (!ch.length) { r.el.hidden = true; continue; } r.el.hidden = false;
         let a = 1e9, b = 0, done = 0, liveN = 0;
@@ -662,6 +677,62 @@
     }
     tlBody.style.setProperty('--p', V().t / T_END);
   }
+
+  /* ---------- replay of a recorded arbiter game (bridge/runs/<id>) ---------- */
+  const Replay = {
+    async list(sel) {
+      try {
+        const j = await (await fetch('/api/runs')).json(), keep = sel.options[0];
+        sel.innerHTML = ''; sel.appendChild(keep);
+        for (const r of j.runs || []) {
+          const o = document.createElement('option'); o.value = r.id;
+          o.textContent = `${(r.began || r.id).replace('T', ' ').slice(5, 16)} ${r.name || ''}${r.speed > 1 ? ' · ' + r.speed + '×' : ''}${r.feedback ? ' · ' + r.feedback + ' 条意见' : ''}${r.replay ? ' · 有魔兽录像' : ''}`;
+          o.disabled = !r.hasState; sel.appendChild(o);
+        }
+      } catch (_) { /* keep */ }
+    },
+    async load(id) {
+      if (live.on) { say('游戏连接中不能回放，先点「断开」', true); return; }
+      let j;
+      try { j = await (await fetch('/api/runs/' + encodeURIComponent(id))).json(); } catch (_) { say('读不到这一局的记录', true); return; }
+      if (!j.ok || !j.frames.length) { say('这一局没有可以回放的记录' + (j.error ? '：' + j.error : ''), true); return; }
+      const st = j.state;
+      live.replay = {id, meta: j.meta, frames: j.frames, t: 0, end: j.frames[j.frames.length - 1].t, consistency: st.consistency || null, fi: 0};
+      live.arbMode = false; live.arbN = -1;
+      if (st.start != null) { startIndex = st.start; startSel.value = String(st.start); }
+      Live.syncArbiter(st); live.feedback = j.feedback || [];
+      playing = false; bPlay.textContent = '▶ 播放'; ['bPlay', 'speeds', 'bReset'].forEach(x => $(x).hidden = false);
+      live.replayExit.hidden = false; $('modeTag').textContent = '回放 · ' + (j.meta.name || id); $('modeTag').classList.add('live');
+      sel = null; home(); this.seek(0); renderCmd();
+      say(`回放：${j.meta.name || id}，共 ${fmt(live.replay.end)}。点「播放」或拖动时间轴；点一条事件看依据、命令和游戏回报，并可以打分。` + (j.replay ? '魔兽录像在游戏的 Replay\\commander 文件夹。' : ''));
+    },
+    seek(t, keepPlaying) {
+      const r = live.replay; if (!r) return;
+      r.t = Math.max(0, Math.min(r.end, t));
+      if (r.t >= r.end && !keepPlaying) { /* stay */ } else if (r.t >= r.end) { playing = false; bPlay.textContent = '▶ 重播'; }
+      let i = r.fi; const F = r.frames;
+      if (F[i].t > r.t) i = 0;
+      while (i + 1 < F.length && F[i + 1].t <= r.t) i++;
+      if (i !== r.fi || !r.view) { r.fi = i; r.view = null; }
+      lastStatus = '';
+    },
+    view() {
+      const r = live.replay;
+      if (!r.view) {
+        const f = r.frames[r.fi], units = f.units.map(u => ({...u, task: u.task || '', dest: null}));
+        const counts = {gold: 0, wood: 0, build: 0, idle: 0};
+        for (const u of units) if (u.type === 'hpea') counts[u.role || 'idle'] = (counts[u.role || 'idle'] || 0) + 1;
+        r.view = {t: f.t, gold: f.gold, wood: f.wood, foodUsed: f.foodUsed, foodCap: f.foodCap, counts, units, mine: {x: 0, y: 0, gold: -1},
+          buildings: f.buildings.map(b => ({...b, tex: W.buildingTex(b.type) || 'PathTextures\\8x8Default.tga'})), treeAlive: null};
+      }
+      return Object.assign(r.view, {t: r.t});
+    },
+    exit() {
+      live.replay = null; live.arbMode = false; live.arb = null; live.replayExit.hidden = true; playing = false;
+      groups = Sim.defaultPlan(); checkpoints = []; buildTimeline();
+      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0); sel = null; renderCmd(); say('已退出回放');
+    },
+  };
 
   /* ---------- live bridge (only when served by bridge/commander_bridge) ---------- */
   const Live = {
@@ -682,6 +753,11 @@
       const ld = document.createElement('select'); ld.className = 'btn'; ld.title = '载入保存过的编排（会替换当前整套编排）';
       ld.innerHTML = '<option value="">载入布局…</option>';
       ld.onfocus = ld.onpointerdown = () => this.list(ld); ld.onchange = () => { const nm = ld.value; ld.value = ''; if (nm) this.load(nm); }; sa.after(ld);
+      const rp = document.createElement('select'); rp.className = 'btn'; rp.title = '回放仲裁器打过的一局：事件流、沙盘和资源跟着时间走，可以打分';
+      rp.innerHTML = '<option value="">回放…</option>';
+      rp.onfocus = rp.onpointerdown = () => Replay.list(rp); rp.onchange = () => { const id = rp.value; rp.value = ''; if (id) Replay.load(id); }; ld.after(rp);
+      const ex = live.replayExit = document.createElement('button'); ex.className = 'btn'; ex.type = 'button'; ex.textContent = '退出回放'; ex.hidden = true;
+      ex.onclick = () => Replay.exit(); rp.after(ex);
       showPlanName();
     },
     async list(ld) {
@@ -776,8 +852,8 @@
     syncArbiter(s) {
       live.arb = s;
       if (!live.arbMode) {
-        live.arbMode = true; live.arbN = -1; this.loadFeedback();
-        say('这局由仲裁器指挥：事件按阶段显示它的决策。点一条看依据、发出的命令和游戏回报，并在命令面板打分。');
+        live.arbMode = true; live.arbN = -1;
+        if (!live.replay) { this.loadFeedback(); say('这局由仲裁器指挥：事件按阶段显示它的决策。点一条看依据、发出的命令和游戏回报，并在命令面板打分。'); }
       }
       const defs = s.arbEvents || [];
       if (defs.length === live.arbN) return;
@@ -798,7 +874,7 @@
     async rate(e, f) {
       try {
         const r = await fetch('/api/feedback', {method: 'POST', headers: {'content-type': 'application/json'},
-          body: JSON.stringify({event: e.id, rule: e.rule, action: e.name, t: e.start, ...f})});
+          body: JSON.stringify({event: e.id, rule: e.rule, action: e.name, t: e.start, ...f, ...(live.replay ? {run: live.replay.id} : {})})});
         const j = await r.json();
         if (!j.ok) { say('没记下：' + j.error, true); return; }
         live.feedback = j.feedback; lastStatus = '';
@@ -822,10 +898,13 @@
 
   /* ---------- loop + controls ---------- */
   const bPlay = $('bPlay');
-  function togglePlay() { if (live.on) return; if (G.t >= T_END) resim(0); playing = !playing; bPlay.textContent = playing ? '❚❚ 暂停' : '▶ 播放'; }
+  function togglePlay() {
+    if (live.on) return;
+    if (live.replay) { if (live.replay.t >= live.replay.end) Replay.seek(0); playing = !playing; bPlay.textContent = playing ? '❚❚ 暂停' : '▶ 播放'; return; }
+    if (G.t >= T_END) resim(0); playing = !playing; bPlay.textContent = playing ? '❚❚ 暂停' : '▶ 播放'; }
   bPlay.onclick = togglePlay;
   [1, 2, 4, 8, 16].forEach(s => { const b = document.createElement('button'); b.className = 'btn' + (s === speed ? ' on' : ''); b.type = 'button'; b.textContent = s + '×'; b.onclick = () => { speed = s; [...$('speeds').children].forEach(x => x.classList.toggle('on', x === b)); }; $('speeds').appendChild(b); });
-  $('bReset').onclick = () => { if (live.on) return; resim(0); sel = null; renderCmd(); };
+  $('bReset').onclick = () => { if (live.on) return; if (live.replay) { Replay.seek(0); return; } resim(0); sel = null; renderCmd(); };
   const startSel = $('startSel');
   W.starts.forEach((s, i) => { const o = document.createElement('option'); o.value = i; o.textContent = s.name; startSel.appendChild(o); });
   startSel.onchange = () => { startIndex = +startSel.value; sel = null; markDirty(); if (live.on) Live.pushPlan(); else resim(G.t); home(); renderCmd(); };
@@ -838,8 +917,9 @@
   function frame(now) {
     requestAnimationFrame(frame);
     const dt = Math.min(0.25, (now - last) / 1000); last = now;
-    if (!live.on && playing && G.t < T_END) { acc += dt * speed; while (acc >= Sim.DT && G.t < T_END) { G.step(); acc -= Sim.DT; } }
-    if (!live.on && G.t >= T_END && playing) { playing = false; bPlay.textContent = '▶ 重播'; }
+    if (live.replay) { if (playing) Replay.seek(live.replay.t + dt * speed, true); }
+    else if (!live.on && playing && G.t < T_END) { acc += dt * speed; while (acc >= Sim.DT && G.t < T_END) { G.step(); acc -= Sim.DT; } }
+    if (!live.on && !live.replay && G.t >= T_END && playing) { playing = false; bPlay.textContent = '▶ 重播'; }
     if (now - lastPaint < (live.on ? 100 : 33)) return;
     lastPaint = now;
     const v = V();

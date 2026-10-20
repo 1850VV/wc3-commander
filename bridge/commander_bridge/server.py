@@ -9,7 +9,10 @@
   GET  /api/stream    server-sent events: {"type": "state"} snapshots, {"type": "log"} lines and
                       {"type": "plan"} when the bridge picks the plan itself (the console adopts it)
   GET  /api/feedback  the player's feedback on this game's arbiter decisions
-  POST /api/feedback  {event, rule, action, t, score: "good"|"bad", prio: "up"|"down", comment}: one more line
+  POST /api/feedback  {event, rule, action, t, score: "good"|"bad", prio: "up"|"down", comment, run?}: one more line
+                      (run: a recorded game's id, for feedback given while replaying it)
+  GET  /api/runs      recorded arbiter games, newest first
+  GET  /api/runs/<id> one of them: meta, final state (decisions, orders, game events, consistency), frames, feedback
   GET  /api/strategies          saved strategies (name, time, start, event count)
   GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
   PUT  /api/strategies/<name>   save the console plan in the body under that name
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import threading
 import time
 import traceback
@@ -36,7 +40,8 @@ from .arbiter import Arbiter
 from .engine import Commander
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNS = ROOT / "bridge" / "runs"  # one folder per arbiter game: state.json (decisions, orders) + feedback.jsonl
+RUNS = ROOT / "bridge" / "runs"  # one folder per arbiter game: meta, state (decisions, orders, game events), frames, feedback, replay.w3g
+RUN_NAME = re.compile(r"\d{8}-\d{6}-[a-z]+")
 WEB = ROOT / "web"
 MAX_BODY = 1 << 20
 _UNSET = object()  # distinguishes "no name in the request" from an explicit null (no current layout)
@@ -131,9 +136,49 @@ class Runner:
         """The rule-driven arbiter (docs/规则表-人族速矿二本.md) for a plan marked "arbiter", else the timeline.
         Each arbiter game gets its own folder under bridge/runs for its record and the player's feedback."""
         arbiter = bool(self.plan.get("arbiter"))
-        self.run_dir = RUNS / (time.strftime("%Y%m%d-%H%M%S") + "-" + (self.plan_name or "plan").replace(" · ", "-")) if arbiter else None
-        self._saved = 0.0
+        start = self.plan.get("start")
+        side = ("south", "west", "north", "east")[start] if isinstance(start, int) and 0 <= start < 4 else "plan"
+        self.run_dir = RUNS / (time.strftime("%Y%m%d-%H%M%S") + "-" + side) if arbiter else None  # ASCII: Warcraft writes the replay here
+        self._saved, self._next_frame = 0.0, 0.0
+        if arbiter:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            meta = {"name": self.plan_name, "start": start, "began": time.strftime("%Y-%m-%dT%H:%M:%S"), "backend": self.backend,
+                    "speed": self.speed_factor if self.launch else 1.0, "launch": self.launch}
+            (self.run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         return (Arbiter if arbiter else Commander)(self.data)
+
+    def record(self) -> None:
+        """Each tick of an arbiter game: one frame per game second for the console's replay, and the state now and then."""
+        if not getattr(self, "run_dir", None) or not self.state.get("arbiter"):
+            return
+        s = self.state
+        if s["t"] >= self._next_frame:
+            self._next_frame = int(s["t"]) + 1
+            frame = {"t": s["t"], "gold": s["gold"], "wood": s["wood"], "foodUsed": s["foodUsed"], "foodCap": s["foodCap"],
+                     "units": [{k: (round(v) if k in ("x", "y") else v) for k, v in u.items() if k in ("id", "type", "x", "y", "hidden", "task", "role")} for u in s["units"]],
+                     "buildings": [{k: (round(v, 2) if k == "progress" else round(v) if k in ("x", "y") else v) for k, v in b.items() if k in ("id", "type", "x", "y", "done", "progress")} for b in s["buildings"]]}
+            try:
+                with (self.run_dir / "frames.jsonl").open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(frame, ensure_ascii=False) + "\n")
+            except OSError:
+                traceback.print_exc()
+        self.persist()
+
+    def save_replay(self, rpc) -> None:
+        """Warcraft's own replay of this game, next to our record and in the game's Replay\\commander folder."""
+        if not getattr(self, "run_dir", None):
+            return
+        path = (self.run_dir / "replay.w3g").resolve()
+        try:
+            rpc.save_replay(str(path))
+            from wc3env.settings import settings
+            import shutil
+            target = settings().game_dir / "Replay" / "commander" / (self.run_dir.name + ".w3g")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            self.log(f"魔兽录像已保存：Replay\\commander\\{target.name}")
+        except Exception as exc:  # the record still stands without it
+            self.log(f"没能保存魔兽录像：{exc}", "error")
 
     def persist(self, force=False) -> None:
         """Write the arbiter game's state (decisions, order audit, events) every few seconds."""
@@ -142,25 +187,59 @@ class Runner:
         self._saved = time.time()
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
-            (self.run_dir / "state.json").write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
+            data = dict(self.state)
+            if hasattr(self.commander, "consistency"):
+                data["consistency"] = self.commander.consistency()
+                data["gameEvents"] = self.commander.game_events
+            (self.run_dir / "state.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except OSError:
             traceback.print_exc()
 
-    def add_feedback(self, item: dict) -> list:
+    def _run_folder(self, run: str | None):
+        """A recorded game's folder: the named one (replay) or the current game's."""
+        if run:
+            if not RUN_NAME.fullmatch(run) or not (RUNS / run).is_dir():
+                raise ValueError("没有这一局的记录")
+            return RUNS / run
         if not getattr(self, "run_dir", None):
             raise ValueError("这局不是仲裁器在打，没有决策可以评价")
-        item = {k: item.get(k) for k in ("event", "rule", "action", "t", "score", "prio", "comment")}
-        item["at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-        with (self.run_dir / "feedback.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
-        return self.feedback()
+        return self.run_dir
 
-    def feedback(self) -> list:
-        p = getattr(self, "run_dir", None)
-        if not p or not (p / "feedback.jsonl").is_file():
+    def add_feedback(self, item: dict) -> list:
+        d = self._run_folder(item.get("run"))
+        row = {k: item.get(k) for k in ("event", "rule", "action", "t", "score", "prio", "comment")}
+        row["at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        d.mkdir(parents=True, exist_ok=True)
+        with (d / "feedback.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return self.feedback(item.get("run"))
+
+    def feedback(self, run: str | None = None) -> list:
+        try:
+            p = self._run_folder(run) / "feedback.jsonl"
+        except ValueError:
             return []
-        return [json.loads(line) for line in (p / "feedback.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+        return [json.loads(line) for line in p.read_text(encoding="utf-8").splitlines() if line.strip()] if p.is_file() else []
+
+    @staticmethod
+    def runs() -> list[dict]:
+        out = []
+        for d in sorted((d for d in RUNS.iterdir() if d.is_dir() and RUN_NAME.fullmatch(d.name)), reverse=True) if RUNS.is_dir() else []:
+            try:
+                meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+            fb = d / "feedback.jsonl"
+            out.append({"id": d.name, **meta, "replay": (d / "replay.w3g").is_file(), "hasState": (d / "state.json").is_file(),
+                        "feedback": sum(1 for line in fb.read_text(encoding="utf-8").splitlines() if line.strip()) if fb.is_file() else 0})
+        return out
+
+    def load_run(self, run: str) -> dict:
+        d = self._run_folder(run)
+        state = json.loads((d / "state.json").read_text(encoding="utf-8")) if (d / "state.json").is_file() else {}
+        frames = [json.loads(line) for line in (d / "frames.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()] if (d / "frames.jsonl").is_file() else []
+        meta = json.loads((d / "meta.json").read_text(encoding="utf-8")) if (d / "meta.json").is_file() else {}
+        return {"id": run, "meta": meta, "state": state, "frames": frames, "feedback": self.feedback(run), "replay": (d / "replay.w3g").is_file()}
 
     def log(self, text: str, level: str = "info") -> None:
         for q in list(self.listeners):
@@ -235,7 +314,7 @@ class Runner:
                 with self.lock:
                     actions = self.commander.tick(obs)
                     self.state = self.commander.snapshot()
-                self.persist()
+                self.record()
                 batches = {slot: [] for slot in session.config.agent_slots}  # every agent slot needs a batch
                 batches[self.human_slot] = actions  # ours is the human's slot, not necessarily 0
                 if self.backend == "fake":
@@ -261,6 +340,8 @@ class Runner:
             self.running = False
             self.persist(force=True)
             if session is not None:
+                if self.backend == "wc3env":
+                    self.save_replay(session.game.rpc)
                 session.close()
 
 
@@ -351,7 +432,7 @@ class Runner:
             with self.lock:
                 actions = self.commander.tick(obs)
                 self.state = self.commander.snapshot()
-            self.persist()
+            self.record()
             obs, done, ack = game.step(actions)
             with self.lock:
                 self.commander.feedback(actions, ack.get("placements", []), ack.get("rejected", []))
@@ -363,6 +444,7 @@ class Runner:
                     self.state = self.commander.snapshot()
                 self.attached = None
                 self.persist(force=True)
+                self.save_replay(game.rpc)
                 self.log("本局结束，等你开下一局")
                 return
             time.sleep(max(0.0, 0.25 - (time.perf_counter() - tick_start)))
@@ -387,6 +469,7 @@ class Runner:
             try:
                 plan = strategies.load(name)["plan"]
                 plan["start"] = start  # the detected direction wins over a stale start saved in the layout
+                plan["arbiter"] = True  # played by the rule table (arbiter.py), recorded for replay in bridge/runs
             except (FileNotFoundError, ValueError):
                 why = f"找不到策略「{name}」"
         with self.lock:
@@ -448,6 +531,13 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/feedback":
             return self._json(200, {"ok": True, "feedback": self.runner.feedback(),
                                     "run": self.runner.run_dir.name if getattr(self.runner, "run_dir", None) else None})
+        if self.path == "/api/runs":
+            return self._json(200, {"ok": True, "runs": self.runner.runs()})
+        if self.path.startswith("/api/runs/"):
+            try:
+                return self._json(200, {"ok": True, **self.runner.load_run(unquote(self.path[len("/api/runs/"):]))})
+            except ValueError as exc:
+                return self._json(404, {"ok": False, "error": str(exc)})
         if self.path == "/api/strategies":
             return self._json(200, {"ok": True, "strategies": strategies.list_all()})
         if self.path.startswith("/api/strategies/"):

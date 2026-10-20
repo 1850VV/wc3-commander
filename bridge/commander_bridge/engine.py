@@ -928,7 +928,7 @@ class Commander:
             job = self.jobs.get(e["id"])
             if job and e["kind"] == "upgrade" and job["state"] == "ordered" and job["producer"] == ev["unit_id"]:
                 job.update(state="upgrading", started=self.t)
-                self.rt[e["id"]].update(status="running", trainStart=self.t, note="升级中")
+                self.rt[e["id"]].update(status="running", trainStart=self.t, note="升级中", gameUnit=ev["unit_id"])
                 return
 
     def _finish_upgrade(self, ev):
@@ -944,7 +944,7 @@ class Commander:
             job = self.jobs.get(e["id"])
             if job and e["kind"] == "train" and job["state"] == "ordered" and job["producer"] == ev["unit_id"] and e.get("utype", "hpea") == ev["type_id"]:
                 job.update(state="training", started=self.t)
-                self.rt[e["id"]].update(status="running", trainStart=self.t, note="训练中")
+                self.rt[e["id"]].update(status="running", trainStart=self.t, note="训练中", gameUnit=ev["unit_id"])
                 return
 
     def _finish_training(self, ev):
@@ -955,7 +955,7 @@ class Commander:
                 cid = self.cid[ev["trained_id"]]
                 then = e.get("then") or "gold"
                 name = self.eco[ev["type_id"]]["name"]
-                self.rt[e["id"]].update(status="done", aEnd=self.t, note=f"{name}{cid} 出生" + (f" → {'分矿采金' if then == 'natural' else RES[then]}" if ev["type_id"] == "hpea" else ""))
+                self.rt[e["id"]].update(status="done", aEnd=self.t, trained=ev["trained_id"], note=f"{name}{cid} 出生" + (f" → {'分矿采金' if then == 'natural' else RES[then]}" if ev["type_id"] == "hpea" else ""))
                 if ev["type_id"] == "hpea":
                     self.roles[ev["trained_id"]] = "gold" if then == "natural" else then  # ordered once it is observed on the map
                     if then == "natural":

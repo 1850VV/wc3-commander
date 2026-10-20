@@ -82,6 +82,16 @@ class ArbiterOpeningTest(unittest.TestCase):
         self.assertIn(altar["id"], snap["orders"]["byEvent"])
 
 
+class ConsistencyTest(unittest.TestCase):
+    def test_the_games_events_match_the_decisions(self):
+        c, _ = play(240)
+        r = c.consistency()
+        self.assertGreater(r["matched"], 10)
+        self.assertEqual(r["gameOnly"], [], "the game built or trained something no decision asked for")
+        kinds = {g["kind"] for g in c.game_events}
+        self.assertTrue({"construct_start", "construct_finish", "train_start", "train_finish"} <= kinds)
+
+
 class FeedbackTest(unittest.TestCase):
     def test_feedback_is_kept_with_the_game(self):
         import tempfile
@@ -96,10 +106,25 @@ class FeedbackTest(unittest.TestCase):
                 out = r.add_feedback({"event": "r2", "rule": "B2", "action": "建造 国王祭坛", "t": 0, "score": "bad", "comment": "太晚"})
                 self.assertEqual((out[-1]["rule"], out[-1]["score"], out[-1]["comment"]), ("B2", "bad", "太晚"))
                 self.assertTrue((r.run_dir / "feedback.jsonl").is_file())
+                run = r.run_dir.name
+                r.state = {"arbiter": True, "t": 1.0, "gold": 500, "wood": 150, "foodUsed": 5, "foodCap": 12,
+                           "units": [{"id": 1, "type": "hpea", "x": 1.4, "y": 2.6, "role": "gold", "task": "采金", "extra": 1}], "buildings": []}
+                r.record()
+                r.persist(force=True)
+                listed = r.runs()
+                self.assertEqual(listed[0]["id"], run)
+                self.assertEqual(listed[0]["feedback"], 1)
+                got = r.load_run(run)
+                self.assertEqual(got["frames"][0]["units"][0], {"id": 1, "type": "hpea", "x": 1, "y": 3, "role": "gold", "task": "采金"})
+                self.assertEqual(got["feedback"][0]["comment"], "太晚")
+                self.assertIn("consistency", got["state"])
                 r.plan = {"groups": []}
                 r.commander = r.new_commander()
                 with self.assertRaises(ValueError):  # a timeline game has no decisions to rate
                     r.add_feedback({"event": "x"})
+                self.assertEqual(r.add_feedback({"event": "r2", "run": run, "comment": "回放时补的"})[-1]["comment"], "回放时补的")
+                with self.assertRaises(ValueError):
+                    r.load_run("../etc")
             finally:
                 server.RUNS = saved
 

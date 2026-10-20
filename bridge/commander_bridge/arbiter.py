@@ -39,6 +39,54 @@ class Arbiter(Commander):
         self._n = 0
         self._cur_prio = 0
         self._last_role: dict[int, str] = {}
+        self.game_events: list[dict] = []   # what the game itself reported, to check our record against
+
+    def _ingest(self, obs: dict) -> None:
+        for ev in obs.get("events", []):
+            self.game_events.append({"t": self.t, **{k: ev[k] for k in ("kind", "unit_id", "type_id", "trained_id", "summoned_id", "ability_id") if k in ev}})
+        super()._ingest(obs)
+
+    # ---- does our record match the game's? ------------------------------------------------------
+    CHECKED = {"construct_start": "开工", "construct_finish": "完工", "train_start": "开始训练", "train_finish": "训练完成",
+               "upgrade_start": "开始升级", "upgrade_finish": "升级完成"}
+
+    def consistency(self) -> dict:
+        """Match every building/training/upgrade the game reported to the decision that caused it, and
+        every decision that gave orders to something the game reported. Either side left over is a
+        disagreement between the commander's timeline and what actually happened."""
+        rt = self.rt
+        bid = {r.get("bid"): eid for eid, r in rt.items() if r.get("bid")}
+        trained = {r.get("trained"): eid for eid, r in rt.items() if r.get("trained")}
+        rule = {e["id"]: e.get("rule") for e in self.events}
+        name = lambda t: self.eco.get(t, {}).get("name", t or "?")
+        matched, game_only, deaths = [], [], []
+        for ge in self.game_events:
+            k, eid = ge["kind"], None
+            if k in ("construct_start", "construct_finish"):
+                eid = bid.get("u%d" % ge.get("unit_id", 0))
+            elif k in ("train_start", "upgrade_start"):
+                eid = next((i for i, r in rt.items() if r.get("gameUnit") == ge.get("unit_id") and r.get("trainStart") is not None
+                            and abs(r["trainStart"] - ge["t"]) < 1.0), None)
+            elif k == "train_finish":
+                eid = trained.get(ge.get("trained_id"))
+            elif k == "upgrade_finish":
+                eid = next((i for i, r in rt.items() if r.get("gameUnit") == ge.get("unit_id") and r.get("aEnd") is not None
+                            and abs(r["aEnd"] - ge["t"]) < 1.0), None)
+            elif k == "death":
+                deaths.append({"t": ge["t"], "what": name(ge.get("type_id"))})
+                continue
+            else:
+                continue
+            row = {"t": ge["t"], "what": self.CHECKED[k] + " " + name(ge.get("type_id")), "event": eid, "rule": rule.get(eid)}
+            (matched if eid else game_only).append(row)
+        ours_only = []
+        for e in self.events:
+            r = rt[e["id"]]
+            confirm = {"build": "bStart", "train": "trainStart", "upgrade": "trainStart"}.get(e["kind"])
+            if confirm and r.get("ordered") is not None and r.get(confirm) is None and r.get("status") != "done":
+                ours_only.append({"t": r["ordered"], "what": e["name"], "event": e["id"], "rule": e.get("rule"),
+                                  "why": "下了命令，游戏里还没有发生" + ("（被拒绝：%s）" % r["rejected"] if r.get("rejected") else "")})
+        return {"matched": len(matched), "gameOnly": game_only, "oursOnly": ours_only, "deaths": deaths}
 
     # ---- plan: only its sites ------------------------------------------------------------------
     def set_plan(self, plan: dict) -> None:
