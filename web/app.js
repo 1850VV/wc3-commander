@@ -61,6 +61,7 @@
   let vCache = null, vStamp = -1;
   function V() {
     if (live.on && live.state) return live.view;
+    if (editingScript()) return editView();
     if (live.replay) return Replay.view();
     if (vCache && vStamp === G.t && vCache.g === G) return vCache;
     const trainOf = b => { const Q = G.queues.get(b.id); return Q && Q.cur ? {name: (Q.cur.ev.kind === 'upgrade' ? '升级为' : '') + name(Q.cur.ev.to || Q.cur.ev.utype || 'hpea'), left: Q.cur.left, total: Q.cur.total, queue: Q.q.length} : (Q && Q.q.length ? {name: '', left: 0, total: 0, queue: Q.q.length} : null); };
@@ -72,6 +73,19 @@
       treeAlive: k => G.treeWood[k] > 0,
     };
     vStamp = G.t; return vCache;
+  }
+  /* the tactic script's 编排: the start as the game begins (hall, peasants, mines), no plan running */
+  const editingScript = () => !!(window.ScriptEditor && ScriptEditor.editing());
+  let evKey = -1, evView = null;
+  function editView() {
+    if (evKey !== startIndex) {
+      evKey = startIndex; const g = new Sim.Game(W, {start: startIndex, events: []});
+      evView = {t: 0, gold: g.gold, wood: g.wood, foodUsed: g.foodUsed, foodCap: g.foodCap, counts: g.counts(), mine: {x: g.mine.x, y: g.mine.y, gold: g.mineGoldLeft()}, hall: g.hall,
+        units: g.units.map(u => ({id: u.id, type: u.type, x: u.x, y: u.y, hidden: false, carry: null, amt: 0, task: '开局', dest: null})),
+        buildings: g.buildings.map(b => ({id: b.id, type: b.type, x: b.x, y: b.y, tex: b.tex, done: true, progress: 1, train: null})),
+        treeAlive: k => g.treeWood[k] > 0};
+    }
+    return evView;
   }
   function taskText(u) {
     const t = u.task;
@@ -148,7 +162,7 @@
   const siteRect = e => W.rectOf(e.site[0], e.site[1], W.buildingTex(e.btype));
   const siteBody = e => W.bodyRect(e.site[0], e.site[1], W.buildingTex(e.btype));
   const inRect = (r, x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
-  function movable(e) { const rt = e.rt || {}; return !live.arbMode && e.kind === 'build' && !e.resume && !!e.site && !rt.bid && rt.status !== 'done'; }
+  function movable(e) { const rt = e.rt || {}; return !live.arbMode && !editingScript() && e.kind === 'build' && !e.resume && !!e.site && !rt.bid && rt.status !== 'done'; }
   function siteAt(wx, wy) { return allEvents().find(e => movable(e) && inRect(siteRect(e), wx, wy)); }
   function upcomingSites(t) { return allEvents().filter(e => movable(e) && e.start <= t + UPCOMING).sort((a, b) => a.start - b.start || a.seq - b.seq); }
   function siteGhost(btype, wx, wy, exceptId) {
@@ -169,6 +183,7 @@
   // once known), on an otherwise empty map around the hall. Cached until the layout changes.
   let wallKey = '', wallRes = null, wallBusy = false;
   function layoutSites() {
+    if (editingScript()) return ScriptEditor.sites().filter(st => !st.auto).map(st => ({type: st.btype, x: st.x, y: st.y})); // the script's layout
     return allEvents().filter(e => e.kind === 'build' && !e.resume && e.site)
       .map(e => { const p = (e.rt && e.rt.builtAt) || e.site; return {type: e.btype, x: p[0], y: p[1]}; });
   }
@@ -185,6 +200,7 @@
   }
   function autoWall() {
     if (wallBusy) return;
+    if (editingScript()) { say('编排战术脚本时，封家靠在沙盘上拖工地（上面的封家结果按脚本的工地算）；「自动封家」只调整事件时间轴里的计划。', true); return; }
     wallBusy = true; say('正在计算封家布局…（几秒钟）');
     setTimeout(() => {
       try {
@@ -238,7 +254,7 @@
     // the dotted ring around it is the unbuildable part of the pathing texture (units can still walk there)
     const soon = new Set(upcomingSites(v.t).map(e => e.id)), dragging = drag && drag.site;
     for (const e of allEvents()) {
-      if (e.kind !== 'build' || !e.site || (e.rt && e.rt.bid) || live.arbMode) continue;
+      if (e.kind !== 'build' || !e.site || (e.rt && e.rt.bid) || live.arbMode || editingScript()) continue;
       const [fx, fy, fw, fh] = rectScreen(siteRect(e)), [x, y, w, h] = rectScreen(siteBody(e));
       const picked = sel && sel.type === 'event' && sel.id === e.id, due = soon.has(e.id);
       ctx.globalAlpha = dragging === e && drag.ghost ? 0.35 : 1;
@@ -299,7 +315,15 @@
    * where the script will build it, solid = ordered in the game shown and not started yet */
   function drawScriptSites(ls) {
     const now = performance.now();
+    const pl = ScriptEditor.placing();
+    if (pl && placeGhost) {
+      const [x, y, w, h] = rectScreen(W.bodyRect(placeGhost.pos[0], placeGhost.pos[1], W.buildingTex(pl.btype)));
+      ctx.fillStyle = placeGhost.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)'; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = placeGhost.ok ? '#7fb069' : '#d0584a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+      if (!placeGhost.ok && placeGhost.why) label(placeGhost.why, x + w / 2, y - 10, ls * .9, '#f0a090');
+    }
     for (const st of ScriptEditor.sites()) {
+      if (st.auto) continue;
       const moving = drag && drag.ss && drag.ss.l === st.l && drag.ss.s === st.s && drag.ghost;
       const at = moving ? drag.ghost.pos : [st.x, st.y], tex = W.buildingTex(st.btype);
       const [x, y, w, h] = rectScreen(W.bodyRect(at[0], at[1], tex));
@@ -316,18 +340,18 @@
   }
   /* can the script's building stand here? Checked on the bare map of this start, against the
    * buildings of the game shown and the script's other sites (the offline plan has nothing to do with it) */
-  let bareKey = -1, bare = null;
+  let bareKey = -1, bare = null, placeGhost = null;
   function scriptGhost(ss, wx, wy) {
     if (bareKey !== startIndex) { bareKey = startIndex; bare = new Sim.Game(W, {start: startIndex, events: []}); }
     const pos = W.snap(ss.btype, wx, wy);
-    const others = ScriptEditor.sites().filter(x => x.l !== ss.l || x.s !== ss.s).map(x => ({type: x.btype, x: x.x, y: x.y}))
+    const others = ScriptEditor.sites().filter(x => !x.auto && (x.l !== ss.l || x.s !== ss.s)).map(x => ({type: x.btype, x: x.x, y: x.y}))
       .concat(V().buildings.filter(b => !/^(htow|hkee|hcas)$/.test(b.type) || Math.hypot(b.x - bare.hall.x, b.y - bare.hall.y) > 50).map(b => ({type: b.type, x: b.x, y: b.y})));
     const chk = bare.canPlace(ss.btype, pos[0], pos[1], others, 0);
     return {btype: ss.btype, pos, ok: chk.ok, why: chk.why};
   }
   function scriptSiteAt(wx, wy) {
     if (!window.ScriptEditor || !ScriptEditor.onMap()) return null;
-    return ScriptEditor.sites().find(st => inRect(W.rectOf(st.x, st.y, W.buildingTex(st.btype)), wx, wy)) || null;
+    return ScriptEditor.sites().find(st => !st.auto && inRect(W.rectOf(st.x, st.y, W.buildingTex(st.btype)), wx, wy)) || null;
   }
   function drawScriptMarkers(ls) {
     const onSites = new Set(ScriptEditor.sites().map(st => st.pos));
@@ -366,6 +390,8 @@
   cv.addEventListener('pointermove', e => {
     const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
     if (placing) updateGhost(...toWorld(sx, sy));
+    const spl = window.ScriptEditor && ScriptEditor.placing();
+    placeGhost = spl ? scriptGhost(spl, ...toWorld(sx, sy)) : null;
     if (!drag) { if (!placing) cv.style.cursor = siteAt(...toWorld(sx, sy)) || (!live.on && scriptSiteAt(...toWorld(sx, sy))) ? 'move' : ''; return; }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 4) drag.moved = true;
@@ -393,6 +419,11 @@
     }
     if (d && d.mk) { if (d.moved && d.mkPos) ScriptEditor.moveMarker(d.mk.name, ...d.mkPos); else ScriptEditor.selectPos(d.mk.name); return; }
     if (!click) return;
+    if (window.ScriptEditor && ScriptEditor.placing()) { // a click puts the script's automatic building here
+      const g = scriptGhost(ScriptEditor.placing(), wx, wy);
+      if (!g.ok) { say('这里不能放：' + g.why, true); return; }
+      placeGhost = null; ScriptEditor.placed(g.pos); return;
+    }
     if (placing) { updateGhost(wx, wy); confirmPlace(); return; }
     pick(wx, wy);
   });
@@ -594,6 +625,7 @@
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); return; }
     if (window.ScriptEditor && ScriptEditor.active()) return; // its own keys (Delete, Ctrl+Z) act on the script's cards
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && lastDel) { e.preventDefault(); undoDel(); return; }
+    if (e.key === 'Escape' && window.ScriptEditor && ScriptEditor.placing()) { ScriptEditor.cancelPlacing(); placeGhost = null; return; }
     if (e.key === 'Escape') { if (placing) stopPlace(); else { sel = null; renderCmd(); markSel(); } return; }
     const k = e.key.length === 1 ? e.key.toUpperCase() : ({ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Delete: 'X'})[e.key];
     const btn = k && [...cmdEl.querySelectorAll('button')].find(b => b.dataset.key === k); if (btn) { e.preventDefault(); btn.click(); }
@@ -1022,7 +1054,8 @@
   const startSel = $('startSel');
   W.starts.forEach((s, i) => { const o = document.createElement('option'); o.value = i; o.textContent = s.name; startSel.appendChild(o); });
   startSel.onchange = () => {
-    if (live.replay && live.replay.preview && !live.on) { ScriptEditor.preview(+startSel.value); return; } // the script on that start
+    if (live.replay && live.replay.preview && !live.on) { ScriptEditor.preview(+startSel.value, '', ScriptEditor.active()); return; } // the script on that start
+    if (editingScript()) { startIndex = +startSel.value; home(); ScriptEditor.preview(startIndex); return; } // 编排 on that start; the timeline's preview follows
     startIndex = +startSel.value; sel = null; markDirty(); if (live.on) Live.pushPlan(); else resim(G.t); home(); renderCmd(); };
   $('foot').textContent = `地图与数值：失落神庙通行网格 ${W.W}×${W.H}、${W.trees.length} 棵树、${W.mines.length} 座金矿，单位造价与工期取自 1.27a 数据（来自 warcraft-commander 提取）。` +
     `模拟假设：每趟采金/伐木 ${Sim.TUNING.carry}，金矿每次进一个农民、矿内 ${Sim.TUNING.mineSeconds} 秒（未校准），伐木每下 ${Sim.TUNING.chopSeconds} 秒，每棵树 ${Sim.TUNING.treeWood} 木；不模拟单位碰撞和战斗。`;
@@ -1043,8 +1076,11 @@
     $('rGold').textContent = Math.floor(v.gold); $('rWood').textContent = Math.floor(v.wood); $('rFood').textContent = v.foodUsed + '/' + v.foodCap; $('clock').textContent = fmt(v.t);
   }
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
-  if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: j => { // a new preview keeps the moment being looked at
-      const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null); if (keep != null) Replay.seek(keep); }, view: () => V(),
+  if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
+      const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null);
+      if (fromStart) { Replay.seek(0); playing = true; bPlay.textContent = '❚❚ 暂停'; } else if (keep != null) Replay.seek(keep); },
+    exitPreview: () => Replay.exit(true),
+    setMode: t => { $('modeTag').textContent = t; $('modeTag').classList.toggle('live', t !== '离线预演'); }, view: () => V(),
     pickUnit: id => { const u = V().units.find(x => x.id === id); sel = {type: 'unit', id}; if (u) lookAt(u.x, u.y); renderCmd(); markSel(); },
     pickBuilding: id => { const b = V().buildings.find(x => x.id === id); sel = {type: 'building', id}; if (b) lookAt(b.x, b.y); renderCmd(); markSel(); },
     showScript: () => { const b = document.querySelector('.se-tab[data-tab="script"]'); if (b) b.click(); }, groups: () => groups, startIndex: () => startIndex, startName: i => W.starts[i].name,

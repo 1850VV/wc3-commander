@@ -272,3 +272,4 @@ button.chip-step{cursor:pointer}
 .row.child .lab .x{margin-left:auto;flex:none}
 .msg .link{padding:0 2px}
 .row.child .lab>span:nth-child(2){overflow:hidden;text-overflow:ellipsis;min-width:0}
+.se-mode{font-size:12px;color:var(--ok);border:1px solid #3f6a35;border-radius:10px;padding:1px 8px}

@@ -105,11 +105,11 @@
     let j; try { j = await api_('PUT', '/api/script', {text}); } catch (_) { api.say('没保存：连不上本地服务', true); return; }
     if (!j.saved) { api.say('脚本有错，没有保存：' + (j.errors || [])[0], true); check(); return; }
     S.loadedText = j.text; S.saved = true; render();
-    preview(api.startIndex(), '已保存。');
+    preview(api.startIndex(), '已保存。', S.demo);
   }
   /* play the script (as edited, saved or not) on the fake world; the console opens the result like a
    * replay, so the event timeline, the map and these cards all show it */
-  async function preview(start, lead = '') {
+  async function preview(start, lead = '', demo = false) {
     if (S.busy || !M) return;
     if (api.live().on) { api.say('连着游戏时不能预演，先点「断开」', true); return; }
     start = start == null ? api.startIndex() : start;
@@ -122,12 +122,32 @@
     if (!j.ok) { render(); api.say('预演没跑成：' + (j.error || (j.errors || [])[0] || '未知原因'), true); return; }
     if (api.live().on) { render(); return; } // a game started meanwhile
     S.previewMap = map; S.previewText = text; S.timingKey = ''; S.movedPos.clear(); S.moved.clear();
-    if (S.active) S.view = 'time';
+    S.lastPreview = j;
+    const dead = (j.script.lanes || []).filter(l => l.dead).map(l => l.label);
+    const tail = '假游戏的采集和战斗数值是估计的，时间只作参考。' + (dead.length ? ` 阵亡：${dead.join('、')}` : '');
+    if (S.active && !demo) { // asked from the script tab: stay in 编排, keep it for 「预演」 and the timeline tab
+      render(); api.say(lead + `已按新脚本在后台预演了${api.startName(start)}；点「预演」在沙盘上演示。`);
+      return;
+    }
+    if (S.active) { // 预演: the sandbox plays the script from 0:00
+      S.demo = true; S.view = 'time';
+      api.openPreview(j, true);
+      render();
+      api.say(lead + `演示${api.startName(start)}：沙盘从 0:00 播放这份脚本，卡片跟着时间变（拖时间轴可以跳）。点「回到编排」继续拖工地、改卡片。` + tail);
+      return;
+    }
     api.openPreview(j);
     render();
-    const dead = (j.script.lanes || []).filter(l => l.dead).map(l => l.label);
-    api.say(lead + `按战术脚本预演了${api.startName(start)}（到 ${api.fmt(j.t)}）：事件时间轴按脚本每一行分组，地图和资源跟着时间走，拖时间轴或点「播放」看过程；` +
-      `「战术脚本」里的卡片排在各自开始的时刻。假游戏的采集和战斗数值是估计的，时间只作参考。` + (dead.length ? ` 阵亡：${dead.join('、')}` : ''));
+    api.say(lead + `按战术脚本预演了${api.startName(start)}（到 ${api.fmt(j.t)}）：事件时间轴按脚本每一行分组，地图和资源跟着时间走，拖时间轴或点「播放」看过程。` + tail);
+  }
+  /* 编排 (the script tab, no demo): the sandbox shows the start as it begins and every site the script
+   * builds, all draggable; nothing plays until 「预演」 */
+  function editing() { return !!M && S.active && !S.demo && !api.live().on; }
+  function backToEdit() {
+    S.demo = false; S.placing = null; S.timingKey = '';
+    if (api.live().replay && api.live().replay.preview) api.exitPreview();
+    api.setMode('战术脚本 · 编排');
+    render(); api.say('回到编排：沙盘上是开局和脚本里的全部工地，拖动改位置；改完点「预演」再看。');
   }
   /* the plan that plays this script on a start: that start's layout + the text */
   async function planFor(start) {
@@ -177,6 +197,8 @@
     if (L.on && L.state && L.state.script) return {kind: 'live', T: L.state.t, decisions: L.state.decisions || [], script: L.state.script, label: '实机'};
     if (L.replay && L.replay.state && L.replay.state.script) return {kind: L.replay.preview ? 'preview' : 'replay', T: L.replay.t, decisions: L.replay.state.decisions || [],
       script: L.replay.state.script, label: L.replay.preview ? '预演 · ' + api.startName(L.replay.state.start) : '回放', end: L.replay.end};
+    const P = S.lastPreview; // 编排: the cards still show when each step began in the last preview
+    if (P) return {kind: 'preview', T: P.t, decisions: P.decisions, script: P.script, label: '上次预演 · ' + api.startName(P.state.start), end: P.t};
     return null;
   }
   function timing() {
@@ -275,7 +297,7 @@
   function markers() {
     if (!M) return [];
     const src = source(), start = api.startIndex();
-    const fromGame = src && src.script.positions && (src.kind === 'live' || api.live().replay.state.start === start) ? src.script.positions : null;
+    const fromGame = !editing() && src && src.script.positions && (src.kind === 'live' || api.live().replay.state.start === start) ? src.script.positions : null;
     const approx = approxPositions();
     return M.positions.map(p => {
       const g = fromGame && fromGame[p.name], a = approx[p.name];
@@ -293,7 +315,7 @@
   }
   function sites() {
     if (!M) return [];
-    const run = runEvents(), mk = Object.fromEntries(markers().map(m => [m.name, m])), out = [];
+    const run = editing() ? null : runEvents(), mk = Object.fromEntries(markers().map(m => [m.name, m])), out = [];
     M.lanes.forEach((ln, l) => {
       const labels = laneKind(ln.head) === 'peasant' ? laneCids(ln.head).map(c => '农民' + c) : [];
       ln.steps.forEach((st, s) => {
@@ -306,7 +328,7 @@
           const p = r.rt.builtAt || (o.pos === '自动' ? null : r.d.at || r.d.site); // @自动: the game picks the spot, known once built
           if (p && !(o.pos && S.movedPos.has(o.pos))) { x = p[0]; y = p[1]; exact = !!r.d.at; state = r.d.start <= run.T ? 'ordered' : 'plan'; }
         }
-        if (x == null) { const m = o.pos && mk[o.pos]; if (!m) return; x = m.x; y = m.y; exact = m.exact; }
+        if (x == null) { const m = o.pos && mk[o.pos]; if (!m) { if (editing() && o.pos === '自动' || !o.pos) out.push({l, s, btype, auto: true, label: (labels[0] || ln.head) + ' · ' + what}); return; } x = m.x; y = m.y; exact = m.exact; }
         out.push({l, s, btype, x, y, exact, state, pos: o.pos, label: (labels[0] || ln.head) + (labels.length > 1 ? '…' : '') + ' · ' + what + (o.pos && o.pos !== '自动' ? ' @' + o.pos : ''),
           sel: !!(S.sel && S.sel.l === l && S.sel.s === s)});
       });
@@ -318,6 +340,11 @@
     const ln = M.lanes[l], kind = laneKind(ln.head), v = api.view();
     if (s != null) {
       const site = sites().find(x => x.l === l && x.s === s);
+      if (site && site.auto) {
+        S.placing = {l, s, btype: site.btype};
+        api.say(`「${site.label}」是自动选址（游戏自己找地方）。在沙盘上点一下给它定位置；按 Esc 取消。`);
+        return;
+      }
       if (site) { api.focus(site.x, site.y); return; }
       const o = splitStep(ln.steps[s].raw), mk = o.pos && markers().find(m => m.name === o.pos);
       if (mk && !/^(采金|伐木)$/.test(o.act)) { S.selPos = mk.name; api.focus(mk.x, mk.y); return; }
@@ -332,7 +359,7 @@
     const tag = ln.head.startsWith('#') ? ln.head.slice(1) : null;
     if (tag) { // the building that step named
       for (const [i, x] of M.lanes.entries()) for (const [k, st] of x.steps.entries()) if (splitStep(st.raw).tag === tag) {
-        const site = sites().find(q => q.l === i && q.s === k); if (site) { api.focus(site.x, site.y); return; }
+        const site = sites().find(q => q.l === i && q.s === k); if (site && !site.auto) { api.focus(site.x, site.y); return; }
       }
     }
     const types = tag ? [] : BT[ln.head] === 'htow' ? ['htow', 'hkee', 'hcas'] : [BT[ln.head]];
@@ -384,8 +411,9 @@
       }, `${M.lanes[l].head} 的${what}放在 ${x},${y}，新建位置「${nm}」（坐标写死，只对${api.startName(api.startIndex())}准确）`);
     }
     S.moved.add(l + '|' + s);
+    if (!S.demo) return; // 编排: the player previews when ready
     const lead = document.getElementById('msg') ? document.getElementById('msg').textContent + ' ' : '';
-    clearTimeout(S.repreview); S.repreview = setTimeout(() => preview(api.startIndex(), lead), 1500); // then see the game play it
+    clearTimeout(S.repreview); S.repreview = setTimeout(() => preview(api.startIndex(), lead, true), 1500); // a demo replays with the move
   }
   function onMap() { const L = api.live(); return !!M && (S.active || (L.replay && L.replay.preview) || (L.on && L.state && L.state.script)); }
 
@@ -421,7 +449,8 @@
     const errN = S.errors.general.length + Object.keys(S.errors.lane).length + Object.keys(S.errors.pos).length + Object.keys(S.errors.res).length;
     let h = `<div class="se-top"><div class="se-bar">
       <span class="seg"><button type="button" data-view="flow" class="${S.view === 'flow' ? 'on' : ''}">顺序</button><button type="button" data-view="time" class="${S.view === 'time' ? 'on' : ''}" ${T ? '' : 'disabled title="先点「预演」，或连接游戏 / 打开回放"'}>时间</button></span>
-      <button type="button" class="btn" data-act="preview" ${S.busy ? 'disabled' : ''}>${S.busy ? '预演中…' : '预演（' + esc(api.startName(api.startIndex())) + '）'}</button>
+      <button type="button" class="btn ${S.demo ? '' : 'on'}" data-act="preview" ${S.busy ? 'disabled' : ''} title="在假游戏里跑这份脚本，沙盘从 0:00 演示">${S.busy ? '预演中…' : (S.demo ? '重新预演' : '▶ 预演') + '（' + esc(api.startName(api.startIndex())) + '）'}</button>
+      ${S.demo ? '<button type="button" class="btn on" data-act="edit" title="停止演示，回到可以拖工地的编排状态">回到编排</button>' : '<span class="se-mode">编排中：沙盘上的工地可以拖</span>'}
       <button type="button" class="btn ${S.saved ? '' : 'on'}" data-act="save">保存</button>
       <button type="button" class="btn" data-act="undo" ${S.undo.length ? '' : 'disabled'}>撤销</button>
       <button type="button" class="btn ${S.showText ? 'on' : ''}" data-act="text">文本</button>
@@ -590,7 +619,8 @@
     }
     const sel = S.sel, ln = sel && M.lanes[sel.l];
     switch (act) {
-      case 'preview': preview(api.startIndex()); break;
+      case 'preview': preview(api.startIndex(), '', true); break;
+      case 'edit': backToEdit(); break;
       case 'save': save(); break;
       case 'undo': undo(); break;
       case 'text': S.showText = !S.showText; render(); break;
@@ -762,7 +792,18 @@
     S.active = on; api.tl.classList.toggle('script-mode', on);
     api.tl.querySelectorAll('.se-tab').forEach(b => b.classList.toggle('on', (b.dataset.tab === 'script') === on));
     root.hidden = !on;
-    if (on) render();
+    const L = api.live();
+    if (on) { // into 编排: no demo running on the sandbox
+      S.demo = false; S.timingKey = '';
+      if (L.replay && L.replay.preview) api.exitPreview();
+      if (!L.on && !L.replay) api.setMode('战术脚本 · 编排');
+      render();
+      if (!L.on) api.say('编排中：沙盘上是开局和脚本里的全部工地，可以直接拖；点卡片定位；点「预演」看演示。');
+    } else { // the timeline shows the script's last preview
+      S.placing = null;
+      if (S.lastPreview && !L.on && !L.replay) api.openPreview(S.lastPreview);
+      else if (!L.on && !L.replay) api.setMode('离线预演');
+    }
   }
   async function init(a) {
     api = a;
@@ -796,6 +837,8 @@
     if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, markerAt, moveMarker, selectPos, active: () => S.active,
+  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing,
+    placing: () => S.placing, cancelPlacing: () => { if (S.placing) { S.placing = null; api.say('已取消放置'); } },
+    placed: (pos) => { const p = S.placing; S.placing = null; if (p) moveSite(p.l, p.s, pos); }, markerAt, moveMarker, selectPos, active: () => S.active,
     _test: {splitStep, joinStep, laneKind, laneCids, toText: () => toText(), model: () => M}};
 })();
