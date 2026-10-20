@@ -288,6 +288,14 @@ class Commander:
         return [e for e in self.events if e.get("kind") == "build" and e.get("near") == "natural"
                 and self.rt[e["id"]]["status"] in ("pending", "waiting")]
 
+    def crew_post(self):
+        """Where the natural's crew waits: beside the natural's mine, on the side towards the main base."""
+        if not self.natural_at or not self.hall:
+            return None
+        m = {"x": self.natural_at[0], "y": self.natural_at[1]}
+        d = dist(m, self.hall) or 1
+        return (round(m["x"] + (self.hall["x"] - m["x"]) / d * 500), round(m["y"] + (self.hall["y"] - m["y"]) / d * 500))
+
     def _crew_wanted(self, u) -> bool:
         """A militia turning back at the natural stays as crew while the expansion is still to be built."""
         return bool(self.natural_at) and math.hypot(u["x"] - self.natural_at[0], u["y"] - self.natural_at[1]) < 1500 \
@@ -581,6 +589,12 @@ class Commander:
                 pct = min(99, int((self.t - start) / max(1.0, b.get("state_seconds") or c["time"]) * 100))
                 worker = next((u for u in self.units() if u["unit_id"] == job["worker"]), None)
                 building = worker and worker.get("order") and worker["order"].get("target_id") == b["unit_id"]
+                if worker and worker.get("order") is None and self.t - self.last_order.get(worker["unit_id"], -99) > 3 and b.get("state") == "constructing":
+                    # a human building stops without its builder: send him back to it (the player saw a farm left at 99%)
+                    self._in(("T3", e["id"]), lambda: self.order(worker["unit_id"], "smart", target_id=b["unit_id"]))
+                    rt["resumed"] = rt.get("resumed", 0) + 1
+                    rt["note"] = f"建造中 {pct}%：农民停下了，已叫回来继续建"
+                    return
                 rt["note"] = f"建造中 {pct}%" if building or worker is None else f"可能暂停 {pct}%：农民没在建造"
         elif e["kind"] == "upgrade":
             self._advance_upgrade(e, job, rt)
@@ -884,8 +898,12 @@ class Commander:
                     self.roles.pop(uid, None)
                     if self._crew_wanted(u):
                         # The player's order: the five stay at the natural and wait there to build the
-                        # hall and the tower; they do not walk home to their old jobs.
+                        # hall and the tower; they do not walk home to their old jobs. Warcraft sends a
+                        # militia that turns back to his old work, so he is told to stay.
                         self.roles[uid] = "crew"
+                        p = self.crew_post()
+                        if p:
+                            self.order(uid, "move", x=p[0], y=p[1])
             elif uid in job["reverted"] and self.t - job["reverted"][uid] >= 3 and uid not in self.roles and u:  # not crew
                 self.harvest(u, prev or "gold", self.mine_of.get(uid, "main"))  # nobody needed him: old job
         if not job["seen"] and self.t - rt["aStart"] > 3:

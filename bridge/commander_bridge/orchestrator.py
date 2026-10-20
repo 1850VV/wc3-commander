@@ -13,6 +13,10 @@ from .arbiter import Arbiter
 from .engine import HALLS, dist
 from .orchestration import parse
 
+
+def math_hypot(u, p):
+    return ((u["x"] - p[0]) ** 2 + (u["y"] - p[1]) ** 2) ** 0.5
+
 HERO_TIME = 55.0
 PEASANT_SPEED, MILITIA_SPEED, CALL_TO_ARMS = 190.0, 270.0, 2.0
 
@@ -100,8 +104,36 @@ class Orchestrator(Arbiter):
         altar = next(iter(self._have("halt")), None)
         if not altar:
             return None
-        x, y = self._toward(altar, self.hall, self.FRONT if place == "front" else 200)
+        if place == "front":
+            return self._open_ground(altar)
+        x, y = self._toward(altar, self.hall, 200)
         return {"x": x, "y": y}
+
+    def _open_ground(self, altar):
+        """祭坛前方空地: in front of the altar (towards the base), clear of every building and every layout
+        site, so the hero and the militia waiting there never stand on a site (they kept the third farm
+        from starting)."""
+        if getattr(self, "_front", None):
+            return self._front
+        import math
+        taken = [(s["x"], s["y"]) for s in self.structures(done=False)]
+        taken += [tuple(x["site"]) for pool in self.sites.values() for x in pool]
+        taken += [tuple(e["site"]) for e in self.events if e.get("site")]
+        dx, dy = self.hall["x"] - altar["x"], self.hall["y"] - altar["y"]
+        base = math.atan2(dy, dx)
+        best = None
+        for r in (380, 460, 540, 620, 700):
+            for a in (0, 25, -25, 50, -50, 75, -75):
+                ang = base + math.radians(a)
+                p = (altar["x"] + math.cos(ang) * r, altar["y"] + math.sin(ang) * r)
+                clear = min((math.hypot(p[0] - x, p[1] - y) for x, y in taken), default=9999)
+                if clear >= 260:
+                    best = {"x": round(p[0]), "y": round(p[1])}
+                    break
+            if best:
+                break
+        self._front = best or dict(zip(("x", "y"), self._toward(altar, self.hall, self.FRONT)))
+        return self._front
 
     def _militia_lead(self):
         """Seconds for the call to arms: the farthest of the five lumberjacks to the hall, the change,
@@ -158,6 +190,8 @@ class Orchestrator(Arbiter):
         self._track_income()
         if not self.hall or self.errors:
             return
+        self._in(("T2", None), self._keep_home_wood)
+        self._in(("T4", None), self._keep_crew_home)
         self._crew_seen = getattr(self, "_crew_seen", False) or any(self.roles.get(u["unit_id"]) == "crew" for u in self.workers())
         self._caps()
         for row in self.rows:
@@ -299,6 +333,38 @@ class Orchestrator(Arbiter):
         self.made[key] = 1
         self.note(rule, f"设集结点：{self.eco[s['building']]['name']} → {label}", why)
 
+    HOME = 2200  # a main-base lumberjack's tree must be this close to the main hall
+
+    def _keep_home_wood(self):
+        """Main-base lumberjacks cut main-base trees: one whose tree is out by the natural (the player
+        saw two new peasants walk there) gets a tree at home."""
+        trees = {d["id"]: d for d in self.obs.get("destructables", []) if d.get("resource") == "lumber"}
+        for u in self.workers():
+            uid, order = u["unit_id"], u.get("order") or {}
+            if self.roles.get(uid) != "wood" or uid in self.ordered or self.t - self.last_order.get(uid, -99) < 3:
+                continue
+            tree = trees.get(order.get("target_id"))
+            far = tree is not None and dist(tree, self.hall) > self.HOME
+            if far or (order.get("name") in ("harvest", "resumeharvesting") and tree is None and dist(u, self.hall) > self.HOME + 600):
+                home = self.pick_tree(min((b for b in self.structures() if b["type_id"] in ("htow", "hkee", "hcas", "hlum") and dist(b, self.hall) < 1200),
+                                          key=lambda b: dist(b, self.hall), default=self.hall))
+                if home:
+                    self.order(uid, "harvest", target_id=home["id"])
+                    self.wood_tree[uid] = (home["x"], home["y"])
+                    self.note("T2", f"农民{self.cid.get(uid, '?')} 换到主基地附近的树", "主基地的伐木工砍到分矿那边去了")
+
+    def _keep_crew_home(self):
+        """The natural's crew stays at the natural: one that wandered off (back to his old trees) walks back."""
+        post = self.crew_post()
+        if not post:
+            return
+        busy = {j.get("worker") for j in self.jobs.values()} | {x for j in self.jobs.values() for x in j.get("helpers") or []}
+        for u in self.workers():
+            uid = u["unit_id"]
+            if self.roles.get(uid) == "crew" and uid not in busy and uid not in self.ordered and math_hypot(u, post) > 1500 \
+                    and self.t - self.last_order.get(uid, -99) > 3:
+                self.order(uid, "move", x=post[0], y=post[1])
+
     def _crew_cut(self, row):
         """M2 分矿组: the clear crew cuts wood at the natural meanwhile; they stay the natural's crew
         (not the main base's lumberjacks) and the hall row takes them as soon as it starts."""
@@ -309,7 +375,10 @@ class Orchestrator(Arbiter):
                 continue
             if (u.get("order") or {}).get("name") in ("harvest", "resumeharvesting") or self.t - self.last_order.get(uid, -99) < 2:
                 continue
-            tree = self.pick_tree(self.drop_for("wood", u) or u)
+            post = self.crew_post()
+            mill = min((b for b in self.structures() if b["type_id"] == "hlum"), key=lambda b: dist(b, {"x": post[0], "y": post[1]}), default=None) if post else None
+            drop = mill if mill and post and dist(mill, {"x": post[0], "y": post[1]}) < 1500 else ({"x": post[0], "y": post[1]} if post else u)
+            tree = self.pick_tree(drop)  # trees by the natural, dropped at its lumber mill
             if tree:
                 self._in(("R%d" % row["no"], None), lambda: self.order(uid, "harvest", target_id=tree["id"]))
                 self.wood_tree[uid] = (tree["x"], tree["y"])
