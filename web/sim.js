@@ -617,7 +617,8 @@
       const d = this.events.find(x => x.id === e.after);
       if (!d) { e.rt.note = '依赖的事件已删除，按时间开始'; return true; }
       if (finished(d)) return true;
-      e.rt.note = '等「' + d.name + '」完成';
+      if (e.afterStage === 'start' && d.rt && (d.rt.bid || d.rt.bStart != null)) return true; // its construction has begun
+      e.rt.note = '等「' + d.name + '」' + (e.afterStage === 'start' ? '开工' : '完成');
       return false;
     }
     step() {

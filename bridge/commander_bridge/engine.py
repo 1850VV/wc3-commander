@@ -197,7 +197,9 @@ class Commander:
             return False
         if status == "done" or (d["kind"] == "gather" and status == "active"):
             return True
-        rt["note"] = f"等「{d['name']}」完成"
+        if e.get("afterStage") == "start" and self.rt[dep].get("bid"):  # its construction has begun
+            return True
+        rt["note"] = f"等「{d['name']}」" + ("开工" if e.get("afterStage") == "start" else "完成")
         return False
 
     def reserved(self) -> set[int]:
@@ -221,13 +223,24 @@ class Commander:
             pool = [u for u in pool if self.roles.get(u["unit_id"]) != "gold"]
         return sorted(pool, key=lambda u: (score(u), self.cid[u["unit_id"]]))[:n]
 
-    def pick_builder(self, site):
-        """Idle/new peasants and lumberjacks build; gold miners are named explicitly by the plan."""
+    def pick_builder(self, site, natural=False):
+        """Idle/new peasants and lumberjacks build; gold miners are named explicitly by the plan. The
+        natural's crew (militia that stayed after the clear) builds there first, and only there."""
         held = self.reserved()
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) != "build" and self.roles.get(u["unit_id"]) != "gold"
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) not in ("build", "gold")
+                and (natural or self.roles.get(u["unit_id"]) != "crew")
                 and u["unit_id"] not in self.ordered and u["unit_id"] not in held]
         point = {"x": site[0], "y": site[1]}
-        return min(pool, key=lambda u: (self.roles.get(u["unit_id"]) not in (None, "wood"), dist(u, point)), default=None)
+        return min(pool, key=lambda u: (self.roles.get(u["unit_id"]) != "crew", self.roles.get(u["unit_id"]) not in (None, "wood", "crew"), dist(u, point)), default=None)
+
+    def _natural_builds_left(self):
+        return [e for e in self.events if e.get("kind") == "build" and e.get("near") == "natural"
+                and self.rt[e["id"]]["status"] in ("pending", "waiting")]
+
+    def _crew_wanted(self, u) -> bool:
+        """A militia turning back at the natural stays as crew while the expansion is still to be built."""
+        return bool(self.natural_at) and math.hypot(u["x"] - self.natural_at[0], u["y"] - self.natural_at[1]) < 1500 \
+            and bool(self._natural_builds_left())
 
     def drop_for(self, res, near):
         opts = [b for b in self.obs["units"] if b["structure"] and b.get("state") != "constructing"  # an upgrading hall still takes returns
@@ -370,11 +383,21 @@ class Commander:
             c = self.eco.get(e["btype"])
             if c:
                 return c["gold"], c["wood"]
+        for e in self.events:  # then the keep: once the expansion is going up it comes before footmen and farms
+            if e.get("kind") != "upgrade" or e.get("to") not in HALLS or e["id"] not in self.jobs:
+                continue
+            if self.jobs[e["id"]].get("state") != "waiting" or self.t < (e.get("start") or 0):
+                continue
+            base = e.get("from") or "htow"
+            if e["to"] in self.eco and base in self.eco:
+                return (self.eco[e["to"]]["gold"] - self.eco[base]["gold"], self.eco[e["to"]]["wood"] - self.eco[base]["wood"])
         return 0, 0
 
     def afford(self, g, w, reserve=True) -> bool:
         rg, rw = self._reserve() if reserve else (0, 0)
-        return self.budget[0] >= g + rg and self.budget[1] >= w + rw
+        # Each resource only counts against what is kept for the keep/hall if this item uses it:
+        # a peasant (gold only) must not wait for lumber that the keep is still short of.
+        return self.budget[0] >= g + (rg if g else 0) and self.budget[1] >= w + (rw if w else 0)
 
     def spend(self, g, w):
         self.budget[0] -= g
@@ -402,7 +425,7 @@ class Commander:
             if not e.get("site"):
                 rt["note"] = "找不到可建造的位置"
                 return
-            u = self.unit(e["unit"]) if e.get("unit") else self.pick_builder(e["site"])
+            u = self.unit(e["unit"]) if e.get("unit") else self.pick_builder(e["site"], natural=e.get("near") == "natural")
             if not u:
                 rt["note"] = ("农民%s 在金矿里" % e["unit"]) if e.get("unit") and self.inside(e["unit"]) else "没有可用农民"
                 return
@@ -469,7 +492,9 @@ class Commander:
                         return
                     job["worker"] = (self.pick_builder(e["site"]) or {}).get("unit_id")
                     return
-                if not self.afford(c["gold"], c["wood"], reserve=False):  # the hall itself may spend the reserve
+                # only the expansion hall itself may spend the reserve; farms, the lumber mill and the
+                # tower wait for the keep (the player: once the hall is going up, the keep comes first)
+                if not self.afford(c["gold"], c["wood"], reserve=not (e.get("near") == "natural" and e.get("btype") in HALLS)):
                     rt["note"] = f"等待资源 金{int(self.budget[0])}/{c['gold']} 木{int(self.budget[1])}/{c['wood']}"
                     return
                 self.spend(c["gold"], c["wood"])
@@ -605,11 +630,11 @@ class Commander:
         held = self.reserved() | {job["worker"]}
         px, py = self._staging_point(e["site"])
         point = {"x": px, "y": py}
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood")
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood", "crew")
                 and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
         job["helpers"] = []
         priors = job.setdefault("helper_prior", {})
-        for u in sorted(pool, key=lambda u: dist(u, point))[: e["helpers"]]:
+        for u in sorted(pool, key=lambda u: (self.roles.get(u["unit_id"]) != "crew", dist(u, point)))[: e["helpers"]]:
             priors[u["unit_id"]] = self.roles.get(u["unit_id"])
             self.order(u["unit_id"], "move", x=point["x"], y=point["y"])
             self.roles[u["unit_id"]] = "build"
@@ -623,10 +648,10 @@ class Commander:
                 self.order(uid, "smart", target_id=b["unit_id"])
             return
         held = self.reserved() | {job["worker"]}
-        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
+        pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood", "crew") and u["unit_id"] not in held and u["unit_id"] not in self.ordered]
         job["helpers"] = []
         priors = job.setdefault("helper_prior", {})
-        for u in sorted(pool, key=lambda u: dist(u, b))[: e["helpers"]]:
+        for u in sorted(pool, key=lambda u: (self.roles.get(u["unit_id"]) != "crew", dist(u, b)))[: e["helpers"]]:
             priors[u["unit_id"]] = self.roles.get(u["unit_id"])
             self.order(u["unit_id"], "smart", target_id=b["unit_id"])
             self.roles[u["unit_id"]] = "build"
@@ -731,7 +756,7 @@ class Commander:
                 return
             b = opts[0]
             g, w = self.eco[to]["gold"] - self.eco[b["type_id"]]["gold"], self.eco[to]["wood"] - self.eco[b["type_id"]]["wood"]
-            if not self.afford(g, w):
+            if not self.afford(g, w, reserve=to not in HALLS):  # a keep may spend what was kept for it
                 rt["note"] = f"等待资源 金{int(self.budget[0])}/{g} 木{int(self.budget[1])}/{w}"
                 return
             self.spend(g, w)
@@ -791,7 +816,11 @@ class Commander:
                 job["reverted"][uid] = self.t
                 if self.roles.get(uid) == "militia":
                     self.roles.pop(uid, None)
-            elif uid in job["reverted"] and self.t - job["reverted"][uid] >= 3 and uid not in self.roles and u:
+                    if self._crew_wanted(u):
+                        # The player's order: the five stay at the natural and wait there to build the
+                        # hall and the tower; they do not walk home to their old jobs.
+                        self.roles[uid] = "crew"
+            elif uid in job["reverted"] and self.t - job["reverted"][uid] >= 3 and uid not in self.roles and u:  # not crew
                 self.harvest(u, prev or "gold", self.mine_of.get(uid, "main"))  # nobody needed him: old job
         if not job["seen"] and self.t - rt["aStart"] > 3:
             rt["note"] = "游戏没有把农民变成民兵（命令可能不对）"
@@ -897,7 +926,8 @@ class Commander:
         self.order(u["unit_id"], "stop")
 
     def _balance_workers(self) -> None:
-        """Five peasants per gold mine and eight on lumber. Extras stand by (or switch jobs)."""
+        """Five peasants per gold mine; the rest cut wood. Nobody stands idle at home: the player saw
+        one peasant wait the whole game when extras were told to stand by (2026-10-20)."""
         by_mine: dict[str, list[int]] = {}
         for uid, role in list(self.roles.items()):
             if role == "gold":
@@ -908,18 +938,28 @@ class Commander:
                 u = next((x for x in self.units() if x["unit_id"] == uid), None)
                 if not u or uid in self.ordered:
                     continue
-                wood = [x for x in self.units() if self.roles.get(x["unit_id"]) == "wood"]
-                if len(wood) < WOOD_TARGET:
-                    self.harvest(u, "wood")
+                if self.natural_ready() and len(by_mine.get("natural", [])) < GOLD_PER_MINE and self.mine_of.get(uid) != "natural":
+                    self.harvest(u, "gold", "natural")
+                    by_mine.setdefault("natural", []).append(uid)
                 else:
-                    self._idle(u)
+                    self.harvest(u, "wood")
         wood = [u for u in self.workers() if self.roles.get(u["unit_id"]) == "wood" and u["unit_id"] not in self.ordered]
-        for u in wood[WOOD_TARGET:]:  # nine lumberjacks: a mine short of five takes him, else stand by
-            short = next((m for m, us in by_mine.items() if len(us) < GOLD_PER_MINE), None)
+        for u in wood[WOOD_TARGET:]:  # past eight lumberjacks: a mine short of five takes him, else he keeps cutting
+            short = next((m for m in ("main", "natural") if (m == "main" or self.natural_ready()) and len(by_mine.get(m, [])) < GOLD_PER_MINE), None)
             if short:
                 self.harvest(u, "gold", short)
-            else:
-                self._idle(u)
+                by_mine.setdefault(short, []).append(u["unit_id"])
+        # the natural's crew goes to work once the hall and tower there are under way
+        if not self._natural_builds_left():
+            for u in self.workers():
+                if self.roles.get(u["unit_id"]) == "crew" and u["unit_id"] not in self.ordered:
+                    self.harvest(u, "gold", "natural")
+        held = self.reserved()
+        for u in self.workers():  # an idle peasant nobody has a job for cuts wood
+            uid = u["unit_id"]
+            if self.roles.get(uid) is None and u.get("order") is None and uid not in self.ordered and uid not in held \
+                    and self.t - self.last_order.get(uid, -99) >= 3 and self.t > 5:
+                self.harvest(u, "wood")
         main = by_mine.get("main", [])
         if len(main) < GOLD_PER_MINE:
             # the five are topped up at once, from a new/idle peasant first, then a lumberjack

@@ -279,10 +279,11 @@ class ClearUnitTest(unittest.TestCase):
         cmd.orders.clear()
         cl.tick(cmd, self.obs(army, creeps), 3.0)
         self.assertNotIn(3, [o[0] for o in cmd.orders])
-        army[2].update(hp=20, order=None)  # out of the pause and badly hurt: walks home
+        army[2].update(hp=20, order=None)  # out of the pause and badly hurt: stays and fights (the player's rule)
         cmd.orders.clear()
         cl.tick(cmd, self.obs(army, creeps), 9.0)
-        self.assertIn((3, "move", {"x": 2000, "y": 0}), cmd.orders)
+        self.assertNotIn((3, "move", {"x": 2000, "y": 0}), cmd.orders)
+        self.assertIn((3, "attack", {"target_id": 91}), cmd.orders)
 
     def test_militia_does_not_start_the_fight_before_the_hero(self):
         from commander_bridge.combat import Clear

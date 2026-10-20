@@ -3,7 +3,7 @@
 One Clear runs per "clear" event. Every tick it reads the observation and gives orders:
   march   attack-move everyone to the camp
   fight   focus fire on one creep (healers first), summon water elementals when the hero can,
-          pull militia below MILITIA_RETREAT back home, retreat everyone if the hero drops below
+          (militia never walk home: they stay to build the expansion), retreat everyone if the hero drops below
           HERO_RETREAT (the event fails)
   done    no living creep seen near the camp for CLEAR_QUIET seconds
 A unit the player is steering by hand (its order is not the last one we gave it) is left alone
@@ -20,7 +20,8 @@ ORDERS = {"water": "waterelemental", "water_ability": "AHwe"}
 CAMP_RADIUS = 900           # creeps this close to the camp point belong to it
 ENGAGE = 1100               # start fighting when a camp creep is this close to the army
 HERO_LEAD = 900.0           # the militia do not start the fight until the hero is this close
-MILITIA_RETREAT = 0.35      # militia below this share of hit points walk home
+MILITIA_RETREAT = 0.0       # militia below this share of hit points walk home: off. The player wants all five to
+                            # stay at the natural, wait there and build the hall and the tower (2026-10-20)
 HERO_RETREAT = 0.30         # hero below this: everyone home, event failed
 CLEAR_QUIET = 3.0           # seconds without a visible camp creep after the fight = cleared
 TIMEOUT = 240.0             # seconds from the start of the march (the west camp takes ~2.5 min)
