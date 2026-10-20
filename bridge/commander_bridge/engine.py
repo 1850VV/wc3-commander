@@ -68,6 +68,12 @@ class Commander:
         self.log: list[tuple[str, str]] = []
         self.obs: dict | None = None
         self.enabled = True  # tactic switch: off = watch and report only, no orders
+        # Every order is attributed: ctx is (rule, event id) while that rule/event is being handled.
+        # An order given with no ctx is an unexplained ("多余") action; order_log keeps them all.
+        self.ctx: tuple | None = None
+        self.order_log: list[dict] = []
+        self._sent: list[dict] = []          # order_log entries of the actions tick() returned, in order
+        self._recent: dict[tuple, list] = {}  # (unit, command, args) -> times, to spot repeated orders
 
     # ---- plan --------------------------------------------------------------------------------
     def set_plan(self, plan: dict) -> None:
@@ -90,21 +96,30 @@ class Commander:
         self.actions: list[dict] = []  # before _ingest: orders given while handling events must be kept
         self.ordered: set[int] = set()
         self._ingest(obs)
+        self.ctx = None
         if not self.enabled:  # switched off: keep reading the game, give no orders, start nothing
             return []
         self._decide()
         due = sorted((e for e in self.events if self.rt[e["id"]]["status"] == "pending" and e["start"] <= self.t + 1e-6 and self.ready(e)),
                      key=self._order_key)
         for e in due:
-            self._start(e)
+            self._in(self._ctx_of(e), self._start, e)
         for e in sorted(self.events, key=self._order_key):
             if e["id"] in self.jobs:
-                self._advance(e)
-        self._keep_gathering()
-        self._balance_workers()
-        self._unstick_wood()
+                self._in(self._ctx_of(e), self._advance, e)
+        self._in(("A1", None), self._keep_gathering)
+        self._in(("A4", None), self._balance_workers)
+        self._in(("T2", None), self._unstick_wood)
         commandable = {u["unit_id"] for u in obs["units"]}
-        return [a for a in self.actions if a["unit_id"] in commandable]
+        out = [a for a in self.actions if a["unit_id"] in commandable]
+        kept = {id(a) for a in out}
+        logged = self.order_log[len(self.order_log) - len(self.actions):]  # order() logs every action, in order
+        for x in logged:
+            if id(x["_action"]) not in kept:
+                x["dropped"] = "单位不可指挥（在金矿/建筑里）"
+        by_id = {id(x["_action"]): x for x in logged}
+        self._sent = [by_id.get(id(a)) for a in out]
+        return out
 
     def _decide(self) -> None:
         """Hook for a rule-driven commander (arbiter.py) to add this tick's events; the timeline has none."""
@@ -137,6 +152,7 @@ class Commander:
             if spots:
                 self.natural_at = (spots[0]["x"], spots[0]["y"])
         for ev in obs.get("events", []):
+            self.ctx = None  # a finish handler sets it to the event it finishes
             k = ev["kind"]
             if k == "construct_start":
                 self.built_at[ev["unit_id"]] = self.t
@@ -182,9 +198,32 @@ class Commander:
         return any(u["unit_id"] == uid for u in self.obs.get("inside", []))
 
     def order(self, unit_id, command, **arguments):
-        self.actions.append({"unit_id": unit_id, "command": command, "arguments": arguments})
+        action = {"unit_id": unit_id, "command": command, "arguments": arguments}
+        self.actions.append(action)
         self.ordered.add(unit_id)
         self.last_order[unit_id] = self.t
+        rule, event = self.ctx or (None, None)
+        key = (unit_id, command, tuple(sorted((k, str(v)) for k, v in arguments.items())))
+        times = [t for t in self._recent.get(key, []) if self.t - t < 10] + [self.t]
+        self._recent[key] = times
+        entry = {"t": self.t, "unit": unit_id, "cid": self.cid.get(unit_id), "command": command, "args": arguments,
+                 "rule": rule, "event": event, "repeat": len(times) >= 3, "_action": action}
+        self.order_log.append(entry)
+        if event and event in self.rt:
+            r = self.rt[event]
+            r.setdefault("ordered", self.t)
+            r["orders"] = r.get("orders", 0) + 1
+
+    def _in(self, ctx, fn, *args):
+        """Run fn with orders attributed to ctx (rule, event id)."""
+        saved, self.ctx = self.ctx, ctx
+        try:
+            return fn(*args)
+        finally:
+            self.ctx = saved
+
+    def _ctx_of(self, e):
+        return (e.get("rule") or e["id"], e["id"])
 
     def workers(self):
         return [u for u in self.units() if u["type_id"] == "hpea"]
@@ -445,7 +484,7 @@ class Commander:
             # building's own cells make Warcraft accept the order and never start construction.
             if e.get("site"):
                 sx, sy = self._staging_point(e["site"])
-                self.order(u["unit_id"], "move", x=sx, y=sy)
+                self._in(("T3", e["id"]), lambda: self.order(u["unit_id"], "move", x=sx, y=sy))
             if e.get("helpers"):
                 self._prestage_helpers(e, self.jobs[e["id"]])
             rt.update(status="running", aStart=self.t, builder=self.cid[u["unit_id"]], note="等待资源")
@@ -576,7 +615,7 @@ class Commander:
                     # default the south side. Behind a wall-in that can be a pocket against the trees
                     # with an exit too narrow for a hero (3 cells): south's Archmage stood there until
                     # the woodcutters cleared it. Rallying at the town hall brings him out inside the base.
-                    self.order(prod["unit_id"], "cast", order="setrally", x=self.hall["x"], y=self.hall["y"])
+                    self._in(("T1", (self.ctx or (None, None))[1]), lambda: self.order(prod["unit_id"], "cast", order="setrally", x=self.hall["x"], y=self.hall["y"]))
                 self.order(prod["unit_id"], "train", type_id=ut)
                 job.update(state="ordered", producer=prod["unit_id"], ordered=self.t)
                 rt.update(note="已下令 · " + self.eco[prod["type_id"]]["name"])
@@ -627,7 +666,7 @@ class Commander:
         if b is not None:
             self.rt[e["id"]]["builtAt"] = [b["x"], b["y"]]
         if e.get("helpers") and b is not None:
-            self._send_helpers(e, self.jobs[e["id"]], b)
+            self._in(self._ctx_of(e), self._send_helpers, e, self.jobs[e["id"]], b)
 
     @staticmethod
     def _staging_point(site):
@@ -681,6 +720,15 @@ class Commander:
     def feedback(self, actions: list[dict], placements: list[dict], rejected: list[dict]) -> None:
         """Read the reply to the actions tick() returned: where Warcraft placed auto-placed builds
         and which build orders it refused outright."""
+        for r in rejected:  # the order log keeps why the game refused an order
+            x = self._sent[r["index"]] if 0 <= r["index"] < len(self._sent) else None
+            if x:
+                x["rejected"] = r.get("reason")
+                if x.get("event") in self.rt:
+                    self.rt[x["event"]]["rejected"] = r.get("reason")
+        for x in self._sent:  # done with the action objects
+            if x:
+                x["_action"] = None
         jobs = {id(j["action"]): (eid, j) for eid, j in self.jobs.items() if j.get("action") is not None}
         for p in placements:
             hit = jobs.get(id(actions[p["index"]])) if 0 <= p["index"] < len(actions) else None
@@ -709,6 +757,7 @@ class Commander:
         for e in self.events:
             job = self.jobs.get(e["id"])
             if job and job.get("building") == ev["unit_id"]:
+                self.ctx = self._ctx_of(e)
                 self.rt[e["id"]].update(status="done", aEnd=self.t, note="完工")
                 # a finished builder joins the hall that is still going up next to him (the expansion's
                 # tower peasant comes back to help instead of walking home)
@@ -902,6 +951,7 @@ class Commander:
         for e in self.events:
             job = self.jobs.get(e["id"])
             if job and e["kind"] == "train" and job["state"] == "training" and job["producer"] == ev["unit_id"]:
+                self.ctx = self._ctx_of(e)
                 cid = self.cid[ev["trained_id"]]
                 then = e.get("then") or "gold"
                 name = self.eco[ev["type_id"]]["name"]

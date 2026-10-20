@@ -13,7 +13,14 @@
   let startIndex = 0, groups = Sim.defaultPlan(), G = null, sel = null, placing = null;
   let checkpoints = []; // from a loaded strategy: [{id, name, event, at, from, to}]
   let playing = true, speed = 2, acc = 0, last = performance.now();
-  const live = {on: false, state: null, backend: '', es: null, current: null, dirty: false};
+  const live = {on: false, state: null, backend: '', es: null, current: null, dirty: false,
+    arbMode: false, arb: null, arbN: -1, feedback: []}; // arbMode: the bridge's arbiter plays; the timeline shows its decisions
+  const ORDER_NAME = {harvest: '采集', build: '建造', train: '训练', move: '移动', attack: '攻击', smart: '右键', cast: '施放', learn: '学技能', stop: '停止'};
+  function orderText(o) {
+    const a = o.args || {}, what = a.type_id ? name(a.type_id) : a.order || a.ability_id || '';
+    return (ORDER_NAME[o.command] || o.command) + (o.command === 'attack' ? (a.target_id ? '目标' : '移动') : '') + (what ? ' ' + what : '')
+      + (a.x != null ? ` @${Math.round(a.x)},${Math.round(a.y)}` : '');
+  }
   const allEvents = () => groups.flatMap(g => g.children);
   const fmt = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
   const nowT = () => Math.min(T_END - 1, Math.round(V().t));
@@ -377,7 +384,18 @@
     if (sel && !item) { sel = null; renderCmd(); }
     if (!sel) {
       const c = v.counts;
-      h = `<div class="title">战局概览</div>` + planLine() + `<div class="kv">
+      h = `<div class="title">战局概览</div>` + planLine();
+      if (live.arbMode && live.arb) {
+        const o = live.arb.orders || {}, dec = live.arb.decisions || [];
+        h += `<div class="subtitle">动作审计 <span class="hint">每条命令都要对应一条规则</span></div><div class="kv">
+          <span>发出的命令</span><span class="num">${o.total || 0}</span>
+          <span>没有出处（多余）</span><span class="num" style="color:${o.untaggedCount ? 'var(--warn)' : 'inherit'}">${o.untaggedCount || 0}</span>
+          <span>重复命令</span><span class="num" style="color:${o.repeatCount ? 'var(--warn)' : 'inherit'}">${o.repeatCount || 0}</span>
+          <span>被游戏拒绝</span><span class="num" style="color:${(o.rejected || []).length ? 'var(--warn)' : 'inherit'}">${(o.rejected || []).length}</span></div>`;
+        h += `<div class="subtitle">最近的决策 <span class="hint">共 ${dec.length} 条，点一条看详情</span></div><div class="upc">`
+          + dec.slice(-10).reverse().map(d => `<button type="button"${d.event ? ` data-ev="${d.event}"` : ''}><b>${fmt(d.t)}</b> ${d.rule} ${esc(d.action)} <span class="hint">${esc(d.why)}</span></button>`).join('') + '</div>';
+      }
+      h += `<div class="kv">
         <span>采金</span><span class="num">${c.gold} 名农民</span><span>伐木</span><span class="num">${c.wood} 名农民</span>
         <span>建造</span><span class="num">${c.build} 名农民</span><span>空闲</span><span class="num" style="color:${c.idle ? 'var(--warn)' : 'inherit'}">${c.idle} 名农民</span>
         <span>主矿剩余</span><span class="num">${v.mine.gold >= 0 ? Math.floor(v.mine.gold) + ' 金' : '游戏不提供'}</span></div>`;
@@ -413,6 +431,7 @@
       else if (b.train && b.train.total) h += `<div class="bar"><i style="width:${(1 - b.train.left / b.train.total) * 100}%"></i></div>`;
     } else {
       const e = item, g = groups.find(g => g.children.includes(e));
+      if (e.rule) { h = arbDetail(e); if (h !== lastStatus) { statusEl.innerHTML = h; lastStatus = h; } return; }
       h = `<div class="title">${e.name}</div><div class="kv"><span>类型</span><span>${KIND[e.kind]}事件 · ${g.name}</span>
         <span>计划开始</span><span class="num">${fmt(e.start)}${e.after ? '，并等「' + ((allEvents().find(x => x.id === e.after) || {}).name || '已删除的事件') + '」完成' : ''}</span><span>实际开始</span><span class="num">${e.rt && e.rt.aStart != null ? fmt(e.rt.aStart) : '—'}</span>
         <span>状态</span><span>${(e.rt && e.rt.note) || '计划中'}</span>${e.site ? `<span>工地</span><span class="num">${e.site.join(', ')} · ${e.at ? '指定位置（精确建造）' : '自动选址'}</span>` : ''}</div>`;
@@ -423,6 +442,23 @@
       if (movable(e)) h += '<div class="hint">在地图上拖动这个工地框可以改位置。</div>';
     }
     if (h !== lastStatus) { statusEl.innerHTML = h; lastStatus = h; }
+  }
+  function arbDetail(e) {
+    const rt = e.rt || {}, ords = ((live.arb && live.arb.orders && live.arb.orders.byEvent) || {})[e.id] || [];
+    const fb = live.feedback.filter(f => f.event === e.id);
+    const conf = rt.bStart ?? rt.trainStart ?? (['learn', 'gather', 'militia', 'clear'].includes(e.kind) ? rt.aStart : null);
+    const flags = [rt.unexecuted && '游戏接受了命令，但 15 秒内没有执行', rt.rejected && '被游戏拒绝：' + rt.rejected, rt.failed && '失败'].filter(Boolean);
+    return `<div class="title">${esc(e.name)}</div><div class="kv">
+      <span>规则</span><span>${e.rule} · 优先级 ${e.prio}</span><span>依据</span><span>${esc(e.why)}</span>
+      <span>决定</span><span class="num">${fmt(e.start)}</span><span>下令</span><span class="num">${rt.ordered != null ? fmt(rt.ordered) : '—'}</span>
+      <span>游戏确认</span><span class="num">${conf != null ? fmt(conf) : '—'}</span><span>完成</span><span class="num">${rt.status === 'done' && rt.aEnd != null ? fmt(rt.aEnd) : '—'}</span>
+      <span>状态</span><span>${esc(rt.note || '还没开始')}</span></div>`
+      + flags.map(f => `<div class="hint" style="color:var(--warn)">${esc(f)}</div>`).join('')
+      + `<div class="subtitle">发出的命令 <span class="hint">共 ${rt.orders || 0} 条，显示最近 12 条</span></div><div class="orders">`
+      + (ords.length ? ords.map(o => `<div${o.rejected || o.repeat || o.dropped ? ' class="bad"' : ''}><b>${fmt(o.t)}</b> ${o.cid ? '#' + o.cid + ' ' : ''}${esc(orderText(o))} <span class="hint">${o.rule}${o.rejected ? ' · 被拒绝：' + esc(o.rejected) : ''}${o.repeat ? ' · 重复' : ''}${o.dropped ? ' · ' + esc(o.dropped) : ''}</span></div>`).join('') : '<div class="hint">还没有发出命令</div>')
+      + `</div><div class="subtitle">你的评价</div>`
+      + (fb.length ? fb.map(f => `<div class="fb">${f.score === 'good' ? '👍 对' : f.score === 'bad' ? '👎 错' : ''}${f.prio === 'up' ? ' ⬆ 优先级调高' : f.prio === 'down' ? ' ⬇ 优先级调低' : ''}${f.comment ? ' · ' + esc(f.comment) : ''}</div>`).join('')
+        : '<div class="hint">还没有。用命令面板打分、调优先级或写意见，会记进这一局的反馈。</div>');
   }
   const trainBtn = (key, ut, then) => [key, '训练' + name(ut) + (then ? (then === 'gold' ? '→金' : '→木') : ''), () => addTo('g_user', Sim.ev('train', '训练' + name(ut) + (then ? ' → ' + RES[then] : ''), nowT(), {utype: ut, then}))];
   function renderCmd() {
@@ -445,13 +481,16 @@
       (ECO[b.type].upgrades || []).forEach((to, i) => btns.push(['U' + (i || ''), '升级为' + name(to), () => addTo('g_user', Sim.ev('upgrade', '升级 ' + name(to), nowT(), {from: b.type, to, at: [b.x, b.y]}))]));
     } else if (sel && sel.type === 'event') {
       const e = allEvents().find(x => x.id === sel.id);
-      if (e) btns = [['←', '提前 5 秒', () => shiftEv(e, -5)], ['→', '推后 5 秒', () => shiftEv(e, 5)], ['X', '删除事件', () => delEv(e)]];
+      if (e && e.rule) btns = [['Y', '👍 判断对', () => Live.rate(e, {score: 'good'})], ['N', '👎 判断错', () => Live.rate(e, {score: 'bad'})],
+        ['↑', '优先级调高', () => Live.rate(e, {prio: 'up'})], ['↓', '优先级调低', () => Live.rate(e, {prio: 'down'})],
+        ['C', '写意见…', () => { const c = prompt('对「' + e.name + '」的意见（记进这一局的反馈）'); if (c && c.trim()) Live.rate(e, {comment: c.trim()}); }]];
+      else if (e) btns = [['←', '提前 5 秒', () => shiftEv(e, -5)], ['→', '推后 5 秒', () => shiftEv(e, 5)], ['X', '删除事件', () => delEv(e)]];
       if (e && e.at && movable(e)) btns.push(['U', '恢复自动选址', () => unpinSite(e)]);
     }
     if (placing) btns.push(['Esc', '取消放置', stopPlace]);
     cmdEl.innerHTML = '';
     const evSel = sel && sel.type === 'event' && allEvents().find(x => x.id === sel.id);
-    if (evSel && (!evSel.rt || evSel.rt.status === 'pending')) { // start condition: planned time, or after another event
+    if (evSel && !evSel.rule && (!evSel.rt || evSel.rt.status === 'pending')) { // start condition: planned time, or after another event
       const box = document.createElement('label'); box.className = 'after';
       box.append('开始条件 ');
       const s = document.createElement('select');
@@ -472,7 +511,7 @@
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); return; }
     if (e.key === 'Escape') { if (placing) stopPlace(); else { sel = null; renderCmd(); markSel(); } return; }
-    const k = e.key.length === 1 ? e.key.toUpperCase() : ({ArrowLeft: '←', ArrowRight: '→', Delete: 'X'})[e.key];
+    const k = e.key.length === 1 ? e.key.toUpperCase() : ({ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Delete: 'X'})[e.key];
     const btn = k && [...cmdEl.querySelectorAll('button')].find(b => b.dataset.key === k); if (btn) { e.preventDefault(); btn.click(); }
   });
 
@@ -575,7 +614,7 @@
     b.addEventListener('pointerdown', p => {
       p.stopPropagation(); b.setPointerCapture(p.pointerId);
       const x0 = p.clientX, s0 = e.start, w = track.getBoundingClientRect().width; let moved = false;
-      const started = e.rt && e.rt.status !== 'pending' && live.on;
+      const started = (e.rt && e.rt.status !== 'pending' && live.on) || live.arbMode; // the arbiter decides its own times
       const mv = q => {
         if (started) return;
         const d = Math.round((q.clientX - x0) / w * T_END); if (Math.abs(q.clientX - x0) > 3) moved = true;
@@ -718,7 +757,9 @@
     disconnect(btn) {
       if (live.es) live.es.close(); live.on = false; live.state = null; btn.textContent = '重新连接'; live.tacticBtn.hidden = true; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = false);
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'stop'})});
-      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0);
+      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live');
+      if (live.arbMode) { live.arbMode = false; live.arb = null; groups = Sim.defaultPlan(); checkpoints = []; buildTimeline(); } // back to an editable plan
+      resim(0);
     },
     showTactic(on) { live.tactic = on; const tk = live.tacticBtn; tk.textContent = on ? '战术：开' : '战术：关'; tk.classList.toggle('on', on); },
     tactic(on) { // the bridge keeps reading the game either way; off only stops it giving orders
@@ -728,11 +769,45 @@
     planGame() { return G; }, // placement checks use the offline model of the same map
     serialize() { return {start: startIndex, checkpoints, groups: groups.map(g => ({id: g.id, name: g.name, src: g.src, children: g.children.map(({rt, ...e}) => e)}))}; },
     pushPlan() {
+      if (live.arbMode) return; // the arbiter's events are its decisions, not a plan to send back
       G.planSites && (G = Sim.run(W, startIndex, groups, 0)); // resolve build sites with the same placement rules
       fetch('/api/plan', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({...this.serialize(), name: live.current})}).catch(() => say('计划没送到本地服务', true));
     },
+    syncArbiter(s) {
+      live.arb = s;
+      if (!live.arbMode) {
+        live.arbMode = true; live.arbN = -1; this.loadFeedback();
+        say('这局由仲裁器指挥：事件按阶段显示它的决策。点一条看依据、发出的命令和游戏回报，并在命令面板打分。');
+      }
+      const defs = s.arbEvents || [];
+      if (defs.length === live.arbN) return;
+      live.arbN = defs.length;
+      const num = r => parseInt(r.slice(1), 10), isB = r => r[0] === 'B';
+      const PH = [['g_b1', '开局', r => isB(r) && num(r) <= 9], ['g_b2', '清野', r => isB(r) && num(r) >= 10 && num(r) <= 18],
+        ['g_b3', '分矿', r => isB(r) && num(r) >= 19 && num(r) <= 23], ['g_b4', '二本', r => isB(r) && num(r) >= 24 && num(r) <= 26],
+        ['g_b5', '二本后', r => isB(r) && num(r) >= 27], ['g_a', '常驻规则（农民、农场、步兵）', r => !isB(r)]];
+      const open = new Map(groups.map(g => [g.id, g.open]));
+      groups = PH.map(([id, nm, f]) => ({id, name: nm, src: '仲裁器', open: open.get(id) ?? true,
+        children: defs.filter(d => f(d.rule)).map(d => ({...d, name: d.rule + ' ' + d.name, rt: (s.events || {})[d.id] || null}))}));
+      checkpoints = [];
+      buildTimeline();
+    },
+    async loadFeedback() {
+      try { const j = await (await fetch('/api/feedback')).json(); live.feedback = j.feedback || []; lastStatus = ''; } catch (_) { /* keep */ }
+    },
+    async rate(e, f) {
+      try {
+        const r = await fetch('/api/feedback', {method: 'POST', headers: {'content-type': 'application/json'},
+          body: JSON.stringify({event: e.id, rule: e.rule, action: e.name, t: e.start, ...f})});
+        const j = await r.json();
+        if (!j.ok) { say('没记下：' + j.error, true); return; }
+        live.feedback = j.feedback; lastStatus = '';
+        say('已记下对「' + e.name + '」的' + (f.score ? (f.score === 'good' ? '肯定' : '否定') : f.prio ? '优先级意见' : '意见'));
+      } catch (_) { say('没记下：连不上本地服务', true); }
+    },
     apply(s) {
       live.state = s;
+      if (s.arbiter) this.syncArbiter(s);
       if (s.enabled != null && s.enabled !== live.tactic) this.showTactic(s.enabled); // a new game starts with it on
       if (s.start != null && s.start !== startIndex) { startIndex = s.start; startSel.value = String(s.start); home(); say('游戏分配的出生点是' + W.starts[s.start].name + '，已切换'); }
       const evs = new Map(allEvents().map(e => [e.id, e]));

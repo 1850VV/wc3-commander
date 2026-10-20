@@ -8,6 +8,8 @@
                       or {"action": "launch", "on": true|false}: test switch, see Runner.launch
   GET  /api/stream    server-sent events: {"type": "state"} snapshots, {"type": "log"} lines and
                       {"type": "plan"} when the bridge picks the plan itself (the console adopts it)
+  GET  /api/feedback  the player's feedback on this game's arbiter decisions
+  POST /api/feedback  {event, rule, action, t, score: "good"|"bad", prio: "up"|"down", comment}: one more line
   GET  /api/strategies          saved strategies (name, time, start, event count)
   GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
   PUT  /api/strategies/<name>   save the console plan in the body under that name
@@ -34,6 +36,7 @@ from .arbiter import Arbiter
 from .engine import Commander
 
 ROOT = Path(__file__).resolve().parents[2]
+RUNS = ROOT / "bridge" / "runs"  # one folder per arbiter game: state.json (decisions, orders) + feedback.jsonl
 WEB = ROOT / "web"
 MAX_BODY = 1 << 20
 _UNSET = object()  # distinguishes "no name in the request" from an explicit null (no current layout)
@@ -125,8 +128,39 @@ class Runner:
         self.tactic = True  # the plan runs as soon as the game is connected; the console can switch it off
 
     def new_commander(self):
-        """The rule-driven arbiter (docs/规则表-人族速矿二本.md) for a plan marked "arbiter", else the timeline."""
-        return (Arbiter if self.plan.get("arbiter") else Commander)(self.data)
+        """The rule-driven arbiter (docs/规则表-人族速矿二本.md) for a plan marked "arbiter", else the timeline.
+        Each arbiter game gets its own folder under bridge/runs for its record and the player's feedback."""
+        arbiter = bool(self.plan.get("arbiter"))
+        self.run_dir = RUNS / (time.strftime("%Y%m%d-%H%M%S") + "-" + (self.plan_name or "plan").replace(" · ", "-")) if arbiter else None
+        self._saved = 0.0
+        return (Arbiter if arbiter else Commander)(self.data)
+
+    def persist(self, force=False) -> None:
+        """Write the arbiter game's state (decisions, order audit, events) every few seconds."""
+        if not getattr(self, "run_dir", None) or not self.state.get("arbiter") or (not force and time.time() - self._saved < 5):
+            return
+        self._saved = time.time()
+        try:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            (self.run_dir / "state.json").write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            traceback.print_exc()
+
+    def add_feedback(self, item: dict) -> list:
+        if not getattr(self, "run_dir", None):
+            raise ValueError("这局不是仲裁器在打，没有决策可以评价")
+        item = {k: item.get(k) for k in ("event", "rule", "action", "t", "score", "prio", "comment")}
+        item["at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        with (self.run_dir / "feedback.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        return self.feedback()
+
+    def feedback(self) -> list:
+        p = getattr(self, "run_dir", None)
+        if not p or not (p / "feedback.jsonl").is_file():
+            return []
+        return [json.loads(line) for line in (p / "feedback.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def log(self, text: str, level: str = "info") -> None:
         for q in list(self.listeners):
@@ -201,6 +235,7 @@ class Runner:
                 with self.lock:
                     actions = self.commander.tick(obs)
                     self.state = self.commander.snapshot()
+                self.persist()
                 batches = {slot: [] for slot in session.config.agent_slots}  # every agent slot needs a batch
                 batches[self.human_slot] = actions  # ours is the human's slot, not necessarily 0
                 if self.backend == "fake":
@@ -224,6 +259,7 @@ class Runner:
             self.log(f"连接出错：{exc}", "error")
         finally:
             self.running = False
+            self.persist(force=True)
             if session is not None:
                 session.close()
 
@@ -315,6 +351,7 @@ class Runner:
             with self.lock:
                 actions = self.commander.tick(obs)
                 self.state = self.commander.snapshot()
+            self.persist()
             obs, done, ack = game.step(actions)
             with self.lock:
                 self.commander.feedback(actions, ack.get("placements", []), ack.get("rejected", []))
@@ -325,6 +362,7 @@ class Runner:
                     self.commander.tick(obs)
                     self.state = self.commander.snapshot()
                 self.attached = None
+                self.persist(force=True)
                 self.log("本局结束，等你开下一局")
                 return
             time.sleep(max(0.0, 0.25 - (time.perf_counter() - tick_start)))
@@ -407,6 +445,9 @@ class Handler(SimpleHTTPRequestHandler):
             with self.runner.lock:
                 return self._json(200, {"ok": True, "plan": self.runner.plan, "name": self.runner.plan_name,
                                         "running": self.runner.running})
+        if self.path == "/api/feedback":
+            return self._json(200, {"ok": True, "feedback": self.runner.feedback(),
+                                    "run": self.runner.run_dir.name if getattr(self.runner, "run_dir", None) else None})
         if self.path == "/api/strategies":
             return self._json(200, {"ok": True, "strategies": strategies.list_all()})
         if self.path.startswith("/api/strategies/"):
@@ -437,6 +478,11 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/plan":
             self.runner.set_plan(body, body.get("name", _UNSET))
             return self._json(200, {"ok": True, "events": len(self.runner.commander.events)})
+        if self.path == "/api/feedback":
+            try:
+                return self._json(200, {"ok": True, "feedback": self.runner.add_feedback(body)})
+            except ValueError as exc:
+                return self._json(400, {"ok": False, "error": str(exc)})
         if self.path == "/api/control":
             action = body.get("action")
             if action == "start":

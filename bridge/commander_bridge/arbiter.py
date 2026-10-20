@@ -240,7 +240,32 @@ class Arbiter(Commander):
                 t = min(short, key=lambda t: have[t] / CASTERS[t])
                 self._add("B30", "train", "训练 " + self.eco[t]["name"], f"圣所空闲；{self.eco[t]['name']} {have[t]}/{CASTERS[t]}", utype=t)
 
+    def _adopt(self):
+        """A peasant with no job on our books but gathering (Warcraft put a finished builder to work)
+        is booked where he works, so A1-A3 count him and nobody calls him idle."""
+        for u in self.workers():
+            uid, order = u["unit_id"], u.get("order") or {}
+            if self.roles.get(uid) is not None or order.get("name") not in ("harvest", "resumeharvesting"):
+                continue
+            mine = self.mines.get(order.get("target_id"))
+            if mine:
+                where = "natural" if self.natural() is mine else "main"
+                self.roles[uid], self.mine_of[uid] = "gold", where
+                self.note("A2" if where == "natural" else "A1", f"农民{self.cid.get(uid, '?')} 记入{'分矿' if where == 'natural' else '主矿'}采金", "他已经在采金（建完后游戏让他就近采集）")
+            else:
+                self.roles[uid] = "wood"
+                self.note("A3", f"农民{self.cid.get(uid, '?')} 记入伐木", "他已经在伐木（建完后游戏让他就近采集）")
+            self._last_role[uid] = "wood" if self.roles[uid] == "wood" else ("natural" if self.mine_of.get(uid) == "natural" else "gold")
+
+    def _gold_heads(self, where):
+        """Miners at that mine now plus those on their way: builders and peasants in training sent there."""
+        n = sum(1 for u in self.workers() if self.roles.get(u["unit_id"]) == "gold" and self.mine_of.get(u["unit_id"], "main") == where)
+        n += sum(1 for u in self.obs.get("inside", []) if self.roles.get(u["unit_id"]) == "gold" and self.mine_of.get(u["unit_id"], "main") == where)
+        then = "natural" if where == "natural" else "gold"
+        return n + sum(1 for e in self.events if e.get("then") == then and self.rt[e["id"]]["status"] != "done")
+
     def _standing(self):
+        self._adopt()
         p = self.obs["player"]
         # A6: a farm before food runs out
         building_farm = self._open("A6") or self._open("B3")
@@ -256,9 +281,8 @@ class Arbiter(Commander):
                  and not any(j.get("producer") == s["unit_id"] for j in self.jobs.values())]
         queued = len([e for e in self._open("A5") if not (self.jobs.get(e["id"]) or {}).get("producer")])
         if halls and queued < len(halls) and len(self._peasants()) + queued < self._target() and p["food_used"] < p["food_cap"]:
-            main_gold = sum(1 for r, m in ((self.roles.get(u["unit_id"]), self.mine_of.get(u["unit_id"], "main")) for u in self.workers()) if r == "gold" and m == "main")
-            nat_gold = sum(1 for u in self.workers() if self.roles.get(u["unit_id"]) == "gold" and self.mine_of.get(u["unit_id"]) == "natural")
-            then = "natural" if self.natural_ready() and nat_gold < GOLD_PER_MINE else "gold" if main_gold < GOLD_PER_MINE else "wood"
+            then = ("natural" if self.natural_ready() and self._gold_heads("natural") < GOLD_PER_MINE
+                    else "gold" if self._gold_heads("main") < GOLD_PER_MINE else "wood")
             self._add("A5", "train", "训练农民 → " + {"gold": "采金", "wood": "伐木", "natural": "分矿采金"}[then],
                       f"农民 {len(self._peasants())}/{self._target()}" + ("；主基地留给二本" if keep_due else ""), utype="hpea", then=then, avoid=avoid)
         # A7: footmen up to six
@@ -280,6 +304,32 @@ class Arbiter(Commander):
 
     def snapshot(self) -> dict:
         s = super().snapshot()
-        s["decisions"] = self.decisions
         s["arbiter"] = True
+        s["decisions"] = self.decisions
+        for e in self.events:  # accepted but never carried out: ordered 15 s ago, no sign of it in the game
+            r = self.rt[e["id"]]
+            confirm = {"build": "bStart", "train": "trainStart", "upgrade": "trainStart"}.get(e["kind"])
+            r["unexecuted"] = bool(confirm and r.get("ordered") is not None and r.get(confirm) is None
+                                   and r.get("status") != "done" and self.t - r["ordered"] > 15)
+        s["arbEvents"] = [{k: e.get(k) for k in ("id", "rule", "name", "kind", "start", "why", "prio")} for e in self.events]
+        clean = lambda x: {k: v for k, v in x.items() if k != "_action"}
+        log = self.order_log
+        s["orders"] = {
+            "total": len(log),
+            "untagged": [clean(x) for x in log if x["rule"] is None][-20:],
+            "untaggedCount": sum(1 for x in log if x["rule"] is None),
+            "repeats": [clean(x) for x in log if x.get("repeat")][-20:],
+            "repeatCount": sum(1 for x in log if x.get("repeat")),
+            "rejected": [clean(x) for x in log if x.get("rejected")][-20:],
+            "recent": [clean(x) for x in log[-40:]],
+            "byEvent": self._orders_by_event(),
+        }
         return s
+
+    def _orders_by_event(self):
+        """The last few orders of each event, for the console's detail panel."""
+        out: dict[str, list] = {}
+        for x in self.order_log:
+            if x.get("event"):
+                out.setdefault(x["event"], []).append({k: x.get(k) for k in ("t", "cid", "command", "args", "rule", "rejected", "repeat", "dropped")})
+        return {k: v[-12:] for k, v in out.items()}

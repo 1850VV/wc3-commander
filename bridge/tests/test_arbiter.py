@@ -67,6 +67,42 @@ class ArbiterOpeningTest(unittest.TestCase):
     def test_no_orders_rejected(self):
         self.assertEqual(self.rejected, [])
 
+    def test_every_order_comes_from_a_rule(self):
+        self.assertTrue(self.c.order_log)
+        untagged = [x for x in self.c.order_log if not x["rule"]]
+        self.assertEqual(untagged, [], "an order with no rule is an unexplained action")
+
+    def test_decisions_record_when_they_were_ordered(self):
+        altar = next(e for e in self.c.events if e["rule"] == "B2")
+        rt = self.c.rt[altar["id"]]
+        self.assertIsNotNone(rt.get("ordered"))
+        self.assertGreaterEqual(rt["bStart"], rt["ordered"])
+        snap = self.c.snapshot()
+        self.assertEqual(snap["orders"]["untaggedCount"], 0)
+        self.assertIn(altar["id"], snap["orders"]["byEvent"])
+
+
+class FeedbackTest(unittest.TestCase):
+    def test_feedback_is_kept_with_the_game(self):
+        import tempfile
+        from commander_bridge import server
+        with tempfile.TemporaryDirectory() as tmp:
+            saved, server.RUNS = server.RUNS, Path(tmp)
+            try:
+                r = server.Runner("fake", 1.0, "none")
+                r.plan, r.plan_name = {"arbiter": True, "groups": []}, "人族速矿二本 · 南方"
+                r.commander = r.new_commander()
+                self.assertIsInstance(r.commander, Arbiter)
+                out = r.add_feedback({"event": "r2", "rule": "B2", "action": "建造 国王祭坛", "t": 0, "score": "bad", "comment": "太晚"})
+                self.assertEqual((out[-1]["rule"], out[-1]["score"], out[-1]["comment"]), ("B2", "bad", "太晚"))
+                self.assertTrue((r.run_dir / "feedback.jsonl").is_file())
+                r.plan = {"groups": []}
+                r.commander = r.new_commander()
+                with self.assertRaises(ValueError):  # a timeline game has no decisions to rate
+                    r.add_feedback({"event": "x"})
+            finally:
+                server.RUNS = saved
+
 
 if __name__ == "__main__":
     unittest.main()
