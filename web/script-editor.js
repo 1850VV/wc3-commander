@@ -288,13 +288,14 @@
     const who = info && info.who.length > 1 ? `<span class="who">${info.who.map(w => `<i class="${w.state}" title="${esc(w.label)}">${esc(w.label.replace('农民', ''))}</i>`).join('')}</span>` : '';
     return (o.cond ? `<span class="c" title="开始条件">${esc(o.cond)}</span>` : '') + `<b>${esc(o.body)}</b>` +
       (o.pos ? `<span class="p">@${esc(o.pos)}</span>` : '') + (o.tag ? `<span class="g">#${esc(o.tag)}</span>` : '') +
+      `<button type="button" class="x" data-del title="删除这一步" aria-label="删除这一步">×</button>` +
       (info && info.t != null ? `<span class="tm" title="${info.stale ? '改过：这是改之前的时间，点「预演」更新' : '这一步开始的时间'}">${api.fmt(info.t)}${info.stale ? '?' : ''}</span>` : '') + who;
   }
   function render() {
     if (!root || !M) return;
     const T = timing(), src = T && T.src, time = S.view === 'time' && !!T;
     const errN = S.errors.general.length + Object.keys(S.errors.lane).length + Object.keys(S.errors.pos).length + Object.keys(S.errors.res).length;
-    let h = `<div class="se-bar">
+    let h = `<div class="se-top"><div class="se-bar">
       <span class="seg"><button type="button" data-view="flow" class="${S.view === 'flow' ? 'on' : ''}">顺序</button><button type="button" data-view="time" class="${S.view === 'time' ? 'on' : ''}" ${T ? '' : 'disabled title="先点「预演」，或连接游戏 / 打开回放"'}>时间</button></span>
       <button type="button" class="btn" data-act="preview" ${S.busy ? 'disabled' : ''}>${S.busy ? '预演中…' : '预演（' + esc(api.startName(api.startIndex())) + '）'}</button>
       <button type="button" class="btn ${S.saved ? '' : 'on'}" data-act="save">保存</button>
@@ -304,8 +305,8 @@
       <span class="se-src">${src ? '时间来自：' + esc(src.label) + ' · ' + api.fmt(src.T) : '还没有时间：点「预演」'}</span></div>`;
     h += '<div class="se-pal"><span class="hint">拖到一行里（或先点一行再点这里）：</span>' + PALETTE.map(([kind, items]) =>
       `<span class="grp"><em>${KIND_NAME[kind]}</em>${items.map(r => `<span class="chip-step k-${stepClass(r)}" draggable="true" data-raw="${esc(r)}" data-kind="${kind}">${esc(r === '农民N' ? '农民（新编号）' : r)}</span>`).join('')}</span>`).join('') + '</div>';
-    h += `<div class="se-errs">${errorsHTML()}</div>`;
-    h += `<div class="se-lanes ${time ? 'time' : 'flow'}">`;
+    h += `<div class="se-errs">${errorsHTML()}</div></div>`;
+    h += `<div class="se-main"><div class="se-lanes ${time ? 'time' : 'flow'}">`;
     if (time) {
       h += '<div class="se-row ruler"><div class="se-lab hint">一行 ／ 时间</div><div class="se-track">';
       for (let t = 0; t < T_END; t += 60) h += `<span class="tick" style="left:${pct(t)}">${api.fmt(t)}</span>`;
@@ -318,7 +319,8 @@
         const timedInfo = T ? T.lanes[i] : null;
         h += `<div class="se-row k-${kind} ${selL && S.sel.s == null ? 'sel' : ''} ${err ? 'err' : ''}" data-l="${i}">`;
         h += `<div class="se-lab" data-l="${i}" title="${esc((ln.note ? ln.note + '\n' : '') + (err ? err.join('\n') : '点一下编辑这一行'))}"><b>${esc(ln.head)}</b>` +
-          (ln.note ? '<i class="note">注</i>' : '') + (err ? '<i class="bad">!</i>' : '') + '</div>';
+          (ln.note ? '<i class="note">注</i>' : '') + (err ? '<i class="bad">!</i>' : '') +
+          `<button type="button" class="x" data-dellane="${i}" title="删除这一行" aria-label="删除 ${esc(ln.head)} 这一行">×</button></div>`;
         h += `<div class="se-track" data-l="${i}">`;
         let hidden = 0;
         ln.steps.forEach((st, s) => {
@@ -337,7 +339,7 @@
       }
     }
     h += '</div>';
-    h += editorHTML();
+    h += `<aside class="se-side">${editorHTML() || '<div class="se-edit empty"><div class="ttl">编辑</div><div class="hint">点一张卡片改它的条件、动作、位置；点左边的名字改这一行（谁、备注、上下移、删除）。卡片和名字右上角的 × 直接删除，Ctrl+Z 撤销。</div></div>'}</aside></div>`;
     h += positionsHTML();
     h += reservesHTML();
     if (S.showText) h += `<div class="se-textbox"><textarea spellcheck="false" id="seText">${esc(S.textDraft != null ? S.textDraft : toText().text)}</textarea>
@@ -347,6 +349,8 @@
       `地图上的菱形是脚本里的位置。保存写回 strategies/战术脚本-人族速矿二本.txt，下一局按它打。</div>`;
     root.innerHTML = h;
     S.textDraft = null;
+    const top = root.querySelector('.se-top'); // the side editor sticks just below the sticky toolbar
+    if (top) root.style.setProperty('--se-top', top.offsetHeight + 8 + 'px');
   }
   /* every mistake, named by the lane or place it is in; a click selects that lane */
   function errorsHTML() {
@@ -434,6 +438,12 @@
     const t = ev.target.closest('button, .sc, .se-lab, .chip-step, .se-add');
     if (!t || !root.contains(t)) return;
     const act = t.dataset.act;
+    if (t.dataset.del != null) { const c = t.closest('.sc'); S.sel = {l: +c.dataset.l, s: +c.dataset.s}; deleteStep(); return; }
+    if (t.dataset.dellane != null) {
+      const i = +t.dataset.dellane, head = M.lanes[i].head;
+      change(() => { M.lanes.splice(i, 1); S.sel = null; }, `已删除「${head}」这一行（Ctrl+Z 或「撤销」恢复）`);
+      return;
+    }
     if (t.dataset.errlane != null) { S.sel = {l: +t.dataset.errlane}; render(); root.querySelector(`.se-row[data-l="${t.dataset.errlane}"]`).scrollIntoView({block: 'nearest'}); return; }
     if (t.dataset.view) { if (t.dataset.view === 'time' && !timing()) return; S.view = t.dataset.view; render(); return; }
     if (t.dataset.cond != null && S.sel && S.sel.s != null) { // a condition preset: add it (or clear)
@@ -464,7 +474,7 @@
       case 'addlane': addLane(t.dataset.kind); break;
       case 'laneup': case 'lanedown': moveLane(act === 'laneup' ? -1 : 1); break;
       case 'lanedup': change(() => { M.lanes.splice(sel.l + 1, 0, JSON.parse(JSON.stringify(ln))); S.sel = {l: sel.l + 1}; }, '已复制这一行；记得改「谁」'); break;
-      case 'lanedel': if (confirm(`删除「${ln.head}」这一整行？`)) change(() => { M.lanes.splice(sel.l, 1); S.sel = null; }, `已删除「${ln.head}」`); break;
+      case 'lanedel': change(() => { M.lanes.splice(sel.l, 1); S.sel = null; }, `已删除「${ln.head}」这一行（Ctrl+Z 或「撤销」恢复）`); break;
       case 'stepdup': change(() => { ln.steps.splice(sel.s + 1, 0, {raw: ln.steps[sel.s].raw}); S.sel = {l: sel.l, s: sel.s + 1}; }); break;
       case 'stepdel': deleteStep(); break;
       case 'posadd': change(() => { let n = 1; while (M.positions.some(p => p.name === '新位置' + n)) n++; M.positions.push({name: '新位置' + n, expr: '布局.农场1', note: ''}); S.open = true; }); break;
@@ -608,7 +618,7 @@
   /* time view: drag a card sideways = "not before this time" */
   function onPointerDown(ev) {
     const c = ev.target.closest('.se-lanes.time .sc');
-    if (!c || ev.button !== 0) return;
+    if (!c || ev.button !== 0 || ev.target.closest('.x')) return;
     const track = c.parentElement, tr = track.getBoundingClientRect(), x0 = ev.clientX, left0 = c.offsetLeft;
     let moved = false;
     c.setPointerCapture(ev.pointerId);

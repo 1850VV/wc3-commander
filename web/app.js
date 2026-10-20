@@ -536,8 +536,10 @@
     }
   }
   document.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); return; }
+    if (window.ScriptEditor && ScriptEditor.active()) return; // its own keys (Delete, Ctrl+Z) act on the script's cards
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && lastDel) { e.preventDefault(); undoDel(); return; }
     if (e.key === 'Escape') { if (placing) stopPlace(); else { sel = null; renderCmd(); markSel(); } return; }
     const k = e.key.length === 1 ? e.key.toUpperCase() : ({ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Delete: 'X'})[e.key];
     const btn = k && [...cmdEl.querySelectorAll('button')].find(b => b.dataset.key === k); if (btn) { e.preventDefault(); btn.click(); }
@@ -549,12 +551,25 @@
     planChanged(); say('已加入时间轴：' + fmt(e.start) + ' ' + e.name); return e;
   }
   function shiftEv(e, d) { e.start = Math.max(0, Math.min(T_END - 1, e.start + d)); planChanged(); }
+  let lastDel = null; // the last deleted event, for 撤销 / Ctrl+Z
   function delEv(e) {
+    const g0 = groups.find(g => g.children.includes(e));
+    lastDel = {e, gid: g0 && g0.id, idx: g0 ? g0.children.indexOf(e) : 0};
     groups.forEach(g => g.children = g.children.filter(x => x !== e));
     const waiting = allEvents().filter(x => x.after === e.id);
+    lastDel.waiting = waiting.map(x => x.id);
     for (const x of waiting) delete x.after; // they fall back to their planned time
     sel = null; planChanged(); renderCmd();
     say('已删除：' + e.name + (waiting.length ? '；' + waiting.map(x => '「' + x.name + '」').join('') + '不再等它，改回按计划时间开始' : ''));
+    const u = document.createElement('button'); u.type = 'button'; u.className = 'link'; u.textContent = '撤销（Ctrl+Z）'; u.onclick = undoDel;
+    msgEl.appendChild(document.createTextNode(' ')); msgEl.appendChild(u);
+  }
+  function undoDel() {
+    const d = lastDel; if (!d) { say('没有可以撤销的删除'); return; }
+    lastDel = null;
+    const g = groups.find(x => x.id === d.gid) || groups[0]; g.children.splice(Math.min(d.idx, g.children.length), 0, d.e); g.open = true;
+    for (const x of allEvents()) if (d.waiting.includes(x.id)) x.after = d.e.id;
+    planChanged(); renderCmd(); say('已恢复：' + d.e.name);
   }
   function setAfter(e, id) { if (id) e.after = id; else delete e.after; planChanged(); renderCmd(); say(id ? `「${e.name}」改为等「${allEvents().find(x => x.id === id).name}」完成后再开始` : `「${e.name}」改回按计划时间开始`); }
   const msgEl = $('msg');
@@ -624,6 +639,11 @@
       for (const e of g.children) {
         const r = document.createElement('div'); r.className = 'row child';
         r.innerHTML = `<div class="lab"><span class="chip ${e.kind}">${KIND[e.kind]}</span><span>${e.name}</span></div>`;
+        if (!live.arbMode && !live.replay) { // delete right here, no trip to the command card
+          const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.textContent = '×'; x.title = '删除这个事件（可撤销）';
+          x.setAttribute('aria-label', '删除 ' + e.name); x.onclick = ev => { ev.stopPropagation(); delEv(e); };
+          r.firstChild.appendChild(x);
+        }
         const t = document.createElement('div'); t.className = 'track'; t.addEventListener('pointerdown', seekFrom);
         const b = document.createElement('div'); b.className = 'ev'; attachDrag(b, e, t); t.appendChild(b); r.appendChild(t); tlBody.appendChild(r);
         barRefs.push({e, el: b});

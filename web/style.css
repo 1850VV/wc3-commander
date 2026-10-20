@@ -252,3 +252,23 @@ button.chip-step{cursor:pointer}
 .se-lanes.time .sc .c{display:none}
 .se-errs .link{text-align:left;padding:0}
 .sc.stale{border-style:dashed;opacity:.8}
+/* the toolbar stays on screen; the editor sits beside the lanes and follows the scroll */
+.se-top{position:sticky;top:0;z-index:5;background:var(--panel);display:flex;flex-direction:column;gap:6px;padding:8px 0 6px;margin-top:-8px;border-bottom:1px solid var(--line)}
+.se-main{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:10px;align-items:start}
+.se-side{position:sticky;top:var(--se-top,110px);max-height:calc(100vh - var(--se-top,110px) - 8px);overflow:auto}
+.se-side .se-edit label{grid-template-columns:4.5em minmax(0,1fr)}
+.se-side .se-edit .presets{padding-left:0}
+.se-edit.empty{border-color:var(--line);background:var(--panel-2)}
+.x{background:transparent;border:0;color:var(--muted);font-size:13px;line-height:1;padding:0 2px;margin-left:2px;opacity:0;cursor:pointer}
+.x:hover{color:var(--bad)}
+.sc:hover .x,.sc.sel .x,.se-lab:hover .x,.se-row.sel .se-lab .x,.row.child:hover .lab .x,.x:focus-visible{opacity:1}
+.se-lab .x{margin-left:auto}
+.se-lanes.time .sc .x{position:absolute;right:1px;top:3px;background:var(--panel-2)}
+@media (hover:none){.x{opacity:.8}}
+@media (max-width:1100px){
+  .se-main{grid-template-columns:minmax(0,1fr)}
+  .se-side{order:-1;position:static;max-height:none}
+}
+.row.child .lab .x{margin-left:auto;flex:none}
+.msg .link{padding:0 2px}
+.row.child .lab>span:nth-child(2){overflow:hidden;text-overflow:ellipsis;min-width:0}
