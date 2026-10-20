@@ -23,6 +23,7 @@ PEASANT_SPEED, MILITIA_SPEED = 190.0, 270.0
 CALL_TO_ARMS = 2.0                       # seconds for a peasant to change once he reaches the hall
 FOOD_MARGIN = 4                          # A6: build a farm when this little food is left
 FOOTMEN = 6                              # A7
+RATE_WINDOW = 30.0                       # A10: income measured over the last 30 game seconds
 CASTERS = {"hspt": 6, "hmpr": 3, "hsor": 3}  # B30: breakers, priests, sorceresses
 VAULT_AT = 405.0                         # B26: the build order's 6:45
 PRIO = {"A5": 90, "A6": 80, "A7": 60, "B2": 100, "B3": 100, "B4": 95, "B6": 100, "B11": 95, "B13": 95,
@@ -40,6 +41,10 @@ class Arbiter(Commander):
         self._cur_prio = 0
         self._last_role: dict[int, str] = {}
         self.game_events: list[dict] = []   # what the game itself reported, to check our record against
+        self._bank: tuple | None = None     # last tick's gold/lumber, to measure what was gathered
+        self._got = [0.0, 0.0]              # gathered so far (sum of increases)
+        self._income: list[tuple] = []      # (t, gathered gold, gathered lumber)
+        self._borrowed: set = set()         # events that used A10 once (logged once)
 
     def _ingest(self, obs: dict) -> None:
         for ev in obs.get("events", []):
@@ -171,6 +176,16 @@ class Arbiter(Commander):
     def _peasants(self):
         return [u for u in self.units() if u["type_id"] in ("hpea", "hmil")] + [u for u in self.obs.get("inside", []) if u["type_id"] in ("hpea", "hmil")]
 
+    def _worker_target(self) -> int:
+        """The timeline commander's cap on peasants does not apply: A5 decides who is short."""
+        return 10 ** 6
+
+    def _keep_wait(self) -> float:
+        """Seconds until the keep (A9) could be paid for, at the current income."""
+        rg, rw = self._held()
+        gr, wr = self._rates()
+        return max(max(0.0, rg - self.budget[0]) / gr, max(0.0, rw - self.budget[1]) / wr)
+
     def _target(self):
         halls = sum(1 for s in self.structures() if s["type_id"] in HALLS)
         natural_planned = any(e.get("rule") == "B19" for e in self.events)
@@ -181,7 +196,64 @@ class Arbiter(Commander):
         return self.rt[e["id"]] if e else {}
 
     # ---- the rules, every tick -------------------------------------------------------------------
+    # ---- A10: gold is there, the hall/keep waits on lumber -------------------------------------
+    def _track_income(self):
+        p = self.obs["player"]
+        if self._bank:
+            self._got[0] += max(0, p["gold"] - self._bank[0])
+            self._got[1] += max(0, p["lumber"] - self._bank[1])
+        self._bank = (p["gold"], p["lumber"])
+        self._income.append((self.t, *self._got))
+        while self._income and self.t - self._income[0][0] > RATE_WINDOW:
+            self._income.pop(0)
+
+    def _rates(self):
+        """Gold and lumber gathered per second lately (a floor keeps a slow start from dividing by zero)."""
+        if len(self._income) < 2 or self._income[-1][0] - self._income[0][0] < 5:
+            return 3.0, 1.0
+        (t0, g0, w0), (t1, g1, w1) = self._income[0], self._income[-1]
+        return max(0.3, (g1 - g0) / (t1 - t0)), max(0.2, (w1 - w0) / (t1 - t0))
+
+    def _held(self):
+        """What the hall (A8) and keep (A9) still need, whoever asks."""
+        saved, self._cur_prio = self._cur_prio, -1
+        try:
+            return self._reserve()
+        finally:
+            self._cur_prio = saved
+
+    def waiting_on_wood(self) -> bool:
+        rg, rw = self._held()
+        if rw <= self.budget[1]:
+            return False
+        gr, wr = self._rates()
+        return (rw - self.budget[1]) / wr > max(0.0, rg - self.budget[0]) / gr
+
+    def afford(self, g, w, reserve=True) -> bool:
+        if super().afford(g, w, reserve) or not reserve:
+            return super().afford(g, w, reserve)
+        if self.budget[0] < g or self.budget[1] < w:
+            return False  # cannot pay at all
+        rg, rw = self._reserve()
+        if not (rg or rw):
+            return False
+        gr, wr = self._rates()
+        b0, b1 = self.budget
+        wait = lambda gold, wood: max(max(0.0, rg - gold) / gr, max(0.0, rw - wood) / wr)
+        now, after = wait(b0, b1), wait(b0 - g, b1 - w)
+        if after > now + 0.5:
+            return False
+        eid = (self.ctx or (None, None))[1]
+        if eid and eid not in self._borrowed:
+            self._borrowed.add(eid)
+            e = next((x for x in self.events if x["id"] == eid), {})
+            short_w, short_g = max(0, rw - b1), max(0, rg - b0)
+            self.note("A10", "先花钱：" + e.get("name", "?"),
+                      f"分基地/二本在等资源（还差木 {short_w:.0f}、金 {short_g:.0f}，约 {now:.0f} 秒）；花掉 {g} 金 {w} 木后仍约 {after:.0f} 秒，不会更晚")
+        return True
+
     def _decide(self) -> None:
+        self._track_income()
         if not self.hall:
             return
         self._opening()
@@ -305,6 +377,19 @@ class Arbiter(Commander):
                 self.note("A3", f"农民{self.cid.get(uid, '?')} 记入伐木", "他已经在伐木（建完后游戏让他就近采集）")
             self._last_role[uid] = "wood" if self.roles[uid] == "wood" else ("natural" if self.mine_of.get(uid) == "natural" else "gold")
 
+    def _builders_from_wood(self) -> int:
+        """Peasants away building who go back to cutting afterwards: they still count as lumberjacks
+        (no replacement is trained for a builder). The clear crew building at the natural does not:
+        they become the natural's miners."""
+        n = 0
+        for job in self.jobs.values():
+            if job.get("worker") is not None and self.roles.get(job["worker"]) == "build" and job.get("prior") in (None, "wood"):
+                n += 1
+            for uid, prior in (job.get("helper_prior") or {}).items():
+                if self.roles.get(uid) == "build" and prior in (None, "wood"):
+                    n += 1
+        return n
+
     def _gold_heads(self, where):
         """Miners at that mine now plus those on their way: builders and peasants in training sent there."""
         n = sum(1 for u in self.workers() if self.roles.get(u["unit_id"]) == "gold" and self.mine_of.get(u["unit_id"], "main") == where)
@@ -324,15 +409,32 @@ class Arbiter(Commander):
         # A5: peasants, one per idle hall; the main hall stays free once the keep is due
         keep = next(iter(self._open("B24")), None)
         keep_due = keep is not None and (self.jobs.get(keep["id"]) or {}).get("state") == "waiting"
-        avoid = [self.hall["unit_id"]] if keep_due else []
+        keep_wait = self._keep_wait() if keep_due else 0.0
+        # A10: the main hall is kept free for the keep only when the keep can start before a peasant
+        # (15 s) would be done; while the keep still waits on lumber the hall trains lumberjacks.
+        hold_hall = keep_due and keep_wait < self.eco["hpea"]["time"] + 1
+        avoid = [self.hall["unit_id"]] if hold_hall else []
         halls = [s for s in self.structures() if s["type_id"] in HALLS and s["unit_id"] not in avoid and not s.get("queue")
                  and not any(j.get("producer") == s["unit_id"] for j in self.jobs.values())]
         queued = len([e for e in self._open("A5") if not (self.jobs.get(e["id"]) or {}).get("producer")])
-        if halls and queued < len(halls) and len(self._peasants()) + queued < self._target() and p["food_used"] < p["food_cap"]:
-            then = ("natural" if self.natural_ready() and self._gold_heads("natural") < GOLD_PER_MINE
-                    else "gold" if self._gold_heads("main") < GOLD_PER_MINE else "wood")
+        # Who is short: each mine of its five, lumber of its target counting only peasants actually
+        # cutting (militia, the clear crew and builders are away) plus those already in training for it.
+        main_short = max(0, GOLD_PER_MINE - self._gold_heads("main"))
+        nat_short = max(0, GOLD_PER_MINE - self._gold_heads("natural")) if self.natural_ready() else 0
+        boost = self.waiting_on_wood()
+        wood_target = WOOD_TARGET  # A3: lumberjacks plus builders from lumber, eight in all (the player)
+        cutting = sum(1 for u in self.workers() if self.roles.get(u["unit_id"]) == "wood") + self._builders_from_wood()
+        incoming = sum(1 for e in self._open("A5") if e.get("then") == "wood")
+        wood_short = max(0, wood_target - cutting - incoming)
+        if halls and queued < len(halls) and (main_short or nat_short or wood_short) and p["food_used"] < p["food_cap"]:
+            then = "natural" if nat_short else "gold" if main_short else "wood"
+            why = f"主矿采金差 {main_short}" + (f"，分矿差 {nat_short}" if self.natural_ready() else "") + f"，伐木 {cutting}+{incoming}/{wood_target}"
+            if boost:
+                why += "（分基地/二本在等木头，金子够：先补伐木，A10）"
+            if keep_due and not hold_hall:
+                why += f"；二本按采集速度还要等约 {keep_wait:.0f} 秒，主基地先训练农民（A10）"
             self._add("A5", "train", "训练农民 → " + {"gold": "采金", "wood": "伐木", "natural": "分矿采金"}[then],
-                      f"农民 {len(self._peasants())}/{self._target()}" + ("；主基地留给二本" if keep_due else ""), utype="hpea", then=then, avoid=avoid)
+                      why + ("；主基地留给二本" if hold_hall else ""), utype="hpea", then=then, avoid=avoid)
         # A7: footmen up to six
         bars = [s for s in self._have("hbar") if not s.get("queue") and not any(j.get("producer") == s["unit_id"] for j in self.jobs.values())]
         if bars and self._footmen() < FOOTMEN and not self._open("A7"):
