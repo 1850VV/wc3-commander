@@ -34,6 +34,8 @@ class Orchestrator(Arbiter):
         self.rows.sort(key=lambda r: r["no"])
         self.row_state = {r["no"]: "pending" for r in self.rows}
         self.row_events = {r["no"]: [] for r in self.rows}
+        # the player sets the altar's rally (M13): the commander's own rally-at-the-hall stays off
+        self.auto_rally = not any(s["m"] == 13 and s["building"] == "halt" for r in self.rows for s in r["steps"])
 
     # ---- events and records ------------------------------------------------------------------
     def _emit(self, row, kind, name, why, **fields) -> dict:
@@ -83,15 +85,34 @@ class Orchestrator(Arbiter):
         for e in self.events:
             r = self._rt_of(e)
             if e.get("utype") == "Hamg" and r.get("trainStart") is not None:
-                return r["trainStart"] + HERO_TIME
+                # the game reports the item's full training time (queue_seconds); it started at train_start
+                total = next((b["queue_seconds"] for b in self._have("halt") if (b.get("queue") or [])[:1] == ["Hamg"] and b.get("queue_seconds")), HERO_TIME)
+                return r["trainStart"] + total
         return None
 
-    def _militia_lead(self):
+    MARGIN = 2.0  # seconds early for the call to arms: the commander looks at the game every 0.25-4 s
+    FRONT = 380  # 祭坛前方空地: this far from the altar towards the base, open ground the hero can leave from
+
+    def _point(self, place):
+        """A named place as {"x", "y"}: 本方向分矿, 祭坛前方空地 or 祭坛旁."""
+        if place == "natural":
+            return {"x": self.natural_at[0], "y": self.natural_at[1]} if self.natural_at else None
         altar = next(iter(self._have("halt")), None)
-        wood = sorted((u for u in self.workers() if self.roles.get(u["unit_id"]) == "wood"), key=lambda u: dist(u, self.hall))[:5]
-        if not altar or not wood:
+        if not altar:
             return None
-        return dist(wood[-1], self.hall) / PEASANT_SPEED + CALL_TO_ARMS + dist(self.hall, altar) / MILITIA_SPEED
+        x, y = self._toward(altar, self.hall, self.FRONT if place == "front" else 200)
+        return {"x": x, "y": y}
+
+    def _militia_lead(self):
+        """Seconds for the call to arms: the farthest of the five lumberjacks to the hall, the change,
+        and the militia from the hall to the gathering point (the player: count it to the altar's front)."""
+        step = next((s for r in self.rows for s in r["steps"] if s["m"] == 8), None)
+        gather = self._point(step["gather"] if step else "altar")
+        n = step["count"] if step else 5
+        wood = sorted((u for u in self.workers() if self.roles.get(u["unit_id"]) == "wood"), key=lambda u: dist(u, self.hall))[:n]
+        if not gather or not wood:  # fewer than n cutting right now (some are building): time the ones there are
+            return None
+        return dist(wood[-1], self.hall) / PEASANT_SPEED + CALL_TO_ARMS + dist(self.hall, gather) / MILITIA_SPEED
 
     def _count(self, what) -> int:
         if what == "伐木":
@@ -115,7 +136,7 @@ class Orchestrator(Arbiter):
             if eta is None:
                 return False
             lead = c["lead"] if c["lead"] is not None else self._militia_lead()
-            return lead is not None and self.t >= eta - lead
+            return lead is not None and self.t >= eta - lead - self.MARGIN
         if k == "peasant":
             uid = self.uid.get(c["cid"])
             return uid is not None and any(u["unit_id"] == uid for u in self.units())
@@ -143,7 +164,11 @@ class Orchestrator(Arbiter):
             no = row["no"]
             if self.row_state[no] == "pending" and all(self._holds(c, row) for c in row["start"]):
                 self.row_state[no] = "active"
-                self.note("R%d" % no, f"第 {no} 行开始：{row['text']}", f"启动条件「{row['startText'] or '0:00'}」满足")
+                extra = ""
+                if any(c["kind"] == "hero_eta" for c in row["start"]):
+                    eta, lead = self._hero_eta(), self._militia_lead()
+                    extra = f"：大法师还剩 {max(0, eta - self.t):.0f} 秒出生，敲钟集合用时约 {lead:.0f} 秒" if eta is not None and lead is not None else ""
+                self.note("R%d" % no, f"第 {no} 行开始：{row['text']}", f"启动条件「{row['startText'] or '0:00'}」满足{extra}")
                 self._caps()
                 for i, step in enumerate(row["steps"]):
                     self._begin(row, i, step)
@@ -166,7 +191,7 @@ class Orchestrator(Arbiter):
                 if s["m"] == 1:
                     self.gold_cap[s["mine"]] = s["count"]
                     self._worker_rules["natural" if s["mine"] == "natural" else "gold"] = ("R%d" % row["no"], f"{'分矿' if s['mine'] == 'natural' else '主矿'}采金 {s['count']} 人")
-                elif s["m"] == 2:
+                elif s["m"] == 2 and not s.get("crew"):  # the crew cutting at the natural is not the main base's lumber
                     self.wood_cap = s["count"]
                     self._worker_rules["wood"] = ("R%d" % row["no"], f"伐木 {s['count']} 人（含去建造的）")
 
@@ -180,7 +205,14 @@ class Orchestrator(Arbiter):
             return {"site": step["xy"], "at": step["xy"]}
         if w == "natural":
             place = self._place("natural:" + step["btype"])
-            return dict(place, near="natural") if place else {"near": "natural", "site": list(self.natural_at)}
+            if place:
+                return dict(place, near="natural")
+            # not in the layout (e.g. a lumber mill at the natural): behind where the hall goes, away from the mine
+            hall_site = (self.sites.get("natural:htow") or [{}])[0].get("site") or list(self.natural_at)
+            mine = {"x": self.natural_at[0], "y": self.natural_at[1]}
+            # 640 behind: at 420 east's lumber mill took the hall's ground and the game moved the hall to a spot it never built on
+            spot = self._toward(mine, {"x": hall_site[0], "y": hall_site[1]}, dist(mine, {"x": hall_site[0], "y": hall_site[1]}) + 640)
+            return {"near": "natural", "site": spot}
         place = self._place(step["btype"])
         if place:
             return place if w == "layout" else {"site": place["site"]}
@@ -194,7 +226,7 @@ class Orchestrator(Arbiter):
             fields = {"unit": s["builder"], "btype": s["btype"], **self._site_for(s)}
             if s.get("helpers"):
                 fields["helpers"] = s["helpers"]
-            if s.get("then"):
+            if s.get("then") and not (s.get("crew") and s["then"] == "wood"):  # crew: back to cutting at the natural (M2 分矿组)
                 fields["then"] = s["then"]
             if s.get("crew"):
                 fields["near"] = "natural"
@@ -210,8 +242,8 @@ class Orchestrator(Arbiter):
         elif m == 7:
             self._emit(row, "learn", f"{self.eco[s['hero']]['name']}学{s['abilityName']}", why, hero=s["hero"], ability=s["ability"], abilityName=s["abilityName"])
         elif m == 8:
-            altar = next(iter(self._have("halt")), None)
-            to = self._toward(altar, self.hall, 200) if altar else None
+            p = self._point(s.get("gather", "altar"))
+            to = [round(p["x"]), round(p["y"])] if p else None
             self._emit(row, "militia", f"敲钟：{s['count']} 个{'采金' if s['from'] == 'gold' else '伐木'}农民变民兵", why,
                        count=s["count"], **{"from": s["from"]}, **({"to": to} if to else {}))
         elif m == 9:
@@ -239,12 +271,48 @@ class Orchestrator(Arbiter):
         elif m == 12:
             self._food(row, s, why)
         elif m == 13 and not self.made.get(key):
-            b = next(iter(self._have(s["building"])), None)
-            toward = self.hall if s["toward"] in HALLS else next(iter(self._have(s["toward"])), None)
-            if b and toward:
-                self._in(("R%d" % row["no"], None), lambda: self.order(b["unit_id"], "cast", order="setrally", x=toward["x"], y=toward["y"]))
-                self.made[key] = 1
-                self.note("R%d" % row["no"], f"设集结点：{self.eco[s['building']]['name']} → {self.eco[s['toward']]['name']}", why)
+            self._rally(row, key, s, why)
+        elif m == 2 and s.get("crew"):
+            self._crew_cut(row)
+
+    def _rally(self, row, key, s, why):
+        b = next(iter(self._have(s["building"])), None)
+        kind, what = s["toward"]
+        if not b:
+            return
+        rule = "R%d" % row["no"]
+        if kind == "place":
+            p = self._point(what)
+            if not p:
+                return
+            self._in((rule, None), lambda: self.order(b["unit_id"], "cast", order="setrally", x=p["x"], y=p["y"]))
+            label = {"natural": "本方向分矿", "front": "祭坛前方空地", "altar": "祭坛旁"}[what]
+        else:
+            target = self.hall if what in HALLS else next((u for u in self.units() if u["type_id"] == what), None) or next(iter(self._have(what)), None)
+            if not target:
+                return  # e.g. the barracks rallies on the Archmage: wait until he is born
+            if target.get("structure") or what in HALLS:
+                self._in((rule, None), lambda: self.order(b["unit_id"], "cast", order="setrally", x=target["x"], y=target["y"]))
+            else:
+                self._in((rule, None), lambda: self.order(b["unit_id"], "cast", order="setrally", target_id=target["unit_id"]))
+            label = self.eco[what]["name"]
+        self.made[key] = 1
+        self.note(rule, f"设集结点：{self.eco[s['building']]['name']} → {label}", why)
+
+    def _crew_cut(self, row):
+        """M2 分矿组: the clear crew cuts wood at the natural meanwhile; they stay the natural's crew
+        (not the main base's lumberjacks) and the hall row takes them as soon as it starts."""
+        busy = {j.get("worker") for j in self.jobs.values()} | {u for j in self.jobs.values() for u in j.get("helpers") or []}
+        for u in self.workers():
+            uid = u["unit_id"]
+            if self.roles.get(uid) != "crew" or uid in busy or uid in self.ordered:
+                continue
+            if (u.get("order") or {}).get("name") in ("harvest", "resumeharvesting") or self.t - self.last_order.get(uid, -99) < 2:
+                continue
+            tree = self.pick_tree(self.drop_for("wood", u) or u)
+            if tree:
+                self._in(("R%d" % row["no"], None), lambda: self.order(uid, "harvest", target_id=tree["id"]))
+                self.wood_tree[uid] = (tree["x"], tree["y"])
 
     def _free(self, b) -> bool:
         return not b.get("queue") and not any(j.get("producer") == b["unit_id"] for j in self.jobs.values())

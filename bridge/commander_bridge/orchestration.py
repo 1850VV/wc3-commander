@@ -23,6 +23,13 @@ SKILLS = {"水元素": "AHwe", "暴风雪": "AHbz", "辉煌光环": "AHab", "风
 META = {1: "采金", 2: "伐木", 3: "训练农民", 4: "建造", 5: "训练单位", 6: "升级", 7: "学技能", 8: "敲钟", 9: "清野",
         10: "小组", 11: "留钱", 12: "人口", 13: "设集结点"}
 SELF_DONE = ("完工", "完成", "出生", "学会", "变身完", "清完", "失败", "用完")
+PLACES = {"本方向分矿": "natural", "分矿": "natural", "祭坛前方空地": "front", "前方空地": "front", "祭坛旁": "altar"}
+
+
+def _place_or_type(name: str):
+    """A rally / gathering target: a place (本方向分矿, 祭坛前方空地) or a unit/building type."""
+    name = name.strip()
+    return ("place", PLACES[name]) if name in PLACES else ("type", _type(name))
 
 
 class OrchestrationError(ValueError):
@@ -65,7 +72,7 @@ def parse_condition(text: str, stop: bool = False) -> list[dict]:
             out.append({"kind": "row_started", "row": int(m[1])})
         elif m := re.fullmatch(r"大法师出生前(\d+)秒", p):
             out.append({"kind": "hero_eta", "lead": int(m[1])})
-        elif p in ("大法师出生前自动", "大法师出生前"):
+        elif p in ("大法师出生前自动", "大法师出生前") or re.fullmatch(r"大法师剩余训练(≤|<=)敲钟集合用时", p):
             out.append({"kind": "hero_eta", "lead": None})
         elif m := re.fullmatch(r"农民(\d+)出生", p):
             out.append({"kind": "peasant", "cid": int(m[1])})
@@ -103,7 +110,8 @@ def parse_step(text: str) -> dict:
         s["mine"] = "natural" if any("分矿" in p for p in P) else "main"
         s["count"] = _num(next((p for p in P if "人" in p), "5"))
     elif code == 2:
-        s["count"] = _num(next((p for p in P if "人" in p), "8"))
+        s["crew"] = any(p.replace(" ", "") == "分矿组" for p in P)  # the clear crew cutting near the natural for now
+        s["count"] = None if s["crew"] else _num(next((p for p in P if "人" in p), "8"))
     elif code == 3:
         s["base"] = "natural" if any("分基地" in p for p in P) else "main" if any("主基地" in p for p in P) else "any"
     elif code == 4:
@@ -154,6 +162,10 @@ def parse_step(text: str) -> dict:
     elif code == 8:
         s["count"] = _num(next((p for p in P if "人" in p), "5"))
         s["from"] = "gold" if any("采金" in p for p in P) else "wood"
+        gather = next((p.replace(" ", "")[3:] for p in P if p.replace(" ", "").startswith("集合点")), "祭坛旁")
+        if gather not in PLACES:
+            raise OrchestrationError(f"M8 敲钟的集合点只能写：{'、'.join(PLACES)}")
+        s["gather"] = PLACES[gather]
     elif code == 11:
         s["gold"] = _num(next((p for p in P if "金" in p), "0"))
         s["wood"] = _num(next((p for p in P if "木" in p and "伐木" not in p), "0"))
@@ -165,7 +177,7 @@ def parse_step(text: str) -> dict:
         mm = re.split(r"\s*(?:→|->)\s*", P[0]) if P else []
         if len(mm) != 2:
             raise OrchestrationError("M13 设集结点写成「国王祭坛 → 城镇大厅」")
-        s["building"], s["toward"] = _type(mm[0]), _type(mm[1])
+        s["building"], s["toward"] = _type(mm[0]), _place_or_type(mm[1])
     return s
 
 

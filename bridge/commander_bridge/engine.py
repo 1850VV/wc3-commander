@@ -72,6 +72,7 @@ class Commander:
         # An order given with no ctx is an unexplained ("多余") action; order_log keeps them all.
         self.gold_cap = {"main": GOLD_PER_MINE, "natural": GOLD_PER_MINE}  # miners per mine; an orchestration sets them
         self.wood_cap = WOOD_TARGET                                          # lumberjacks
+        self.auto_rally = True  # rally the altar at the town hall before a hero; off when an orchestration sets rallies
         self.ctx: tuple | None = None
         self.order_log: list[dict] = []
         self._sent: list[dict] = []          # order_log entries of the actions tick() returned, in order
@@ -612,7 +613,7 @@ class Commander:
                     return
                 self.spend(g, w)
                 prod = prods[0]
-                if ut[0].isupper() and self.hall:
+                if ut[0].isupper() and self.hall and self.auto_rally:
                     # A trained unit appears on the side of its building facing the rally point, by
                     # default the south side. Behind a wall-in that can be a pocket against the trees
                     # with an exit too narrow for a hero (3 cells): south's Archmage stood there until
@@ -790,6 +791,8 @@ class Commander:
                         self.harvest(worker, "wood")
                     elif e.get("then") == "natural":
                         self.harvest(worker, "gold", "natural")
+                    elif prior == "crew":
+                        self.roles[uid] = "crew"  # back to the natural's crew (an orchestration keeps them there)
                     elif prior == "wood":
                         self.harvest(worker, "wood")  # went back where he came from, not always to gold
                     elif prior == "gold":

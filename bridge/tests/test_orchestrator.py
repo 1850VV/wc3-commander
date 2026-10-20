@@ -46,16 +46,20 @@ class ParseTest(unittest.TestCase):
     def test_the_shipped_orchestration_reads_cleanly(self):
         rows, errors = parse(ORCH)
         self.assertEqual(errors, [])
-        self.assertEqual(len(rows), 26)
-        r15 = next(r for r in rows if r["no"] == 15)
-        self.assertEqual((r15["steps"][0]["btype"], r15["steps"][0]["helpers"], r15["steps"][0]["then"]), ("htow", 3, "natural"))
-        self.assertEqual(r15["start"], [{"kind": "row_done", "row": 12}])
+        self.assertEqual(len(rows), 27)
+        r17 = next(r for r in rows if r["no"] == 17)
+        self.assertEqual((r17["steps"][0]["btype"], r17["steps"][0]["helpers"], r17["steps"][0]["then"]), ("htow", 3, "natural"))
+        self.assertEqual(r17["start"][0], {"kind": "row_done", "row": 12})
+        r11 = next(r for r in rows if r["no"] == 11)
+        self.assertEqual((r11["start"][0]["kind"], r11["steps"][0]["gather"]), ("hero_eta", "front"))
+        r9 = next(r for r in rows if r["no"] == 9)
+        self.assertEqual(r9["steps"][0]["toward"], ("type", "Hamg"))
 
     def test_mistakes_are_reported_by_row(self):
         text = ORCH.replace("| 5 | 开局 | 0:00 |", "| 5 | 开局 | 等一会 |").replace("M6 升级（城镇大厅 → 主城）", "M6 升级（城镇大厅）")
         _, errors = parse(text)
         self.assertTrue(any(e.startswith("第 5 行") and "等一会" in e for e in errors), errors)
-        self.assertTrue(any(e.startswith("第 20 行") for e in errors), errors)
+        self.assertTrue(any(e.startswith("第 22 行") for e in errors), errors)
         _, errors = parse("| 行 | 启动 | 元策略（参数） | 停止 | 优先级 |\n|---|---|---|---|---|\n| 1 | 0:00 | M4 建造（金字塔） | 完工 | 50 |")
         self.assertTrue(any("金字塔" in e for e in errors), errors)
 
@@ -68,7 +72,7 @@ class PlayTest(unittest.TestCase):
     def test_rows_start_in_the_written_order(self):
         started = [d for d in self.c.decisions if d["action"].startswith("第 ")and "行开始" in d["action"]]
         nos = [int(d["rule"][1:]) for d in started]
-        for a, b in ((5, 8), (8, 10), (11, 12), (12, 15)):
+        for a, b in ((5, 8), (8, 10), (11, 12), (12, 13), (13, 14)):
             if b in nos:
                 self.assertLess(nos.index(a), nos.index(b), f"row {a} before row {b}")
         self.assertIn(5, nos)
@@ -86,7 +90,13 @@ class PlayTest(unittest.TestCase):
 
     def test_standing_rows_set_the_worker_counts(self):
         self.assertEqual(self.c.gold_cap["main"], 5)
-        self.assertEqual(self.c.wood_cap, 8)
+        self.assertEqual(self.c.wood_cap, 8)  # the crew's temporary cutting (row 15) does not change it
+
+    def test_rallies_are_the_players(self):
+        self.assertFalse(self.c.auto_rally)
+        rallies = [x for x in self.c.order_log if x["command"] == "cast" and x["args"].get("order") == "setrally"]
+        self.assertTrue(any(x["rule"] == "R8" for x in rallies))
+        self.assertTrue(any(x["rule"] == "R9" and "target_id" in x["args"] for x in rallies), "the barracks rallies on the Archmage")
 
     def test_an_orchestration_with_errors_plays_nothing(self):
         c = Orchestrator(load_data())
