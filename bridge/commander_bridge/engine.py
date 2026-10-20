@@ -235,8 +235,15 @@ class Commander:
             return None
         return next((m for m in self.mines.values() if math.hypot(m["x"] - self.natural_at[0], m["y"] - self.natural_at[1]) < 256), None)
 
+    def natural_ready(self) -> bool:
+        """A finished town hall stands at the natural, so its gold can be mined and dropped off there."""
+        m = self.natural()
+        return bool(m) and any(s["type_id"] in HALLS and s.get("state") != "constructing" and dist(s, m) < 900 for s in self.structures())
+
     def harvest(self, u, res, where: str = "main") -> bool:
         if res == "gold":
+            if where == "natural" and not self.natural_ready():
+                where = "main"  # no hall there yet (the clear failed or is late): mine at home meanwhile
             mine = self.natural() if where == "natural" else self.mine
             if not mine:
                 return False
@@ -272,6 +279,11 @@ class Commander:
             if not waiting:  # once the build order went out the cost is already spent
                 continue
             if self.t < (e.get("start") or 0) - 60:
+                continue
+            dep = e.get("after") and self.rt.get(e["after"])
+            if dep and dep.get("status") != "done":
+                # The hall waits for another event (the creep clear). Holding its cost meanwhile starves
+                # what that event needs, footmen for the clear, so the two would wait on each other.
                 continue
             c = self.eco.get(e["btype"])
             if c:
@@ -442,6 +454,12 @@ class Commander:
                     return
                 self.spend(g, w)
                 prod = prods[0]
+                if ut[0].isupper() and self.hall:
+                    # A trained unit appears on the side of its building facing the rally point, by
+                    # default the south side. Behind a wall-in that can be a pocket against the trees
+                    # with an exit too narrow for a hero (3 cells): south's Archmage stood there until
+                    # the woodcutters cleared it. Rallying at the town hall brings him out inside the base.
+                    self.order(prod["unit_id"], "cast", order="setrally", x=self.hall["x"], y=self.hall["y"])
                 self.order(prod["unit_id"], "train", type_id=ut)
                 job.update(state="ordered", producer=prod["unit_id"], ordered=self.t)
                 rt.update(note="已下令 · " + self.eco[prod["type_id"]]["name"])
@@ -852,7 +870,8 @@ class Commander:
             else:
                 task = "空闲"
             units.append({"id": self.cid.get(u["unit_id"], 0), "type": u["type_id"], "x": u["x"], "y": u["y"],
-                          "hidden": bool(u.get("_inside")), "task": task, "role": role or "idle", "carry": None, "amt": 0})
+                          "hidden": bool(u.get("_inside")), "task": task, "role": role or "idle", "carry": None, "amt": 0,
+                          "order": (u.get("order") or {}).get("name")})
         buildings = []
         for s in o["units"]:
             if not s["structure"]:
