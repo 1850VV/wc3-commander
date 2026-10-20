@@ -33,6 +33,12 @@ def dist(a, b) -> float:
     return math.hypot(a["x"] - b["x"], a["y"] - b["y"])
 
 
+# Lost Temple's natural expansion per start (南 西 北 东), from the map's rotational symmetry. Not simply
+# the closest other mine: from the west start the south-west corner mine is a little closer than the west
+# natural and guarded by a much stronger camp. Same table as NATURALS in web/sim.js.
+NATURALS = ((-3776, -7488), (-6912, 2176), (4480, 6912), (7040, -2944))
+
+
 class Commander:
     def __init__(self, data: dict):
         self.data = data
@@ -110,10 +116,12 @@ class Commander:
                 self.mines[m["unit_id"]] = m
         if self.hall and self.mines:
             self.mine = min(self.mines.values(), key=lambda m: dist(m, self.hall))
-        if self.hall and self.natural_at is None:  # the closest other mine on the map is the natural
-            spots = sorted(self.data["mines"], key=lambda m: math.hypot(m["x"] - self.hall["x"], m["y"] - self.hall["y"]))
-            if len(spots) > 1:
-                self.natural_at = (spots[1]["x"], spots[1]["y"])
+        if self.hall and self.natural_at is None:  # Lost Temple's natural for this start, else the closest other mine
+            own_mine = min(self.data["mines"], key=lambda m: math.hypot(m["x"] - self.hall["x"], m["y"] - self.hall["y"]))
+            nx, ny = NATURALS[self.start_index] if self.start_index is not None and self.start_index < len(NATURALS) else (self.hall["x"], self.hall["y"])
+            spots = sorted((m for m in self.data["mines"] if m is not own_mine), key=lambda m: math.hypot(m["x"] - nx, m["y"] - ny))
+            if spots:
+                self.natural_at = (spots[0]["x"], spots[0]["y"])
         for ev in obs.get("events", []):
             k = ev["kind"]
             if k == "construct_start":

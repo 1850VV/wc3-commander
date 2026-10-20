@@ -6,6 +6,8 @@ Run from the repository root:
 from __future__ import annotations
 
 import json
+import math
+import re
 import sys
 import tempfile
 import unittest
@@ -15,6 +17,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 from commander_bridge import strategies  # noqa: E402
+from commander_bridge.data import load_data  # noqa: E402
+from commander_bridge.engine import NATURALS  # noqa: E402
 
 PLAN = json.loads((HERE / "fixtures" / "default-plan-s0.json").read_text(encoding="utf-8"))
 
@@ -61,6 +65,25 @@ class StrategiesTest(unittest.TestCase):
             strategies.save("ok", {"start": 0}, self.store)
         with self.assertRaises(FileNotFoundError):
             strategies.load("nope", self.store)
+
+
+class StoredSitesTest(unittest.TestCase):
+    """The bridge builds a strategy's stored sites as they are, so each must belong to its own start."""
+
+    def test_every_site_is_at_its_own_base_or_its_natural(self):
+        starts = load_data()["starts"]
+        for doc in (strategies.load(s["name"]) for s in strategies.list_all() if s["name"].startswith("人族速矿二本")):
+            plan = doc["plan"]
+            base, nat = starts[plan["start"]], NATURALS[plan["start"]]
+            for e in (e for g in plan["groups"] for e in g["children"] if e["kind"] == "build"):
+                x, y = e["site"]
+                near = math.hypot(x - base["x"], y - base["y"]) < 1600 or math.hypot(x - nat[0], y - nat[1]) < 1200
+                self.assertTrue(near, f"{doc['name']}: {e['name']} at {e['site']}")
+
+    def test_engine_and_sandbox_agree_on_the_naturals(self):
+        sim = (HERE.parents[1] / "web" / "sim.js").read_text(encoding="utf-8")
+        table = re.search(r"const NATURALS = (\[\[.*?\]\]);", sim).group(1)
+        self.assertEqual([tuple(p) for p in json.loads(table)], list(NATURALS))
 
 
 if __name__ == "__main__":

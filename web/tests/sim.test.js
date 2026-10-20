@@ -241,3 +241,12 @@ test('checkpoint grading', () => {
   assert.equal(Sim.checkpoint(cp, [], 66).state, 'missing');
 });
 
+
+test("each start's natural is Lost Temple's, not the corner mine that is closer from the west", () => {
+  for (let s = 0; s < 4; s++) {
+    const g = new Sim.Game(W, {start: s, events: []});
+    assert.deepEqual([g.natural.x, g.natural.y], Sim.NATURALS[s], W.starts[s].name);
+  }
+  const west = W.starts[1], corner = W.mines.find(m => m.x === -7360 && m.y === -7488);
+  assert.ok(Math.hypot(corner.x - west.x, corner.y - west.y) < Math.hypot(-6912 - west.x, 2176 - west.y)); // why the table exists
+});

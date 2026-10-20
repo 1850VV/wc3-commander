@@ -147,8 +147,10 @@
       const [hx, hy] = [s.x, s.y];
       this.hall = this._addBuilding('htow', hx, hy, true, null);
       this.mine = w.nearestMine(hx, hy);
-      // the natural expansion: the closest other mine
-      this.natural = w.mines.filter(m => m !== this.mine).sort((a, b) => Math.hypot(a.x - hx, a.y - hy) - Math.hypot(b.x - hx, b.y - hy))[0];
+      // the natural expansion: Lost Temple's own per start (NATURALS), else the closest other mine
+      const nat = NATURALS[this.startIndex], others = w.mines.filter(m => m !== this.mine);
+      const [nx, ny] = nat || [hx, hy];
+      this.natural = others.sort((a, b) => Math.hypot(a.x - nx, a.y - ny) - Math.hypot(b.x - nx, b.y - ny))[0];
       this.basis = this._basis();
       const {dir, perp} = this.basis, half = w.tex(w.buildingTex('htow')).w * 16;
       for (let k = 0; k < TUNING.startWorkers; k++) {
@@ -967,6 +969,11 @@
   }
 
   /* run a fresh game with these groups up to time t (deterministic replay) */
+  /* Lost Temple's natural expansion per start (南 西 北 东), from the map's rotational symmetry. Not
+   * simply the closest other mine: from the west start the south-west corner mine (4771) is a little
+   * closer than the west natural (4930), and its camp is far stronger. Same table in engine.py. */
+  const NATURALS = [[-3776, -7488], [-6912, 2176], [4480, 6912], [7040, -2944]];
+
   function run(world, startIndex, groups, t) {
     const events = groups.flatMap(g => g.children);
     const game = new Game(world, {start: startIndex, events});
@@ -975,7 +982,7 @@
     return game;
   }
 
-  const api = {World, Game, run, autoWall, checkpoint, WALL, cellsFor, ev, syncSeq, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
+  const api = {World, Game, run, NATURALS, autoWall, checkpoint, WALL, cellsFor, ev, syncSeq, defaultPlan, TUNING, DT, KIND, RES, HALLS, decodeRows};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CommanderSim = api;
 })(typeof globalThis === 'undefined' ? window : globalThis);
