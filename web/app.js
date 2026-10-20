@@ -706,12 +706,36 @@
   /* ---------- timeline ---------- */
   const tlBody = $('tlBody'); let barRefs = [];
   const pct = t => (Math.max(0, Math.min(T_END, t)) / T_END * 100) + '%';
+  /* zoom: the time axis gets wider (1× = the whole game fits) and scrolls sideways; names stay put */
+  const ZOOMS = [1, 1.5, 2, 3, 4, 6, 8];
+  const store = {get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } }};
+  let tlZoom = Math.max(1, Math.min(8, +store.get('wcc.tlZoom') || 1));
+  const tlScroll = document.querySelector('.tl-scroll');
+  function setTlZoom(z, clientX) {
+    z = Math.max(1, Math.min(8, z));
+    const r = tlScroll.getBoundingClientRect(), lab = parseFloat(getComputedStyle(tlBody).getPropertyValue('--label')) || 184;
+    const mx = (clientX == null ? r.left + (r.width + lab) / 2 : clientX) - r.left, x = tlScroll.scrollLeft + mx; // keep this moment under the mouse
+    const nx = x < lab ? x : lab + (x - lab) * z / tlZoom;
+    tlZoom = z; store.set('wcc.tlZoom', z);
+    tlBody.style.width = z === 1 ? '' : `calc(var(--label) + (100% - var(--label)) * ${z})`;
+    buildTimeline(); updateTimeline();
+    tlScroll.scrollLeft = Math.max(0, nx - mx);
+    $('tlZoom').querySelector('b').textContent = Math.round(z * 100) + '%';
+  }
+  const stepZoom = (z, d) => d > 0 ? ZOOMS.find(x => x > z + 1e-6) || 8 : [...ZOOMS].reverse().find(x => x < z - 1e-6) || 1;
+  $('tlZoom').onclick = e => { const b = e.target.closest('button'); if (!b) return; setTlZoom(b.dataset.z === '0' ? 1 : stepZoom(tlZoom, b.dataset.z === '+' ? 1 : -1)); };
+  tlScroll.addEventListener('wheel', e => { // Ctrl/⌘ + wheel zooms the time axis around the mouse; a plain wheel scrolls the page
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const px = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+    setTlZoom(tlZoom * Math.min(1.15, Math.max(1 / 1.15, Math.exp(-px * 0.002))), e.clientX);
+  }, {passive: false});
   function buildTimeline() {
     tlBody.innerHTML = ''; barRefs = [];
     const ruler = document.createElement('div'); ruler.className = 'row';
     ruler.innerHTML = '<div class="lab" style="color:var(--muted);font-size:11px">事件 ／ 时间</div>';
     const rt = document.createElement('div'); rt.className = 'track ruler';
-    for (let t = 0; t < T_END; t += T_END > 300 ? 60 : 30) { const k = document.createElement('div'); k.className = 'tick'; k.style.left = pct(t); k.textContent = fmt(t); rt.appendChild(k); }
+    for (let t = 0; t < T_END; t += tlZoom >= 4 ? 10 : tlZoom >= 2 ? 30 : 60) { const k = document.createElement('div'); k.className = 'tick'; k.style.left = pct(t); k.textContent = fmt(t); rt.appendChild(k); }
     rt.addEventListener('pointerdown', seekFrom); ruler.appendChild(rt); tlBody.appendChild(ruler);
     for (const g of groups) {
       const row = document.createElement('div'); row.className = 'row grp';
@@ -1076,6 +1100,7 @@
     $('rGold').textContent = Math.floor(v.gold); $('rWood').textContent = Math.floor(v.wood); $('rFood').textContent = v.foodUsed + '/' + v.foodCap; $('clock').textContent = fmt(v.t);
   }
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
+  if (tlZoom !== 1) setTlZoom(tlZoom);
   if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
       const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null);
       if (fromStart) { Replay.seek(0); playing = true; bPlay.textContent = '❚❚ 暂停'; } else if (keep != null) Replay.seek(keep); },

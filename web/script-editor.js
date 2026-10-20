@@ -23,11 +23,14 @@
   const ACT_CLASS = {采金: 'gold', 伐木: 'wood', 建造: 'build', 协助: 'assist', 敲钟: 'bell', 集合: 'bell', 清野: 'fight', 待命: 'wait', 农民: 'train',
     学: 'learn', 集结点: 'rally', 升级: 'upgrade'};
   const T_END = 600, MIN_W = 74;
+  const ZOOMS = [1, 1.5, 2, 3, 4, 6, 8], CARD_ZOOMS = [0.7, 0.8, 0.9, 1, 1.15, 1.3, 1.5];
+  const store = {get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } }};
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const pct = t => (Math.max(0, Math.min(T_END, t)) / T_END * 100) + '%';
 
   let api = null, root = null, M = null; // M: {header, positions: [{name, expr, note}], lanes: [{head, note, steps: [{raw}]}], reserves: [{raw, note}]}
   const S = {active: false, saved: true, loadedText: '', errors: {general: [], lane: {}, pos: {}, res: {}}, map: {}, sel: null, view: 'flow',
+    zoom: Math.max(1, Math.min(8, +store.get('wcc.seZoom') || 1)), cardZoom: Math.max(0.7, Math.min(1.5, +store.get('wcc.seCardZoom') || 1)),
     preview: null, busy: false, undo: [], movedPos: new Set(), moved: new Set(), repreview: 0, drag: null, check: 0, showText: false, lastTick: 0, timingKey: '', timing: null};
 
   /* ---------- the script's pieces ---------- */
@@ -455,14 +458,16 @@
       <button type="button" class="btn" data-act="undo" ${S.undo.length ? '' : 'disabled'}>撤销</button>
       <button type="button" class="btn ${S.showText ? 'on' : ''}" data-act="text">文本</button>
       <span class="se-state ${errN ? 'bad' : S.saved ? '' : 'warn'}">${errN ? errN + ' 处要改' : S.saved ? '已保存' : '未保存'}</span>
+      <span class="zoomctl" title="缩放：「时间」视图拉宽时间轴，「顺序」视图放大卡片；也可以按住 Ctrl（Mac 用 ⌘）在卡片区滚动滚轮">
+        <button class="btn" type="button" data-z="-" aria-label="缩小">－</button><b>${Math.round((time ? S.zoom : S.cardZoom) * 100)}%</b><button class="btn" type="button" data-z="+" aria-label="放大">＋</button><button class="btn" type="button" data-z="0">适应</button></span>
       <span class="se-src">${src ? '时间来自：' + esc(src.label) + ' · ' + api.fmt(src.T) : '还没有时间：点「预演」'}</span></div>`;
     h += '<div class="se-pal"><span class="hint">拖到一行里（或先点一行再点这里）：</span>' + PALETTE.map(([kind, items]) =>
       `<span class="grp"><em>${KIND_NAME[kind]}</em>${items.map(r => `<span class="chip-step k-${stepClass(r)}" draggable="true" data-raw="${esc(r)}" data-kind="${kind}">${esc(r === '农民N' ? '农民（新编号）' : r)}</span>`).join('')}</span>`).join('') + '</div>';
     h += `<div class="se-errs">${errorsHTML()}</div></div>`;
-    h += `<div class="se-main"><div class="se-lanes ${time ? 'time' : 'flow'}">`;
+    h += `<div class="se-main"><div class="se-lanes ${time ? 'time' : 'flow'}" style="--z:${S.zoom};--cz:${S.cardZoom}">`;
     if (time) {
       h += '<div class="se-row ruler"><div class="se-lab hint">一行 ／ 时间</div><div class="se-track">';
-      for (let t = 0; t < T_END; t += 60) h += `<span class="tick" style="left:${pct(t)}">${api.fmt(t)}</span>`;
+      for (let t = 0; t < T_END; t += S.zoom >= 4 ? 10 : S.zoom >= 2 ? 30 : 60) h += `<span class="tick" style="left:${pct(t)}">${api.fmt(t)}</span>`;
       h += `<span class="now" style="left:${pct(src.T)}"></span></div></div>`;
     }
     for (const [kind, title] of SECTIONS) {
@@ -500,8 +505,10 @@
     h += `<div class="hint se-help">卡片从左到右一件一件做；方括号是这一步的开始条件（最早时间、资源、#建筑 开工/完成、大法师剩余 ≤ 集合用时…）。` +
       `写在上面的行先花钱。拖卡片调整先后或换给别人；在「时间」视图里左右拖一张卡片 = 给它加「到这个时间才开始」。` +
       `地图上的菱形是脚本里的位置。保存写回 strategies/战术脚本-人族速矿二本.txt，下一局按它打。</div>`;
+    const old = root.querySelector('.se-lanes'), sx = S.pendingScroll != null ? S.pendingScroll : old ? old.scrollLeft : 0;
     root.innerHTML = h;
-    S.textDraft = null;
+    S.textDraft = null; S.pendingScroll = null;
+    const nl = root.querySelector('.se-lanes'); if (nl) nl.scrollLeft = sx;
     const top = root.querySelector('.se-top'); // the side editor sticks just below the sticky toolbar
     if (top) root.style.setProperty('--se-top', top.offsetHeight + 8 + 'px');
   }
@@ -586,11 +593,38 @@
     const sr = root.querySelector('.se-src'); if (sr) sr.textContent = '时间来自：' + T.src.label + ' · ' + api.fmt(T.src.T);
   }
 
+  /* ---------- zoom ---------- */
+  function setZoom(z, clientX) {
+    const lanes = root.querySelector('.se-lanes');
+    if (S.view === 'time' && timing()) { // the time axis gets wider; keep the moment under the mouse
+      z = Math.max(1, Math.min(8, z));
+      const r = lanes.getBoundingClientRect(), lab = parseFloat(getComputedStyle(lanes).getPropertyValue('--label')) || 184;
+      const mx = (clientX == null ? r.left + (r.width + lab) / 2 : clientX) - r.left, x = lanes.scrollLeft + mx;
+      S.pendingScroll = Math.max(0, (x < lab ? x : lab + (x - lab) * z / S.zoom) - mx);
+      S.zoom = z; store.set('wcc.seZoom', z);
+    } else {
+      S.cardZoom = Math.max(0.7, Math.min(1.5, z)); store.set('wcc.seCardZoom', S.cardZoom);
+    }
+    render();
+  }
+  function stepZoom(d) {
+    const time = S.view === 'time' && timing(), list = time ? ZOOMS : CARD_ZOOMS, z = time ? S.zoom : S.cardZoom;
+    if (d === 0) return setZoom(1);
+    setZoom(d > 0 ? list.find(x => x > z + 1e-6) || list[list.length - 1] : [...list].reverse().find(x => x < z - 1e-6) || list[0]);
+  }
+  function onWheel(e) {
+    if (!(e.ctrlKey || e.metaKey) || !e.target.closest('.se-lanes')) return;
+    e.preventDefault();
+    const f = Math.min(1.15, Math.max(1 / 1.15, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * 0.002)));
+    setZoom((S.view === 'time' && timing() ? S.zoom : S.cardZoom) * f, e.clientX);
+  }
+
   /* ---------- input ---------- */
   function onClick(ev) {
     const t = ev.target.closest('button, .sc, .se-lab, .chip-step, .se-add');
     if (!t || !root.contains(t)) return;
     const act = t.dataset.act;
+    if (t.dataset.z != null) { stepZoom(t.dataset.z === '+' ? 1 : t.dataset.z === '-' ? -1 : 0); return; }
     if (t.dataset.del != null) { const c = t.closest('.sc'); S.sel = {l: +c.dataset.l, s: +c.dataset.s}; deleteStep(); return; }
     if (t.dataset.dellane != null) {
       const i = +t.dataset.dellane, head = M.lanes[i].head;
@@ -823,6 +857,7 @@
     root.addEventListener('drop', onDrop);
     root.addEventListener('dragend', onDragEnd);
     root.addEventListener('pointerdown', onPointerDown);
+    root.addEventListener('wheel', onWheel, {passive: false});
     document.addEventListener('keydown', onKey);
     scheduleCheck();
     try { // the event timeline shows the script from the start: preview it unless a game is on
