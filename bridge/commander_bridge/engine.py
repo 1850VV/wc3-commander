@@ -92,11 +92,12 @@ class Commander:
         self._ingest(obs)
         if not self.enabled:  # switched off: keep reading the game, give no orders, start nothing
             return []
+        self._decide()
         due = sorted((e for e in self.events if self.rt[e["id"]]["status"] == "pending" and e["start"] <= self.t + 1e-6 and self.ready(e)),
-                     key=lambda e: (e["start"], e.get("seq", 0)))
+                     key=self._order_key)
         for e in due:
             self._start(e)
-        for e in sorted(self.events, key=lambda e: (e["start"], e.get("seq", 0))):
+        for e in sorted(self.events, key=self._order_key):
             if e["id"] in self.jobs:
                 self._advance(e)
         self._keep_gathering()
@@ -104,6 +105,14 @@ class Commander:
         self._unstick_wood()
         commandable = {u["unit_id"] for u in obs["units"]}
         return [a for a in self.actions if a["unit_id"] in commandable]
+
+    def _decide(self) -> None:
+        """Hook for a rule-driven commander (arbiter.py) to add this tick's events; the timeline has none."""
+
+    @staticmethod
+    def _order_key(e):
+        """Events start and spend in this order: the timeline goes by planned time."""
+        return (e["start"], e.get("seq", 0))
 
     def _ingest(self, obs: dict) -> None:
         own = [u for u in obs["units"] if not u["structure"]] + [dict(u, structure=False, _inside=True) for u in obs.get("inside", [])]
@@ -547,6 +556,7 @@ class Commander:
                     rt["note"] = "需要 " + "、".join(self.eco[r]["name"] if r in self.eco else r for r in missing)
                     return
                 prods = [s for s in self.structures() if ut in (self.eco.get(s["type_id"], {}).get("trains") or []) and not s.get("queue")
+                         and s["unit_id"] not in (e.get("avoid") or ())  # e.g. the main hall kept free for the keep
                          and not any(j.get("producer") == s["unit_id"] for j in self.jobs.values() if j is not job)]
                 if not prods:
                     rt["note"] = "等待空闲的" + ("生产建筑" if not self.structures() else self._producer_name(ut))
@@ -723,7 +733,9 @@ class Commander:
                     worker = next((u for u in self.obs["units"] if u["unit_id"] == uid), None)
                     if not worker:
                         continue
-                    if e.get("then") == "wood":
+                    if e.get("then") == "gold":
+                        self.harvest(worker, "gold", "main")
+                    elif e.get("then") == "wood":
                         self.harvest(worker, "wood")
                     elif e.get("then") == "natural":
                         self.harvest(worker, "gold", "natural")

@@ -30,6 +30,7 @@ from urllib.parse import unquote
 
 from . import attach, strategies
 from .data import load_data
+from .arbiter import Arbiter
 from .engine import Commander
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,6 +124,10 @@ class Runner:
         self.running = False
         self.tactic = True  # the plan runs as soon as the game is connected; the console can switch it off
 
+    def new_commander(self):
+        """The rule-driven arbiter (docs/规则表-人族速矿二本.md) for a plan marked "arbiter", else the timeline."""
+        return (Arbiter if self.plan.get("arbiter") else Commander)(self.data)
+
     def log(self, text: str, level: str = "info") -> None:
         for q in list(self.listeners):
             q.put({"type": "log", "level": level, "text": text})
@@ -152,7 +157,7 @@ class Runner:
         attached = self.backend == "wc3env" and not self.launch
         if not (attached and self.attached):  # reconnecting to the game we were playing keeps its progress
             with self.lock:
-                self.commander = Commander(self.data)
+                self.commander = self.new_commander()
                 self.commander.set_plan(self.plan)
                 self.commander.enabled = self.tactic = True  # every new game starts with the tactic on
         self.thread = threading.Thread(target=self._attach if attached else self._run, args=() if attached else (start,), daemon=True)
@@ -347,10 +352,10 @@ class Runner:
             except (FileNotFoundError, ValueError):
                 why = f"找不到策略「{name}」"
         with self.lock:
-            self.commander = Commander(self.data)
             if plan is not None:
                 self.plan = plan
                 self.plan_name = name
+            self.commander = self.new_commander()
             self.commander.set_plan(self.plan)
             self.commander.enabled = self.tactic = why is None
             self.state = self.commander.snapshot()
