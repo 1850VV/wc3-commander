@@ -289,3 +289,19 @@ button.chip-step{cursor:pointer}
 .se-lanes.flow .sc{font-size:calc(12px * var(--cz,1));padding:calc(3px * var(--cz,1)) calc(7px * var(--cz,1))}
 .se-lanes.flow .sc .c,.se-lanes.flow .sc .p,.se-lanes.flow .sc .g,.se-lanes.flow .sc .tm{font-size:calc(10.5px * var(--cz,1))}
 .se-lanes.time .se-sec{position:sticky;left:0}
+/* the step editor: choices instead of typing */
+.se-edit .sub{font-size:12px;font-weight:700;color:var(--muted);margin-top:4px;letter-spacing:.04em}
+.se-edit .desc{margin:-2px 0 2px calc(4.5em + 8px)}
+.se-edit .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;justify-self:start}
+.se-edit .seg button{background:var(--panel-2);border:0;padding:4px 12px;font-size:12.5px}
+.se-edit .seg button.on{background:var(--accent);color:var(--accent-ink)}
+.se-edit .pair{display:flex;gap:6px;min-width:0}.se-edit .pair select{flex:1;min-width:0}
+.se-edit .conds{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.se-edit .conds>i{font-style:normal;font-size:11px;color:var(--muted)}
+.cchip{display:inline-flex;align-items:center;gap:2px;background:#3a2c12;color:#f0c79a;border-radius:4px;padding:1px 2px 1px 7px;font-size:12px}
+.cchip .x{opacity:1;color:#f0c79a}
+.se-edit .addcond{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:12px;color:var(--muted)}
+.se-edit .addcond input[type=number]{width:5.5em}
+.se-edit .share{display:flex;flex-wrap:wrap;gap:3px 10px;font-size:12px}
+.se-edit .ck{display:inline-flex;align-items:center;gap:3px;cursor:pointer;color:var(--fg)}
+.se-edit .ck input{margin:0}
