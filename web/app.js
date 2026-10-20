@@ -267,6 +267,7 @@
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       label('最窄 ' + wr.K + ' 格', x, y - r - 9, ls * .9, col);
     }
+    if (window.ScriptEditor && ScriptEditor.active()) drawScriptMarkers(ls);
     const ghost = placing && placing.pos ? placing : dragging && drag.ghost;
     if (ghost) {
       const [fx, fy, fw, fh] = rectScreen(W.rectOf(ghost.pos[0], ghost.pos[1], W.buildingTex(ghost.btype)));
@@ -290,6 +291,17 @@
     }
     drawMini(v);
   }
+  /* the tactic script's named places: a diamond each (solid = where this game put it, hollow = estimated
+   * from the layout); only 「坐标 x,y」 places can be dragged, layout sites move with their build box */
+  function drawScriptMarkers(ls) {
+    for (const m of ScriptEditor.markers()) {
+      const moving = drag && drag.mk && drag.mk.name === m.name && drag.mkPos, [x, y] = toScreen(...(moving ? drag.mkPos : [m.x, m.y])), r = 7;
+      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+      ctx.fillStyle = m.exact ? (m.sel ? '#fff' : '#c58bf0') : 'rgba(197,139,240,.18)'; ctx.fill();
+      ctx.lineWidth = m.sel ? 2.5 : 1.5; ctx.strokeStyle = m.editable ? '#f0c060' : '#c58bf0'; ctx.setLineDash(m.exact ? [] : [3, 2]); ctx.stroke(); ctx.setLineDash([]);
+      label('@' + m.name, x, y - r - 8, ls * .9, '#dcc0f5');
+    }
+  }
   function drawMini(v) {
     const S = mm.width;
     mctx.imageSmoothingEnabled = true; mctx.clearRect(0, 0, S, S); mctx.drawImage(off, 0, 0, S, S);
@@ -309,6 +321,7 @@
     drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false};
     const site = !placing && siteAt(wx, wy); // grabbing a planned site moves it instead of the map
     if (site) Object.assign(drag, {site, off: [wx - site.site[0], wy - site.site[1]], ghost: null});
+    else if (!placing && window.ScriptEditor && ScriptEditor.active()) { const mk = ScriptEditor.markerAt(wx, wy, 12 / cam.s); if (mk) drag.mk = mk; }
   });
   cv.addEventListener('pointermove', e => {
     const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
@@ -318,6 +331,8 @@
     if (Math.hypot(dx, dy) > 4) drag.moved = true;
     if (!drag.moved || placing) return;
     if (drag.site) { const [wx, wy] = toWorld(sx, sy); drag.ghost = siteGhost(drag.site.btype, wx - drag.off[0], wy - drag.off[1], drag.site.id); cv.style.cursor = 'move'; }
+    else if (drag.mk && drag.mk.editable) { drag.mkPos = toWorld(sx, sy); cv.style.cursor = 'move'; }
+    else if (drag.mk) return; // a layout place: its build box is what moves
     else { cam.x = drag.cx - dx / cam.s; cam.y = drag.cy + dy / cam.s; clampCam(); cv.style.cursor = 'grabbing'; }
   });
   cv.addEventListener('pointerup', e => {
@@ -330,6 +345,7 @@
       else if (g.pos[0] !== e2.site[0] || g.pos[1] !== e2.site[1]) { pinSite(e2, g.pos); focusEvent(e2); }
       return;
     }
+    if (d && d.mk) { if (d.moved && d.mkPos) ScriptEditor.moveMarker(d.mk.name, ...d.mkPos); else ScriptEditor.selectPos(d.mk.name); return; }
     if (!click) return;
     if (placing) { updateGhost(wx, wy); confirmPlace(); return; }
     pick(wx, wy);
@@ -697,7 +713,7 @@
       try { j = await (await fetch('/api/runs/' + encodeURIComponent(id))).json(); } catch (_) { say('读不到这一局的记录', true); return; }
       if (!j.ok || !j.frames.length) { say('这一局没有可以回放的记录' + (j.error ? '：' + j.error : ''), true); return; }
       const st = j.state;
-      live.replay = {id, meta: j.meta, frames: j.frames, t: 0, end: j.frames[j.frames.length - 1].t, consistency: st.consistency || null, fi: 0};
+      live.replay = {id, meta: j.meta, frames: j.frames, t: 0, end: j.frames[j.frames.length - 1].t, consistency: st.consistency || null, fi: 0, state: st};
       live.arbMode = false; live.arbN = -1;
       if (st.start != null) { startIndex = st.start; startSel.value = String(st.start); }
       Live.syncArbiter(st); live.feedback = j.feedback || [];
@@ -931,8 +947,11 @@
     if (now - lastPaint < (live.on ? 100 : 33)) return;
     lastPaint = now;
     const v = V();
-    draw(); renderStatus(); updateTimeline();
+    draw(); renderStatus(); updateTimeline(); if (window.ScriptEditor) ScriptEditor.tick(now);
     $('rGold').textContent = Math.floor(v.gold); $('rWood').textContent = Math.floor(v.wood); $('rFood').textContent = v.foodUsed + '/' + v.foodCap; $('clock').textContent = fmt(v.t);
   }
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
+  if (window.ScriptEditor) ScriptEditor.init({live: () => live, groups: () => groups, startIndex: () => startIndex, startName: i => W.starts[i].name,
+    hall: () => ({x: W.starts[startIndex].x, y: W.starts[startIndex].y}), natural: naturalMine, say, fmt, name, tl: document.querySelector('.tl'),
+    focus: (x, y) => { cam.x = x; cam.y = y; clampCam(); }});
 })();

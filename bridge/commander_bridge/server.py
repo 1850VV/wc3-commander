@@ -16,6 +16,9 @@
   GET  /api/strategies          saved strategies (name, time, start, event count)
   GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
   PUT  /api/strategies/<name>   save the console plan in the body under that name
+  GET  /api/script              the tactic script (strategies/战术脚本-人族速矿二本.txt): {text, model, errors}
+  PUT  /api/script              {text} or {model}: check it and, without mistakes, save it ({dryRun: true} only checks)
+  POST /api/script/preview      {text, start}: play it on the fake world, return when each step began (a few seconds)
 
 Binds to 127.0.0.1 unless --host says otherwise. There is no login: anyone who can reach the port
 can start the game, so only open it to a trusted home network. Uses the standard library; wc3env
@@ -37,14 +40,17 @@ from urllib.parse import unquote
 from . import attach, strategies
 from .data import load_data
 from .arbiter import Arbiter
+from . import script as tactic_script
+from .script_runner import ScriptRunner
 from .orchestrator import Orchestrator
-from .engine import Commander
+from .engine import NATURALS, Commander
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "bridge" / "runs"  # one folder per arbiter game: meta, state (decisions, orders, game events), frames, feedback, replay.w3g
 RUN_NAME = re.compile(r"\d{8}-\d{6}-[a-z]+")
 WEB = ROOT / "web"
 MAX_BODY = 1 << 20
+SCRIPT = strategies.STORE / "战术脚本-人族速矿二本.txt"  # the tactic script the console edits and attach mode plays
 _UNSET = object()  # distinguishes "no name in the request" from an explicit null (no current layout)
 
 
@@ -102,6 +108,42 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
     return GameSession(config)
 
 
+# A troll camp at each start's natural for the preview: the fake world has no creeps of its own.
+PREVIEW_CAMP = ((0, 0, "nftr"), (-60, 70, "nfsp"), (60, -50, "nftr"))
+_preview_lock = threading.Lock()
+
+
+def preview_script(data: dict, text: str, start: int, seconds: float = 600.0) -> dict:
+    """Play a tactic script on the fake Lost Temple world (fast, no game) and return when each step
+    began: the console lays the cards out on the timeline from this. The fake world's numbers
+    (mining, building, fighting) are rough, so these times are a preview, not a promise."""
+    model, errors = tactic_script.parse(text)
+    if errors:
+        return {"ok": False, "errors": errors}
+    name = "人族速矿二本 · " + data["starts"][start]["name"]
+    plan = strategies.load(name)["plan"]
+    c = ScriptRunner(data)
+    c.set_plan(dict(plan, script=text, start=start))
+    nx, ny = NATURALS[start]
+    camp = [{"type": t, "x": nx + 280 + dx, "y": ny + 230 + dy, "hp": 240 if t == "nftr" else 200, "dps": 6 if t == "nftr" else 4}
+            for dx, dy, t in PREVIEW_CAMP]
+    with _preview_lock:  # one at a time: each takes a few seconds of CPU
+        session = make_session("fake", data, start, "none", creeps=camp)
+        try:
+            obs = session.reset()[0]
+            while obs["game_time_seconds"] < seconds:
+                actions = c.tick(obs)
+                observations, done, info = session.step({0: actions}, ms=250)
+                c.feedback(actions, info["placements"][0], info["rejected"][0])
+                obs = observations[0]
+            c.tick(obs)
+        finally:
+            session.close()
+    snap = c.snapshot()
+    return {"ok": True, "errors": [], "layout": name, "t": snap["t"], "decisions": c.decisions, "script": snap["script"],
+            "gold": snap["gold"], "wood": snap["wood"], "foodUsed": snap["foodUsed"], "foodCap": snap["foodCap"]}
+
+
 class Runner:
     """Owns the game session on one thread; the HTTP threads only post plans and read snapshots."""
 
@@ -136,7 +178,7 @@ class Runner:
     def new_commander(self):
         """The rule-driven arbiter (docs/规则表-人族速矿二本.md) for a plan marked "arbiter", else the timeline.
         Each arbiter game gets its own folder under bridge/runs for its record and the player's feedback."""
-        arbiter = bool(self.plan.get("arbiter") or self.plan.get("orchestration"))
+        arbiter = bool(self.plan.get("arbiter") or self.plan.get("orchestration") or self.plan.get("script"))
         start = self.plan.get("start")
         side = ("south", "west", "north", "east")[start] if isinstance(start, int) and 0 <= start < 4 else "plan"
         self.run_dir = RUNS / (time.strftime("%Y%m%d-%H%M%S") + "-" + side) if arbiter else None  # ASCII: Warcraft writes the replay here
@@ -146,6 +188,8 @@ class Runner:
             meta = {"name": self.plan_name, "start": start, "began": time.strftime("%Y-%m-%dT%H:%M:%S"), "backend": self.backend,
                     "speed": self.speed_factor if self.launch else 1.0, "launch": self.launch}
             (self.run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        if self.plan.get("script"):
+            return ScriptRunner(self.data)
         return (Orchestrator if self.plan.get("orchestration") else Arbiter if arbiter else Commander)(self.data)
 
     def record(self) -> None:
@@ -478,7 +522,9 @@ class Runner:
                 plan["start"] = start  # the detected direction wins over a stale start saved in the layout
                 plan["arbiter"] = True  # played by the rule table (arbiter.py), recorded for replay in bridge/runs
                 orch = strategies.STORE / "编排-人族速矿二本.md"
-                if orch.is_file():  # the player's own orchestration wins over the built-in rules
+                if SCRIPT.is_file():  # the player's tactic script wins over the orchestration and the built-in rules
+                    plan["script"] = SCRIPT.read_text(encoding="utf-8")
+                elif orch.is_file():  # the player's own orchestration wins over the built-in rules
                     plan["orchestration"] = orch.read_text(encoding="utf-8")
             except (FileNotFoundError, ValueError):
                 why = f"找不到策略「{name}」"
@@ -552,6 +598,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {"ok": True, **self.runner.load_run(unquote(self.path[len("/api/runs/"):]))})
             except ValueError as exc:
                 return self._json(404, {"ok": False, "error": str(exc)})
+        if self.path == "/api/script":
+            text = SCRIPT.read_text(encoding="utf-8") if SCRIPT.is_file() else ""
+            model, errors = tactic_script.parse(text)
+            return self._json(200, {"ok": True, "text": text, "model": model, "errors": errors})
         if self.path == "/api/strategies":
             return self._json(200, {"ok": True, "strategies": strategies.list_all()})
         if self.path.startswith("/api/strategies/"):
@@ -564,6 +614,24 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_PUT(self):
+        if self.path == "/api/script":
+            try:
+                body = self._body()
+            except (ValueError, json.JSONDecodeError):
+                return self._json(400, {"ok": False, "error": "请求不是有效的 JSON"})
+            text = body["text"] if isinstance(body.get("text"), str) else None
+            if text is None and isinstance(body.get("model"), dict):
+                try:
+                    text = tactic_script.to_text(body["model"])
+                except (KeyError, TypeError, StopIteration) as exc:
+                    return self._json(400, {"ok": False, "error": f"脚本内容不完整：{exc!r}"})
+            if text is None:
+                return self._json(400, {"ok": False, "error": "要给 text 或 model"})
+            model, errors = tactic_script.parse(text)
+            if errors or body.get("dryRun"):
+                return self._json(200, {"ok": not errors, "saved": False, "text": text, "model": model, "errors": errors})
+            SCRIPT.write_text(text, encoding="utf-8")
+            return self._json(200, {"ok": True, "saved": True, "text": text, "model": model, "errors": []})
         if not self.path.startswith("/api/strategies/"):
             return self._json(404, {"ok": False})
         try:
@@ -579,6 +647,17 @@ class Handler(SimpleHTTPRequestHandler):
             body = self._body()
         except (ValueError, json.JSONDecodeError):
             return self._json(400, {"ok": False, "error": "请求不是有效的 JSON"})
+        if self.path == "/api/script/preview":
+            text = body.get("text") if isinstance(body.get("text"), str) else (SCRIPT.read_text(encoding="utf-8") if SCRIPT.is_file() else "")
+            start = body.get("start", 0)
+            if not isinstance(start, int) or not 0 <= start < len(self.runner.data["starts"]):
+                return self._json(400, {"ok": False, "error": "出生点不对"})
+            try:
+                return self._json(200, preview_script(self.runner.data, text, start, float(body.get("seconds") or 600)))
+            except FileNotFoundError:
+                return self._json(400, {"ok": False, "error": "这个出生点还没有布局（人族速矿二本 · 方向）"})
+            except ImportError as exc:
+                return self._json(500, {"ok": False, "error": f"预演要用 wc3env 的假游戏：{exc}"})
         if self.path == "/api/plan":
             self.runner.set_plan(body, body.get("name", _UNSET))
             return self._json(200, {"ok": True, "events": len(self.runner.commander.events)})

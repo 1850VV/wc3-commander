@@ -613,6 +613,7 @@ class Commander:
                     return
                 prods = [s for s in self.structures() if ut in (self.eco.get(s["type_id"], {}).get("trains") or []) and not s.get("queue")
                          and s["unit_id"] not in (e.get("avoid") or ())  # e.g. the main hall kept free for the keep
+                         and (not e.get("only") or s["unit_id"] in e["only"])  # a script names the building
                          and not any(j.get("producer") == s["unit_id"] for j in self.jobs.values() if j is not job)]
                 if not prods:
                     rt["note"] = "等待空闲的" + ("生产建筑" if not self.structures() else self._producer_name(ut))
@@ -799,6 +800,8 @@ class Commander:
                     worker = next((u for u in self.obs["units"] if u["unit_id"] == uid), None)
                     if not worker:
                         continue
+                    if e.get("then") == "script":
+                        continue  # a tactic script says what he does next
                     if e.get("then") == "gold":
                         self.harvest(worker, "gold", "main")
                     elif e.get("then") == "wood":
@@ -978,7 +981,7 @@ class Commander:
                 cid = self.cid[ev["trained_id"]]
                 then = e.get("then") or "gold"
                 name = self.eco[ev["type_id"]]["name"]
-                self.rt[e["id"]].update(status="done", aEnd=self.t, trained=ev["trained_id"], note=f"{name}{cid} 出生" + (f" → {'分矿采金' if then == 'natural' else RES[then]}" if ev["type_id"] == "hpea" else ""))
+                self.rt[e["id"]].update(status="done", aEnd=self.t, trained=ev["trained_id"], note=f"{name}{cid} 出生" + (f" → {'分矿采金' if then == 'natural' else RES.get(then, '按脚本')}" if ev["type_id"] == "hpea" else ""))
                 if ev["type_id"] == "hpea":
                     self.roles[ev["trained_id"]] = "gold" if then == "natural" else then  # ordered once it is observed on the map
                     if then == "natural":

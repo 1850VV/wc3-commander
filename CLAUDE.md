@@ -12,6 +12,7 @@
 
 ```sh
 node --test web/tests/sim.test.js                                                 # 模拟器（必须写到文件名）
+node --test web/tests/script-editor.test.js                                       # 战术脚本编辑器的卡片拆分
 WC3ENV_SRC=../wc3env-127a/src python -m unittest discover -s bridge/tests -t bridge  # 端到端（假服务器）
 cd bridge && WC3ENV_SRC=../../wc3env-127a/src python -m commander_bridge --backend fake   # 本地看效果
 python -m commander_bridge --backend wc3env                                         # 真游戏，仅 Windows（用 wc3env-127a\.venv 的 Python）
@@ -39,6 +40,8 @@ tools/pc.sh start | status | log | stop | pull                                  
 - 建造：事件带 `at`（玩家在地图上放的）或 `exact: true` 时按精确坐标建造、不加 `auto_place`；否则加 `auto_place`，游戏可能挪开几百距离。新建筑先按农民的命令目标认领，再按 `info["placements"]` 回报的坐标，都没有才用 700 的宽半径。`server.Runner` 每步后要调用 `engine.feedback`。已下令后工地坐标或精确/自动方式变了，引擎会重新下令（`_site_changed`）。
 - 连接（`attach.py`，`server.Runner._attach`）：默认一直等任何 War3.exe。没有钩子的，发现 5 秒后 `attach.inject` 注入（DLL 来自 wc3env-127a 分支 `claude/attach-menu-game`，PC 上的 `wc3env-127a-attach` 工作树；每个进程复制一份到 `bridge/hook-cache/`；钩子用互斥量拒绝重复加载）；快捷方式「魔兽争霸三（指挥官）」（`tools/windows/war3_commander.py`）一开始就带钩子。钩子在每局 0:01（或中途注入后的下一帧）停住，服务用 `create_game(map="*", players="loaded", mode="realtime")` 接管；地图名含 lost temple（读不到时看城镇大厅是否在失落神庙出生点上）就按出生点载入 `人族速矿二本 · <方向>` 并开战术，否则只观察。同一进程里一局接一局（钩子发现游戏时间倒退就当新局）。超时、断线只记普通日志并重连；同一局重新接上保留指挥官进度（`Runner.attached`）。以管理员权限运行的魔兽，普通权限的服务注入会被拒绝（错误 5）；让服务以管理员权限运行属于安全设置，由用户决定。`--launch`（测试开关，默认关）恢复由服务启动游戏的旧流程，自动验收时用它。
 - 编排（用户自己写打法）：`strategies/编排-人族速矿二本.md` 是中文 Markdown 表格，每行「启动条件 → 元策略 M1–M13（参数）→ 停止条件 → 优先级」，写法见 `docs/元策略.md`。`orchestration.py` 解析（错误按行报中文），`orchestrator.Orchestrator`（继承仲裁器 `arbiter.Arbiter`）执行：决策记录的规则名是 `R<行号>`；采金/伐木人数由 M1/M2 行设到 `engine.gold_cap`/`wood_cap`；留钱是 M11 行。计划带 `orchestration` 文本就用它；用户自己开的游戏自动读这份文件。编排有错时不开打并逐条提示。
+- 战术脚本（`strategies/战术脚本-人族速矿二本.txt`，写法见 `docs/战术脚本-草稿.md`）：`script.py` 解析/写回，`script_runner.py`（`ScriptRunner`，继承仲裁器）逐行执行，没有自动分工、自动补农民/农场/步兵；只保留 4 个安全动作（不给金矿里的单位下令、建造者站工地外、T2 换树、T3 叫回建造者）。农民按脚本编号（初始 1–5，训练时按 `as_cid` 指定），其他单位从 101 起。决策记录的规则号是 `L<行号>`，`why` 以「第 N 行第 K 步」开头（控制台据此把时间对到卡片上）。死掉的农民那一行停住标红。计划里带 `script` 时服务端用它；接管模式下文件存在就优先于编排表。`@自动` = 布局里没被占用的同类工地，没有就交给游戏在城镇大厅附近找。
+- 控制台「战术脚本」标签（`web/script-editor.js`）：每行一个农民/建筑/英雄，步骤是卡片，可拖动排序、跨行交给别人（同类行之间）、从工具栏拖入；「时间」视图按开始时间排卡片，横拖 = 改「最早几点开始」条件。时间来自实机 > 回放 > 预演（`POST /api/script/preview`，在假世界跑 10 分钟，约 8 秒；假世界给每个出生点的分矿放一组巨魔）。保存走 `PUT /api/script`，有错不存。
 - 不能给 `inside`（金矿里）的单位下命令，否则 wc3env 会让会话进入故障状态；`engine.tick` 已经过滤。
 - 模拟器和测试世界里的数值假设（矿内 1 秒、每棵树 50 木）未校准，改动时同步更新 README 和页面底部说明。
 - 只用于离线单机，不要加任何联网对局相关功能。控制台默认只监听 127.0.0.1；`--host 0.0.0.0`（`bridge.ps1 -Lan`）只为家里局域网访问，控制台没有登录保护，不要做成默认。
@@ -51,4 +54,5 @@ tools/pc.sh start | status | log | stop | pull                                  
 - 真游戏已跑通默认开局（`docs/validation/` 下三份记录）：五个开局事件按时完成；第二个农场被游戏挪远后重复建造的问题已修复并在真游戏复验通过。
 - 分阶段计划（用户已同意）：阶段 1 在控制台里拖动和预摆工地 → 阶段 2 封家检查和自动封家 → 阶段 3 `after` 依赖和延迟原因 → 阶段 4 策略库（`strategies/`，经服务端接口）→ 阶段 5 运行中补救卡片 → 阶段 6 二本数矿（等用户给 timing）→ 阶段 7 AMAI 规则对照表。每个阶段做完都要测试、提交推送，然后停下来等用户确认。
 - 不做 Agent 候选审核；「AI 建议」暂时保持规则版。
+- 战术脚本（2026-10-20）：真游戏 16 倍速南方整局跑通（186 条命令全有出处、0 被拒）；农民13 两局都在清野时阵亡（战斗参数待调）。
 - 采金时间等数值仍未用实机数据校准。
