@@ -57,6 +57,8 @@ class ScriptRunner(Arbiter):
         lanes = []
         self.tag_prio = {}
         for ln in model.get("lanes", []):
+            if ln.get("muted"):
+                continue  # 「#⏸」: paused, not played
             prio = 100000 - ln["line"] * 10
             base = {"line": ln["line"], "prio": prio, "i": 0, "on": False, "done": False, "dead": False}
             steps = lambda: [dict(s) for s in ln["steps"]]

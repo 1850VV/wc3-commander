@@ -502,7 +502,7 @@
         else if (best) { if (e.shiftKey) P.has(best.id) ? P.delete(best.id) : P.add(best.id); else { P.clear(); P.add(best.id); } sel = {type: 'unit', id: best.id}; }
         else { if (!e.shiftKey) P.clear(); pick(wx, wy); }
       }
-      UTL().redraw(); renderCmd(); return;
+      UTL().redraw(); UTL().syncOrder(); renderCmd(); return;
     }
     if (d && d.site && d.moved && d.ghost) {
       const e2 = d.site, g = d.ghost;
@@ -683,13 +683,15 @@
       if (peas) btns.push(['G', '采金 主矿', 'gold', () => issue('gold-main', {})], ['N', '采金 分矿', 'gold', () => issue('gold-nat', {})], ['L', '伐木', 'wood', () => issue('wood', {})], ['C', '敲钟', 'bell', () => issue('bell', {})], ['B', '建造…', 'build', () => { cmdMenu = 'build'; renderCmd(); }]);
       else btns.push(['Q', '去分矿清野', 'fight', () => issue('clear', {})]);
     }
-    cmdEl.innerHTML = `<div class="scmd"><div class="selsum">${us.length ? Object.entries(groups).map(([n, c]) => `<b>${esc(n)} ×${c}</b>`).join(' ') + ` · 红线 ${fmt(t)}` : `在沙盘上点选或拖框选单位（时间轴上点名字也行）；命令从红线 ${fmt(t)} 开始，写进脚本`}</div></div>`;
-    const grid = cmdEl.firstChild;
+    const host = document.body.classList.contains('v4') ? $('card4') : cmdEl, acts = {};
+    for (const u of us) { const st = UTL().stepAt(u.type === 'hpea' || u.type === 'hmil' ? '农民' + u.id : name(u.type), t); const n = st ? st.body.split(' ').slice(0, 2).join(' ') : '空闲'; acts[n] = (acts[n] || 0) + 1; }
+    host.innerHTML = (host !== cmdEl ? `<h3>选中 · ${fmt(t)}</h3>` : '') + `<div class="scmd"><div class="selsum">${us.length ? Object.entries(groups).map(([n, c]) => `<b>${esc(n)} ×${c}</b>`).join(' ') + (host === cmdEl ? ` · 红线 ${fmt(t)}` : '') + `<br>${Object.entries(acts).map(([n, c]) => `${esc(n)} ${c}`).join(' · ')}` : `在沙盘上点选或拖框选单位（时间轴上点名字也行）；命令从红线 ${fmt(t)} 开始，写进脚本`}</div></div>`;
+    const grid = host.querySelector('.scmd');
     for (const [k, n, c, fn] of btns) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'c-' + c + (cmdMode && ((cmdMode.kind === 'move' && k === 'M') || (cmdMode.kind === 'attack' && k === 'A')) ? ' on' : '');
       b.dataset.key = k === 'ESC' ? 'Esc' : k; b.innerHTML = `<kbd>${k === 'ESC' ? 'Esc' : k}</kbd>${esc(n)}`; b.onclick = fn; grid.appendChild(b);
     }
-    if (us.length) grid.insertAdjacentHTML('beforeend', '<div class="q">右键：金矿=采金，树=伐木，在建的建筑=协助，分矿野点=清野，地面=移动。按住 Shift = 排队（做完手上的再做）。中键或 Alt+拖动平移。</div>');
+    if (us.length || host !== cmdEl) grid.insertAdjacentHTML('beforeend', '<div class="q">右键：金矿=采金，树=伐木，在建的建筑=协助，分矿野点=清野，地面=移动。按住 Shift = 排队（做完手上的再做）。中键或 Alt+拖动平移。</div>');
   }
   function renderCmd() {
     if (orderMode()) { renderScriptCmd(); return; }
@@ -1225,14 +1227,24 @@
     pause: () => { playing = false; bPlay.textContent = '▶ 播放'; }, playing: () => playing && !!live.replay, say,
     picked: () => { const us = pickedUnits(); if (us.length) lookAt(us.reduce((a, u) => a + u.x, 0) / us.length, us.reduce((a, u) => a + u.y, 0) / us.length); renderCmd(); },
     editStep: op => ScriptEditor.editFromTimeline(op), openCard: (label, k) => ScriptEditor.openCardOf(label, k),
+    toggleMute: label => ScriptEditor.toggleMute(label), order: o => ScriptEditor.addOrder(o),
   }, document.querySelector('.tl .tl-head'));
+  // v4 layout: the sandbox and a command card side by side; a 「在此刻下令」 button in the top bar
+  (function () {
+    const view = document.querySelector('.view'), stage = document.createElement('section'); stage.className = 'stage4';
+    view.before(stage); stage.appendChild(view);
+    const card = document.createElement('aside'); card.className = 'box card4'; card.id = 'card4'; stage.appendChild(card);
+    const b = document.createElement('button'); b.className = 'btn on'; b.id = 'orderTop'; b.type = 'button'; b.textContent = '在此刻下令';
+    b.onclick = () => UnifiedTimeline.openOrder(live.replay ? live.replay.t : 0, null); $('clock').after(b);
+  })();
   let utOn = null;
   let cmdSec = -1;
   function syncUT() { // the timeline tab shows the script's lanes while a preview is open
-    if (orderMode() && Math.floor(live.replay.t) !== cmdSec) { cmdSec = Math.floor(live.replay.t); if (UTL().pick.size) renderCmd(); } // the card names the moment
+    if (orderMode() && Math.floor(live.replay.t) !== cmdSec) { cmdSec = Math.floor(live.replay.t); if (UTL().pick.size || document.body.classList.contains('v4')) renderCmd(); } // the card names the moment
     const on = orderMode() && !(window.ScriptEditor && ScriptEditor.active());
+    if (on && live.replay) $('orderTop').textContent = `在 ${fmt(live.replay.t)} 下令`;
     if (on === utOn) return; utOn = on;
-    UnifiedTimeline.show(on); document.querySelector('.tl').classList.toggle('ut-mode', on); renderCmd();
+    UnifiedTimeline.show(on); document.querySelector('.tl').classList.toggle('ut-mode', on); document.body.classList.toggle('v4', on); renderCmd();
   }
   if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
       const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null); if (window.UnifiedTimeline) { UnifiedTimeline.setData(j); utOn = null; syncUT(); } // new data: draw it again

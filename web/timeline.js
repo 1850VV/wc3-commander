@@ -27,7 +27,7 @@
 
   let api = null, root = null, D = null, END = 600, lanes = [], rows = [], E = [], mined = [[0, 0]];
   let zoom = Math.max(1, Math.min(8, +store.get('wcc.utZoom') || 1)), byPrio = false, view = 'unit', filters = new Set(), critOn = false, goalKey = 'keep', pinPicked = true;
-  let stale = null, prevStarts = new Map(), sel = null;
+  let stale = null, prevStarts = new Map(), sel = null, dimOthers = false;
   const pick = new Set();
   const $ = id => document.getElementById('ut-' + id);
   const stepEnd = s => s.done != null ? s.done : s.end != null ? s.end : (ongoing(s) ? END : null);
@@ -201,7 +201,8 @@
       const r = document.createElement('div'); r.className = 'u-row u-k-' + R.kind; r.dataset.key = R.key;
       if (R.kind === 'bneck') r.innerHTML = `<div class="u-lab"><b>瓶颈</b><small>卡人口·大厅空闲·农民空闲</small></div><div class="u-track"></div>`;
       else if (R.kind === 'divider') r.innerHTML = `<div class="u-lab u-divlab">▲ 选中的单位 ・ 以下是其他轨道</div>`;
-      else r.innerHTML = `<div class="u-lab">${R.kind === 'bld' ? '' : `<span class="u-prio" title="优先级：脚本里越靠前越先花钱">P${R.prio}</span>`}<b class="u-name" title="点一下选中，Ctrl/Shift 多选；沙盘跟着定位">${esc(R.label)}</b>${R.sub ? `<small>${esc(R.sub)}</small>` : ''}<span class="u-rank"></span><span class="u-state"></span></div><div class="u-track"></div>`;
+      else r.innerHTML = `<div class="u-lab">${R.kind === 'bld' ? '' : `<span class="u-prio" title="优先级：脚本里越靠前越先花钱">P${R.prio}</span>`}<b class="u-name" title="点一下选中，Ctrl/Shift 多选；沙盘跟着定位">${esc(R.label)}</b>${R.sub ? `<small>${esc(R.sub)}</small>` : ''}<span class="u-rank"></span><span class="u-state"></span>${R.lane && R.kind !== 'bld' && R.kind !== 'building' ? `<button type="button" class="u-mute" data-mute="${esc(R.label)}" title="${R.lane.muted ? '恢复执行' : '这条线暂停执行（写成 #⏸，预演和实战都跳过）'}">⏸</button>` : ''}</div><div class="u-track"></div>`;
+      if (R.lane && R.lane.muted) r.classList.add('u-muted');
       host.appendChild(r); R.el = r; R.stateEl = r.querySelector('.u-state'); R.rankEl = r.querySelector('.u-rank'); R.track = r.querySelector('.u-track');
     }
     drawBars(); buildFilters();
@@ -254,12 +255,15 @@
     const el = $('filters');
     if (view === 'bld') { el.innerHTML = '<span class="hint">按建筑：每座建筑一条，按下令的先后排；先是谁去建、什么时候建好，然后是它生产的东西。</span>'; return; }
     el.innerHTML = '<span class="hint">只看</span><button type="button" class="u-fchip ' + (filters.size ? '' : 'on') + '" data-f="">全部</button>' +
-      FILTERS.map(([n]) => `<button type="button" class="u-fchip ${filters.has(n) ? 'on' : ''}" data-f="${n}">${n}<b></b></button>`).join('');
+      FILTERS.map(([n]) => `<button type="button" class="u-fchip ${filters.has(n) ? 'on' : ''}" data-f="${n}">${n}<b></b></button>`).join('') +
+      groups().map(g => `<button type="button" class="u-fchip" data-g="${esc(g.name)}" title="编队：点一下选中">◆ ${esc(g.name)}<b>${g.cids.length}</b></button>`).join('');
   }
+  function groups() { try { return JSON.parse(store.get('wcc.groups') || '[]'); } catch (_) { return []; } }
 
   /* ---------- every frame ---------- */
   const now = () => api ? api.getT() : 0;
   function status(R, t) {
+    if (R.lane && R.lane.muted) return {g: 5, cls: 'wait', text: '暂停执行'};
     const {cur, next} = current(R.items, t);
     if (cur) {
       const s = cur.step, waiting = s.work != null && t < s.work, e = stepEnd(s);
@@ -282,6 +286,7 @@
     divRow.el.classList.toggle('u-hide', !order.includes(divRow));
     order.forEach((R, i) => { R.el.style.top = i * ROW + 'px'; R.y = i; });
     $('rows').style.height = order.length * ROW + 'px';
+    $('rows').classList.toggle('u-dimmed', dimOthers && pick.size > 0);
     const x = X(t), line = $('now');
     line.style.left = x + 'px'; line.dataset.t = fmt(t); $('shade').style.left = LABEL() + 'px'; $('shade').style.width = Math.max(0, x - LABEL()) + 'px';
     const canvas = $('canvas'); canvas.querySelectorAll('.u-dot').forEach(d => d.remove());
@@ -305,6 +310,7 @@
     if (view === 'unit') $('filters').querySelectorAll('[data-f]').forEach(b => { const f = FILTERS.find(q => q[0] === b.dataset.f); if (f) b.querySelector('b').textContent = rows.filter(f[1]).length; });
     canvas.classList.toggle('u-critmode', critOn);
     const st2 = $('stale'); if (stale != null) { st2.hidden = false; st2.style.left = X(stale) + 'px'; st2.style.width = (X(END) - X(stale)) + 'px'; st2.style.top = top0 + 'px'; st2.style.height = $('rows').offsetHeight + 'px'; } else st2.hidden = true;
+    drawGhosts();
     const key = Math.floor(t) + '|' + order.map(R => R.key).join() + '|' + pps() + '|' + chain.length;
     if (key !== lastKey) { lastKey = key; hud(t); sideLists(st, t); drawArrows(order); }
   }
@@ -351,6 +357,151 @@
     svg.innerHTML = h;
   }
 
+  /* ---------- the order window (在此刻下令): pick units, an order, how and when; see it before giving it ---------- */
+  const BUILD_T = {农场: 35, 兵营: 60, 国王祭坛: 60, 伐木场: 60, 城镇大厅: 180, 侦察塔: 25, 神秘藏宝室: 60, 神秘圣所: 70, 铁匠铺: 70};
+  const ASSIST = [1, 0.63, 0.46, 0.36, 0.29], SPEED = {hpea: 190, hmil: 270, Hamg: 320, Hmkg: 270, hfoo: 270};
+  const ord = {open: false, T: 0, cmd: null, what: '农场', place: '', target: '0', mode: 'override', when: 'now', whenTag: ''};
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  const uname = c => { const ty = typeOf(c); return ty === 'hpea' || ty === 'hmil' ? '农民' + c : ty === 'Hamg' ? '大法师' : ty === 'Hmkg' ? '山丘之王' : '步兵' + c; };
+  function unitsAt(T) { return D ? Object.keys(D.pos).map(Number).filter(c => posAt(c, T)).sort((a, b) => a - b) : []; }
+  function builds() { const out = []; lanes.forEach(L => L.steps.forEach((s, k) => { if (/^建造/.test(s.body) && s.start != null) out.push({L, k, s, label: `${s.body.split(' ')[1]}${s.tag ? ' #' + s.tag : ''} · ${L.label} · ${fmt(s.start)} 开始`}); })); return out; }
+  const tags = () => [...new Set(lanes.flatMap(L => L.steps.map(s => s.tag)).filter(Boolean))];
+  const PLACE = n => n === '主矿' ? D.mine : n === '分矿' ? D.natural : D.places[n];
+  function startFor(c, cost) {
+    let S = ord.T; const L = laneOfCid(c);
+    if (ord.mode === 'queue' && L) { const cur = current(L.steps.map(step => ({step})), ord.T).cur; if (cur && !ongoing(cur.step)) S = Math.max(S, stepEnd(cur.step) ?? S); }
+    if (ord.when === 'started' || ord.when === 'done') { const n = findTag(ord.whenTag); if (n) S = Math.max(S, timeOf(n, ord.when === 'started' ? 'work' : 'done') ?? S); }
+    if (ord.when === 'money' && cost) { let i = at(S); while (i < E.length - 1 && (E[i][1] < cost[0] || E[i][2] < cost[1])) i++; S = Math.max(S, E[i][0]); }
+    return S;
+  }
+  function plan() {
+    if (!ord.open || !ord.cmd || !D) return [];
+    const us = unitsAt(ord.T).filter(c => pick.has(c)), out = [], n = us.length, cost = ord.cmd === 'build' ? COST_W[ord.what] : null;
+    us.forEach((c, i) => {
+      const ty = typeOf(c), peas = ty === 'hpea' || ty === 'hmil';
+      if (['gold-main', 'gold-nat', 'wood', 'build', 'assist', 'bell'].includes(ord.cmd) && !peas) return;
+      const T = startFor(c, i === 0 ? cost : null), p = posAt(c, T) || posAt(c, ord.T), sp = SPEED[ty] || 270;
+      let target = null, work = 0, body = '', on = false, note = '';
+      switch (ord.cmd) {
+        case 'gold-main': target = D.mine; body = '采金 主矿'; on = true; break;
+        case 'gold-nat': target = D.natural; body = '采金 分矿'; on = true; break;
+        case 'wood': target = [D.hall[0] - 500, D.hall[1] + 400]; body = '伐木'; on = true; break;
+        case 'build': target = PLACE(ord.place); body = (i === 0 ? '建造 ' : '协助 ') + ord.what; work = (BUILD_T[ord.what] || 60) * ASSIST[Math.min(n, 5) - 1]; if (i > 0) note = `帮 ${uname(us[0])} 一起建`; break;
+        case 'assist': { const b = builds()[+ord.target]; if (b) { target = b.s.at || PLACE(b.s.pos) || D.hall; body = '协助 ' + b.s.body.split(' ')[1]; work = Math.max(5, (b.s.done ?? T + 30) - T); note = '建好为止'; } break; }
+        case 'bell': target = D.hall; body = '敲钟'; work = 45; note = '变民兵 45 秒'; break;
+        case 'move': target = PLACE(ord.place); body = '移动'; break;
+        case 'attack': target = PLACE(ord.place); body = '攻击移动'; break;
+        case 'clear': target = D.natural; body = '清野'; work = 40; note = '估计 40 秒'; break;
+        case 'hold': target = PLACE(ord.place); body = '待命'; on = true; break;
+      }
+      if (!body || !p) return;
+      const walk = target ? Math.round(dist(p, target) / sp) : 0, L = laneOfCid(c);
+      const nextFixed = L ? L.steps.filter(s => s.start != null && s.start > T && !ongoing(s)).sort((a, b) => a.start - b.start)[0] : null;
+      const end = on ? (nextFixed ? nextFixed.start : END) : T + walk + work;
+      const cur = L ? current(L.steps.map(step => ({step})), T).cur : null;
+      out.push({c, L, T, body, walk, work, end, on, note, was: cur && ongoing(cur.step) ? cur.step : null, busy: cur && !ongoing(cur.step) && ord.mode === 'override' ? cur.step : null});
+    });
+    return out;
+  }
+  let ghostKey = '';
+  function drawGhosts() {
+    const P = plan(), key = JSON.stringify(P.map(p => [p.c, p.T, p.end, p.body])) + pps() + view;
+    if (key === ghostKey) return; ghostKey = key;
+    $('canvas').querySelectorAll('.u-ghost').forEach(g => g.remove());
+    for (const p of P) {
+      const R = rows.find(x => x.lane === p.L); if (!R) continue;
+      const g = document.createElement('div'); g.className = 'u-bar u-ghost';
+      g.style.left = p.T * pps() + 'px'; g.style.width = Math.max(8, (p.end - p.T) * pps()) + 'px';
+      g.innerHTML = (p.walk ? `<div class="u-wait" style="width:${p.walk * pps()}px;--c:#fff"></div>` : '') + `<div class="u-txt"><span>预览：${esc(p.body)}</span><em>${fmt(p.T)}–${fmt(p.end)}</em></div>`;
+      R.track.appendChild(g);
+    }
+  }
+  function openOrder(T, cids) {
+    ord.open = true; ord.T = Math.round(T == null ? now() : T); if (cids) { pick.clear(); cids.forEach(c => pick.add(c)); }
+    if (!ord.whenTag) ord.whenTag = tags()[0] || '';
+    if (!ord.place || !(ord.place in D.places || ord.place === '主矿' || ord.place === '分矿')) ord.place = '分矿';
+    $('order').hidden = false; renderOrder(); lastKey = '';
+  }
+  function closeOrder() { ord.open = false; ord.cmd = null; $('order').hidden = true; ghostKey = ''; }
+  function syncOrder() { if (!D) return; if (!ord.open && pick.size) openOrder(now(), null); else if (ord.open) renderOrder(); }
+  function commandsFor(cs) {
+    const peas = cs.length && cs.every(c => typeOf(c) === 'hpea' || typeOf(c) === 'hmil'), out = [];
+    if (peas) out.push(['gold-main', '采金 主矿', 'gold'], ['gold-nat', '采金 分矿', 'gold'], ['wood', '伐木', 'wood'], ['build', '建造…', 'build'], ['assist', '协助…', 'assist'], ['bell', '敲钟变民兵', 'bell']);
+    if (cs.length) out.push(['move', '移动到…', 'wait'], ['attack', '攻击移动到…', 'fight'], ['clear', '去分矿清野', 'fight'], ['hold', '待命在…', 'wait']);
+    return out;
+  }
+  function renderOrder() {
+    if (!ord.open || !D) return;
+    const us = unitsAt(ord.T), sel2 = us.filter(c => pick.has(c)), cmds = commandsFor(sel2);
+    if (ord.cmd && !cmds.some(x => x[0] === ord.cmd)) ord.cmd = null;
+    const grp = [['农民', us.filter(c => typeOf(c) === 'hpea' || typeOf(c) === 'hmil')], ['英雄', us.filter(c => /^H/.test(typeOf(c)))], ['步兵', us.filter(c => typeOf(c) === 'hfoo')]];
+    const needPlace = ['build', 'move', 'hold', 'attack'].includes(ord.cmd), places = ['分矿', '主矿', ...Object.keys(D.places)], P = plan(), cost = ord.cmd === 'build' ? COST_W[ord.what] : null;
+    const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+    $('order').innerHTML = `<div class="ttl">在 <input id="ut-oT" value="${fmt(ord.T)}" aria-label="下令时刻"> 下令<button class="btn" type="button" data-o="close" aria-label="关闭">×</button></div>
+      <div class="u-row3"><label class="u-sw2"><input type="checkbox" id="ut-oPin" ${pinPicked ? 'checked' : ''}>选中的挤到最前面</label><label class="u-sw2"><input type="checkbox" id="ut-oDim" ${dimOthers ? 'checked' : ''}>其他轨道变暗</label></div>
+      <div class="sub">选单位（这一刻在做什么） · 已选 ${sel2.length}</div>
+      ${grp.filter(g => g[1].length).map(([, list]) => `<div class="u-uchips">${list.map(c => `<button type="button" class="u-uchip ${pick.has(c) ? 'on' : ''}" data-u="${c}">${esc(uname(c))}<small>${esc(activity(laneOfCid(c), ord.T))}</small></button>`).join('')}</div>`).join('')}
+      <div class="u-quick"><button type="button" data-q="采金·主矿">采金的</button><button type="button" data-q="伐木">伐木的</button><button type="button" data-q="空闲">空闲的</button><button type="button" data-q="清野小组">清野小组</button><button type="button" data-q="">清空</button>
+        ${groups().map(g => `<button type="button" data-grp="${esc(g.name)}">◆ ${esc(g.name)}</button>`).join('')}</div>
+      <div class="u-row3"><input class="u-gname" id="ut-oG" placeholder="编队名" aria-label="编队名"><button class="btn" type="button" data-o="savegrp" ${sel2.length ? '' : 'disabled'}>存为编队</button></div>
+      <div class="sub">做什么</div>
+      ${cmds.length ? `<div class="u-cmds">${cmds.map(([k, n, c]) => `<button type="button" class="c-${c} ${ord.cmd === k ? 'on' : ''}" data-c="${k}">${n}</button>`).join('')}</div>` : '<div class="hint">先选单位：点上面的名字，或在沙盘上框选，或在时间轴上点轨道名</div>'}
+      ${ord.cmd === 'build' ? `<select id="ut-oWhat">${Object.keys(BUILD_T).map(b => opt(b, b, ord.what)).join('')}</select>` : ''}
+      ${needPlace ? `<select id="ut-oPlace">${places.map(p => opt(p, '@' + p, ord.place)).join('')}</select>` : ''}
+      ${ord.cmd === 'assist' ? `<select id="ut-oTarget">${builds().map((b, i) => opt(String(i), b.label, ord.target)).join('')}</select>` : ''}
+      ${ord.cmd ? `<div class="sub">怎么下</div><div class="u-radio">${[['override', '覆盖：打断手上的事'], ['queue', '排队：手上的做完再做（Shift）']].map(([k, n]) => `<button type="button" data-mode="${k}" class="${ord.mode === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+        <div class="sub">什么时候开始</div><div class="u-radio">${[['now', '此刻 ' + fmt(ord.T)], ['started', '某建筑开工后'], ['done', '某建筑完成后'], ['money', cost ? `钱够了（金${cost[0]} 木${cost[1]}）` : '钱够了']].map(([k, n]) => `<button type="button" data-when="${k}" class="${ord.when === k ? 'on' : ''}">${n}</button>`).join('')}</div>
+        ${ord.when === 'started' || ord.when === 'done' ? `<select id="ut-oWhenTag">${tags().map(g => opt(g, '#' + g, ord.whenTag)).join('')}</select>` : ''}` : ''}
+      ${P.length ? `<div class="sub">预计（时间轴上的白色虚线条就是它）</div><div class="u-plan">${P.map(p => `<div><b>${esc(uname(p.c))}</b><span class="w">${fmt(p.T)} 开始 · 走 ${p.walk}s${p.work ? ' + ' + Math.round(p.work) + 's' : ''} → ${p.on ? '一直做到 ' + fmt(p.end) : fmt(p.end) + ' 做完'}</span>${p.note ? `<span class="w">${esc(p.note)}</span>` : ''}</div>` +
+        (p.busy ? `<div class="bad">他这时在「${esc(p.busy.body)}」，做完才会接着做</div>` : '') + (p.was && !p.on ? `<div class="w">做完回去「${esc(p.was.body)}」</div>` : '')).join('')}</div>` : ''}
+      <button type="button" class="u-go" data-o="go" ${P.length ? '' : 'disabled'}>下令（${P.length} 个单位）</button>`;
+    ghostKey = '';
+  }
+  function giveOrder() {
+    const P = plan(); if (!P.length) return;
+    const cost = ord.cmd === 'build' ? COST_W[ord.what] : null;
+    const when = ord.when === 'started' || ord.when === 'done' ? {kind: ord.when, tag: ord.whenTag} : ord.when === 'money' && cost ? {kind: 'money', gold: cost[0], wood: cost[1]} : {kind: 'now'};
+    const extra = {what: ord.what, queue: ord.mode === 'queue', when};
+    if (['build', 'move', 'hold', 'attack'].includes(ord.cmd)) { extra.place = ord.place in D.places || ord.place === '分矿' ? ord.place : null; extra.xy = PLACE(ord.place); }
+    if (ord.cmd === 'assist') { const b = builds()[+ord.target]; if (b) extra.assist = {label: b.L.label, k: b.k}; }
+    api.order({cids: P.map(p => p.c), t: ord.T, cmd: ord.cmd, ...extra});
+    ord.cmd = null; renderOrder();
+  }
+  function onOrderClick(e) {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.o === 'close') { closeOrder(); return; }
+    if (b.dataset.u) { const c = +b.dataset.u; pick.has(c) ? pick.delete(c) : pick.add(c); lastKey = ''; api.picked(false); renderOrder(); return; }
+    if (b.dataset.q != null) {
+      pick.clear();
+      if (b.dataset.q) unitsAt(ord.T).filter(c => typeOf(c) === 'hpea' && (b.dataset.q === '清野小组' ? (laneOfCid(c) || {steps: []}).steps.some(s => /^敲钟/.test(s.body)) : activity(laneOfCid(c), ord.T) === b.dataset.q)).forEach(c => pick.add(c));
+      lastKey = ''; api.picked(false); renderOrder(); return;
+    }
+    if (b.dataset.grp) { const G = groups().find(x => x.name === b.dataset.grp); pick.clear(); G.cids.forEach(c => pick.add(c)); lastKey = ''; api.picked(false); renderOrder(); return; }
+    if (b.dataset.o === 'savegrp') {
+      const nm = ($('oG').value || '').trim() || '编队' + (groups().length + 1), gs = groups().filter(g => g.name !== nm).concat([{name: nm, cids: [...pick]}]);
+      store.set('wcc.groups', JSON.stringify(gs)); buildFilters(); renderOrder(); api.say(`存了编队「${nm}」（${pick.size} 个单位）：筛选条和这里都能一键选中`); return;
+    }
+    if (b.dataset.c) {
+      ord.cmd = b.dataset.c;
+      if (ord.cmd === 'build' && !(ord.place in D.places)) ord.place = Object.keys(D.places).find(n => /农场/.test(n)) || Object.keys(D.places)[0] || ord.place; // a building site, not the camp
+      renderOrder(); return;
+    }
+    if (b.dataset.mode) { ord.mode = b.dataset.mode; renderOrder(); return; }
+    if (b.dataset.when) { ord.when = b.dataset.when; if (!tags().includes(ord.whenTag)) ord.whenTag = tags()[0] || ''; renderOrder(); return; }
+    if (b.dataset.o === 'go') giveOrder();
+  }
+  function onOrderChange(e) {
+    const id = e.target.id;
+    if (id === 'ut-oWhat') ord.what = e.target.value;
+    if (id === 'ut-oPlace') ord.place = e.target.value;
+    if (id === 'ut-oTarget') ord.target = e.target.value;
+    if (id === 'ut-oWhenTag') ord.whenTag = e.target.value;
+    if (id === 'ut-oPin') { pinPicked = e.target.checked; $('pin').setAttribute('aria-checked', pinPicked); lastKey = ''; }
+    if (id === 'ut-oDim') { dimOthers = e.target.checked; lastKey = ''; }
+    if (id === 'ut-oT') { const v = parseT(e.target.value); if (v != null) { ord.T = Math.min(END - 1, v); api.setT(ord.T); follow(); } }
+    if (id !== 'ut-oG') renderOrder();
+  }
+
   /* ---------- input ---------- */
   function setZoom(z, cx) {
     const sc = $('scroll'), r = sc.getBoundingClientRect(), mx = (cx == null ? r.left + r.width / 2 : cx) - r.left, sec = (sc.scrollLeft + mx - LABEL()) / pps();
@@ -366,6 +517,7 @@
     move(e); addEventListener('pointermove', move); addEventListener('pointerup', up);
   }
   function onRowsClick(e) {
+    const mu = e.target.closest('[data-mute]'); if (mu) { e.stopPropagation(); api.toggleMute(mu.dataset.mute); return; }
     const x = e.target.closest('[data-del]');
     if (x) { const b = x.closest('.u-bar'), L = lanes.find(l => l.id === b.dataset.lane), k = +b.dataset.step; e.stopPropagation(); api.editStep({op: 'delete', label: L.label, k, raw: L.steps[k].raw, t: L.steps[k].start}); return; }
     const name = e.target.closest('.u-name'); if (!name) return;
@@ -374,10 +526,10 @@
     if (c == null || Number.isNaN(c)) { api.say(R.kind === 'army' ? '步兵这一行管所有步兵：在沙盘上框选步兵下令' : '建筑那一行在「按建筑」里看；选中的是单位'); return; }
     if (e.ctrlKey || e.metaKey || e.shiftKey) pick.has(c) ? pick.delete(c) : pick.add(c);
     else { const only = pick.size === 1 && pick.has(c); pick.clear(); if (!only) pick.add(c); }
-    lastKey = ''; api.picked(true);
+    lastKey = ''; api.picked(true); syncOrder();
   }
   function onBarDown(e) {
-    const b = e.target.closest('.u-bar'); if (!b || e.button !== 0 || e.target.closest('[data-del]')) return;
+    const b = e.target.closest('.u-bar'); if (!b || e.button !== 0 || e.detail > 1 || b.classList.contains('u-ghost') || e.target.closest('[data-del]')) return;
     const L = lanes.find(x => x.id === b.dataset.lane), k = +b.dataset.step, s = L.steps[k], x0 = e.clientX, y0 = e.clientY, left0 = b.offsetLeft;
     let moved = false, target = L, ghost = null;
     b.setPointerCapture(e.pointerId);
@@ -442,8 +594,14 @@
         </div></div></section>
         <aside class="u-side">
           <div class="u-box" id="ut-crit" hidden></div>
+          <div class="u-box u-order" id="ut-order" hidden></div>
           <div class="u-box"><h3>此刻 · 正在做（按优先级）</h3><div class="u-list" id="ut-nowList"></div></div>
           <div class="u-box"><h3>接下来 · 30 秒内开始</h3><div class="u-list" id="ut-nextList"></div></div>
+          <div class="u-box"><h3>图例和操作</h3><div class="u-legend">
+            <span><i class="c-gold"></i>采金</span><span><i class="c-wood"></i>伐木</span><span><i class="c-build"></i>建造</span><span><i class="c-assist"></i>协助</span>
+            <span><i class="c-bell"></i>敲钟/集合</span><span><i class="c-fight"></i>清野/攻击</span><span><i class="c-train"></i>训练</span><span><i class="c-upgrade"></i>升级</span>
+            <span><i class="h"></i>走过去/等资源</span><span><i class="f"></i>还没开始</span></div>
+            <p class="hint">拖红线换时刻（← → 一秒，Shift 十秒）· 点轨道名选中单位（沙盘跟着定位），Ctrl/Shift 多选 · 双击轨道在那一刻打开下令窗口 · 拖色块改时间或改派 · ⏸ 让这条线暂停执行</p></div>
         </aside>
       </div>
       <div class="u-pop" id="ut-pop" hidden></div>`;
@@ -456,8 +614,17 @@
     $('zin').onclick = () => setZoom(zoom * 1.5); $('zout').onclick = () => setZoom(zoom / 1.5); $('zfit').onclick = () => setZoom(1);
     $('scroll').addEventListener('wheel', e => { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); setZoom(zoom * Math.min(1.15, Math.max(1 / 1.15, Math.exp(-e.deltaY * 0.002))), e.clientX); }, {passive: false});
     $('now').addEventListener('pointerdown', scrubFrom); $('ruler').addEventListener('pointerdown', scrubFrom); $('res').addEventListener('pointerdown', scrubFrom); $('food').addEventListener('pointerdown', scrubFrom);
-    $('filters').onclick = e => { const b = e.target.closest('[data-f]'); if (!b) return; if (!b.dataset.f) filters.clear(); else filters.has(b.dataset.f) ? filters.delete(b.dataset.f) : filters.add(b.dataset.f); buildFilters(); lastKey = ''; };
+    $('filters').onclick = e => {
+      const g = e.target.closest('[data-g]'); if (g) { const G = groups().find(x => x.name === g.dataset.g); if (G) { pick.clear(); G.cids.forEach(c => pick.add(c)); lastKey = ''; api.picked(true); syncOrder(); } return; }
+      const b = e.target.closest('[data-f]'); if (!b) return; if (!b.dataset.f) filters.clear(); else filters.has(b.dataset.f) ? filters.delete(b.dataset.f) : filters.add(b.dataset.f); buildFilters(); lastKey = ''; };
     $('rows').addEventListener('click', onRowsClick);
+    $('order').addEventListener('click', onOrderClick); $('order').addEventListener('change', onOrderChange);
+    $('canvas').addEventListener('dblclick', e => {
+      const row = e.target.closest('.u-row'); if (!row || !D) return;
+      const r = $('canvas').getBoundingClientRect(), T = Math.max(0, Math.min(END - 1, (e.clientX - r.left - LABEL()) / pps())), R = rows.find(x => x.key === row.dataset.key);
+      api.setT(T); const c = R && R.lane ? cidOfLane(R.lane) : null;
+      openOrder(T, c != null && !Number.isNaN(c) && posAt(c, T) ? [c] : null);
+    });
     $('canvas').addEventListener('pointerdown', onBarDown);
     $('crit').addEventListener('click', e => { const it = e.target.closest('[data-lane]'); if (!it) return; const L = lanes.find(x => x.id === it.dataset.lane); api.setT(L.steps[+it.dataset.step].start); follow(); });
     for (const id of ['nowList', 'nextList']) $(id).addEventListener('click', e => { const it = e.target.closest('.u-item'); if (!it) return; const L = lanes.find(x => x.id === it.dataset.lane); openEditor(L, +it.dataset.step, e); });
@@ -483,6 +650,7 @@
     mount, setData, pick, posAt, typeOf, laneOfCid, current, stepEnd, fmt, activity,
     has: () => !!D, show(on) { if (root) { root.hidden = !on; if (on && D) { drawBars(); lastKey = ''; } } }, shown: () => !!(root && !root.hidden),
     markStale(t) { stale = t; lastKey = ''; }, clearStale() { stale = null; lastKey = ''; },
+    openOrder: (t, cids) => { if (D) openOrder(t, cids); }, syncOrder: () => { if (ord.open) renderOrder(); },
     lanes: () => lanes, places: () => (D ? D.places : {}), natural: () => D && D.natural, mine: () => D && D.mine, hall: () => D && D.hall,
     routeOf(cid, t) { // where a unit is heading at t: the place its current step names
       const L = laneOfCid(cid); if (!L || !D) return null;

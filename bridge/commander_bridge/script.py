@@ -7,7 +7,8 @@
     步兵：[3:30] 攻击移动 @分矿 → 待命 @分矿
     留钱 金385 木205 给 #分基地 从 [清野 完成]
 
-parse(text) -> (model, errors); to_text(model) writes the same script back (the console edits the
+A lane written as「#⏸ 农民8：…」is paused: kept in the script (the console shows it greyed) but not
+played. parse(text) -> (model, errors); to_text(model) writes the same script back (the console edits the
 model and saves it as text). A model is plain JSON so the console can drag steps around.
 Errors name the line, in Chinese.
 """
@@ -235,6 +236,9 @@ def parse(text: str) -> tuple[dict, list[str]]:
                     raise ScriptError("留钱 写成「留钱 金385 木205 给 #分基地 从 [清野 完成]」")
                 model["reserves"].append({"gold": int(m[1]), "wood": int(m[2]), "tag": m[3], "cond": parse_cond(m[4]) if m[4] else [], "line": n, "note": note, "raw": s})
             else:
+                muted = s.startswith("#⏸")
+                if muted:
+                    s = s[2:].strip()
                 head, sep, body = re.split(r"([：:])", s, maxsplit=1) if re.search(r"[：:]", s) else (s, "", "")
                 if not sep:
                     raise ScriptError("每行写成「谁：第一步 → 第二步 → …」")
@@ -243,6 +247,8 @@ def parse(text: str) -> tuple[dict, list[str]]:
                 lane["steps"] = [parse_step(x, lane["kind"]) for x in re.split(r"\s*→\s*", body.strip()) if x.strip()]
                 if not lane["steps"]:
                     raise ScriptError(f"「{head}」后面至少写一步")
+                if muted:
+                    lane["muted"] = True
                 model["lanes"].append(lane)
         except ScriptError as exc:
             errors.append(f"第 {n} 行：{exc}")
@@ -295,7 +301,7 @@ def to_text(model: dict, header: str = "") -> str:
                 head = "#" + ln["tag"] if ln.get("tag") else next(n for n, t in NAMES.items() if t == ln["btype"])
             steps = [(st.get("raw") or step_text(st)).strip() for st in ln["steps"]]
             rows = [steps[i:i + 4] for i in range(0, len(steps), 4)] or [[]]  # long lives wrap, 4 steps a line
-            out.append(f"{head}：" + " → ".join(rows[0]))
+            out.append(("#⏸ " if ln.get("muted") else "") + f"{head}：" + " → ".join(rows[0]))
             out += ["      → " + " → ".join(r) for r in rows[1:]]
     out += ["", "# ---------- 留钱 ----------"]
     for r in model["reserves"]:

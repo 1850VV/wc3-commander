@@ -166,6 +166,15 @@ def timeline_of(c, data) -> dict:
                     step["end"] = step["done"]
             steps.append(step)
         lanes.append({"label": L["label"], "kind": L["kind"], "line": L["line"], "steps": steps, "dead": L["dead"]})
+    for ln in c.model.get("lanes", []):  # paused lanes: shown greyed, no times
+        if not ln.get("muted"):
+            continue
+        labels = ([f"农民{x}" for x in ln["cids"]] if ln["kind"] == "peasant" else [c.eco[ln["hero"]]["name"]] if ln["kind"] == "hero"
+                  else ["步兵"] if ln["kind"] == "army" else ["#" + ln["tag"] if ln.get("tag") else c.eco[ln["btype"]]["name"]])
+        for label in labels:
+            lanes.append({"label": label, "kind": ln["kind"], "line": ln["line"], "muted": True, "dead": False,
+                          "steps": [{"raw": st["raw"], "start": None, "end": None} for st in ln["steps"]]})
+    lanes.sort(key=lambda x: x["line"])
     places = {}
     for q in c.model.get("positions", []):
         try:

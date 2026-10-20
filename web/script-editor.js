@@ -123,7 +123,7 @@
         if (ln.note) push('# ' + ln.note);
         const st = ln.steps.map(s => s.raw.trim()), rows = [];
         for (let k = 0; k < st.length; k += 4) rows.push(st.slice(k, k + 4));
-        push(ln.head + '：' + (rows[0] || []).join(' → '), {type: 'lane', i});
+        push((ln.muted ? '#⏸ ' : '') + ln.head + '：' + (rows[0] || []).join(' → '), {type: 'lane', i});
         for (const r of rows.slice(1)) push('      → ' + r.join(' → '));
       });
     }
@@ -133,7 +133,7 @@
   }
   function fromModel(model) {
     return {header: model.header || '', positions: (model.positions || []).map(p => ({name: p.name, expr: p.expr, note: p.note || ''})),
-      lanes: (model.lanes || []).map(l => ({head: l.head, note: l.note || '', steps: l.steps.map(s => ({raw: s.raw}))})),
+      lanes: (model.lanes || []).map(l => ({head: l.head, note: l.note || '', muted: !!l.muted, steps: l.steps.map(s => ({raw: s.raw}))})),
       reserves: (model.reserves || []).map(r => ({raw: r.raw, note: r.note || ''}))};
   }
   /* lanes in display order: by kind (the file's order), keeping each lane's index in M */
@@ -238,12 +238,14 @@
   }
   function newTag(base) { const taken = new Set(builds().map(b => b.tag).filter(Boolean)); let n = 1, nm = base; while (taken.has(nm)) nm = base + ++n; return nm; }
   /* cids: unit numbers; t: the red line; cmd as on the command card; xy: the point clicked */
-  function addOrder({cids, t, cmd, xy, what, assist, queue}) {
+  /* when: {kind: now | started | done | money, tag, gold, wood}: what the order waits for (now = the red line) */
+  function addOrder({cids, t, cmd, xy, what, assist, queue, when, place: named}) {
     if (!M) return;
-    const UT = window.UnifiedTimeline, T = Math.round(t), cond = queue ? '' : `[${api.fmt(T)}] `, nat = UT && UT.natural();
+    const UT = window.UnifiedTimeline, T = Math.round(t), nat = UT && UT.natural(), w = when || {kind: 'now'};
+    const cond = w.kind === 'started' || w.kind === 'done' ? `[#${w.tag} ${w.kind === 'started' ? '开工' : '完成'}] ` : w.kind === 'money' ? `[金≥${w.gold || 0}${w.wood ? ' 木≥' + w.wood : ''}] ` : queue ? '' : `[${api.fmt(T)}] `;
     const done = [], notes = [];
     change(() => {
-      const place = xy && ['move', 'hold', 'attack', 'build'].includes(cmd) ? newPlace(cmd === 'build' ? what : '点', xy) : null;
+      const place = named && M.positions.some(p => p.name === named) ? named : xy && ['move', 'hold', 'attack', 'build'].includes(cmd) ? newPlace(cmd === 'build' ? what : '点', xy) : null;
       let tag = null;
       if (cmd === 'assist' && assist) { const li = laneIndexOf(assist.label, true); if (li >= 0) tag = nameBuild(li, assist.k); }
       if (cmd === 'build' && cids.length > 1) tag = newTag(what);
@@ -294,6 +296,13 @@
     if (!ok) { S.undo.pop(); api.say('脚本和时间轴对不上了（可能刚改过），先等这次预演算完再改', true); return; }
     const what = {delete: '删掉了', raw: '改了', time: `改成最早 ${api.fmt(op.at || 0)} 开始：`, move: `改派给 ${op.to}：`}[op.op];
     preview(api.startIndex(), `${op.label} 的「${op.raw}」${what}（未保存）。`, false, Math.max(0, Math.floor(op.t || 0)));
+  }
+  function toggleMute(label) {
+    if (!M) return;
+    let head = '';
+    change(() => { const li = laneIndexOf(label, true); if (li >= 0) { M.lanes[li].muted = !M.lanes[li].muted; head = (M.lanes[li].muted ? '暂停' : '恢复') + '「' + M.lanes[li].head + '」'; } });
+    if (!head) return;
+    preview(api.startIndex(), head + '（未保存）。', false, 0); // the whole game changes: from the start
   }
   function openCardOf(label, k) {
     const li = laneIndexOf(label, false); if (li < 0) return;
@@ -624,7 +633,7 @@
       for (const {ln, i} of lanesOf(kind)) {
         const err = S.errors.lane[i], selL = S.sel && S.sel.l === i;
         const timedInfo = T ? T.lanes[i] : null;
-        h += `<div class="se-row k-${kind} ${selL && S.sel.s == null ? 'sel' : ''} ${err ? 'err' : ''}" data-l="${i}">`;
+        h += `<div class="se-row k-${kind} ${selL && S.sel.s == null ? 'sel' : ''} ${err ? 'err' : ''} ${ln.muted ? 'muted' : ''}" data-l="${i}">`;
         h += `<div class="se-lab" data-l="${i}" title="${esc((ln.note ? ln.note + '\n' : '') + (err ? err.join('\n') : '点一下编辑这一行'))}"><b>${esc(ln.head)}</b>` +
           (ln.note ? '<i class="note">注</i>' : '') + (err ? '<i class="bad">!</i>' : '') +
           `<button type="button" class="x" data-dellane="${i}" title="删除这一行" aria-label="删除 ${esc(ln.head)} 这一行">×</button></div>`;
@@ -677,7 +686,7 @@
         <label>谁<input data-f="head" value="${esc(ln.head)}" placeholder="农民9、10、12 ／ 城镇大厅 ／ #分基地 ／ 大法师"></label>
         <label>备注<input data-f="note" value="${esc(ln.note)}" placeholder="写给自己看的说明（存成注释）"></label>
         <div class="row"><button type="button" class="btn" data-act="laneup">上移</button><button type="button" class="btn" data-act="lanedown">下移</button>
-        <button type="button" class="btn" data-act="lanedup">复制这一行</button>${laneCids(ln.head).length > 1 ? '<button type="button" class="btn" data-act="lanesplit" title="每个人一行，之后可以分别派不同的任务">拆成每人一行</button>' : ''}<button type="button" class="btn bad" data-act="lanedel">删除这一行</button>
+        <button type="button" class="btn" data-act="lanemute">${ln.muted ? '恢复执行' : '暂停这一行'}</button><button type="button" class="btn" data-act="lanedup">复制这一行</button>${laneCids(ln.head).length > 1 ? '<button type="button" class="btn" data-act="lanesplit" title="每个人一行，之后可以分别派不同的任务">拆成每人一行</button>' : ''}<button type="button" class="btn bad" data-act="lanedel">删除这一行</button>
         <span class="hint">上面的行先花钱；农民行、建筑行、英雄行各自排序。</span></div></div>`;
     }
     return stepEditorHTML(ln, kind);
@@ -921,6 +930,7 @@
       case 'addcond': addCond(); break;
       case 'share': shareStep(); break;
       case 'lanesplit': splitLane(); break;
+      case 'lanemute': change(() => { ln.muted = !ln.muted; }, ln.muted ? `「${ln.head}」暂停执行（写成 #⏸，预演和实战都跳过它）` : `「${ln.head}」恢复执行`); break;
       case 'pickmap': {
         const f = stepFields(ln.steps[sel.s].raw, laneKind(ln.head));
         if (!editing()) { api.say('先「回到编排」，再在沙盘上点选位置', true); break; }
@@ -1148,7 +1158,7 @@
     if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf,
+  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf, toggleMute,
     placing: () => S.placing, cancelPlacing: () => { if (S.placing) { S.placing = null; api.say('已取消放置'); } },
     placed: (pos) => { const p = S.placing; S.placing = null; if (p) moveSite(p.l, p.s, pos); }, markerAt, moveMarker, selectPos, active: () => S.active,
     _test: {splitStep, joinStep, laneKind, laneCids, toText: () => toText(), model: () => M}};

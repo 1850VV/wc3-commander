@@ -13,6 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 from commander_bridge.data import load_data  # noqa: E402
+from commander_bridge.script import parse, to_text  # noqa: E402
 from commander_bridge.server import preview_script  # noqa: E402
 
 SCRIPT = (HERE.parents[1] / "strategies" / "战术脚本-人族速矿二本.txt").read_text(encoding="utf-8")
@@ -73,6 +74,19 @@ class ResumeTest(unittest.TestCase):
         r = preview_script(self.data, changed, 0, seconds=120, resume_from=100)
         self.assertIsNone(r["resumedFrom"])
         self.assertIn("农民4", r["note"])
+
+
+class PausedLaneTest(unittest.TestCase):
+    def test_a_paused_lane_is_kept_but_not_played(self):
+        text = SCRIPT.replace("农民21：", "#⏸ 农民21：")
+        model, errors = parse(text)
+        self.assertEqual(errors, [])
+        self.assertTrue(next(l for l in model["lanes"] if l["head"] == "农民21").get("muted"))
+        self.assertIn("#⏸ 农民21：", to_text(model))
+        r = preview_script(load_data(), text, 0, seconds=420)
+        lane = next(x for x in r["timeline"]["lanes"] if x["label"] == "农民21")
+        self.assertTrue(lane["muted"])
+        self.assertFalse(any("藏宝室" in d["action"] for d in r["decisions"]), "his vault is not built")
 
 
 class FootmenLaneTest(unittest.TestCase):
