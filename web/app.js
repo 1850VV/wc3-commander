@@ -396,7 +396,15 @@
     if (placing) { updateGhost(wx, wy); confirmPlace(); return; }
     pick(wx, wy);
   });
-  cv.addEventListener('wheel', e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top); }, {passive: false});
+  // Zoom by how far the wheel moved, not by event: a trackpad or a smooth-scrolling mouse sends dozens of
+  // small events per flick, and a fixed 15% each made one flick jump several zoom levels. One mouse
+  // notch (about 100 px) is about 10%; a single event never changes the zoom by more than 15%.
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    const px = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? CH : 1);
+    const f = Math.min(1.15, Math.max(1 / 1.15, Math.exp(-px * 0.001)));
+    const r = cv.getBoundingClientRect(); zoomAt(f, e.clientX - r.left, e.clientY - r.top);
+  }, {passive: false});
   $('zIn').onclick = () => zoomAt(1.25, CW / 2, CH / 2);
   $('zOut').onclick = () => zoomAt(0.8, CW / 2, CH / 2);
   $('zHome').onclick = home;
