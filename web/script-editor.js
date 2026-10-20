@@ -1,7 +1,7 @@
 /* Tactic-script editor (战术脚本): strategies/战术脚本-人族速矿二本.txt shown as lanes of step cards.
  * One lane per peasant (or several peasants with the same life), per building and per hero; the cards
  * run left to right, each waiting for its [condition]. Drag a card to reorder it or hand it to another
- * lane, drag from the palette to add one, click to edit it. 「预演」 plays the script on the bridge's
+ * lane, drag from the palette to add one, click to edit it. Every change is budgeted at once (budget.js); 「完整跑一遍」 plays the script on the bridge's
  * fake world and lays the cards out on the timeline at the moment each began; a live or replayed
  * game does the same from its decision record. The text file stays the source: 保存 writes it back,
  * and the next game plays it. Needs the bridge (GET/PUT /api/script, POST /api/script/preview). */
@@ -171,32 +171,42 @@
     S.loadedText = j.text; S.saved = true; render();
     preview(api.startIndex(), '已保存。', S.demo);
   }
-  /* play the script (as edited, saved or not) on the fake world; the console opens the result like a
-   * replay, so the event timeline, the map and these cards all show it */
-  async function preview(start, lead = '', demo = false, from = null) {
+  /* the budget (budget.js): the script as edited, saved or not, turned into its timeline by
+   * arithmetic in a few milliseconds, so every change shows at once. The console opens it like a
+   * replay: the event timeline, the map and these cards all show it. full: play it on the bridge's
+   * fake world instead (about 5 s), a check that the budget is not far off */
+  function budget(start) {
+    const D = window.LT_DATA, s0 = D.starts[start], hall = [s0.x, s0.y];
+    const mine = D.mines.map(m => [m.x, m.y]).sort((a, b) => Math.hypot(a[0] - hall[0], a[1] - hall[1]) - Math.hypot(b[0] - hall[0], b[1] - hall[1]))[0];
+    const {text, map} = toText(), m = Budget.fromText(text);
+    const places = Budget.resolvePlaces(m.positions, layoutGroups(start), hall, Budget.NATURALS[start]);
+    const j = Budget.run({eco: D.economy.units, start, hall, mine, lanes: m.lanes, reserves: m.reserves, places, rates: S.rates});
+    j.meta.name = '预算 · ' + api.startName(start);
+    return {j, text, map};
+  }
+  function scheduleBudget() { clearTimeout(S.rebudget); if (!api.live().on) S.rebudget = setTimeout(() => preview(api.startIndex()), 200); }
+  async function preview(start, lead = '', demo = false, from = null, full = false) {
+    clearTimeout(S.rebudget);
     if (S.busy || !M) return;
-    if (api.live().on) { api.say('连着游戏时不能预演，先点「断开」', true); return; }
+    if (api.live().on) { if (lead || full) api.say('连着游戏时时间轴跟着实机走，先点「断开」', true); return; }
     start = start == null ? api.startIndex() : start;
-    const {text, map} = toText();
-    S.busy = true; render();
-    api.say(lead + (from != null ? `从 ${api.fmt(from)} 的存档点接着预演…` : `正在按战术脚本预演${api.startName(start)}（假游戏跑 10 分钟，约 5 秒）…`));
-    if (from != null && window.UnifiedTimeline) UnifiedTimeline.markStale(from);
-    let j;
-    try { j = await api_('POST', '/api/script/preview', from != null ? {text, start, from} : {text, start}); } catch (_) { j = {ok: false, error: '连不上本地服务'}; }
-    if (!j.ok && window.UnifiedTimeline) UnifiedTimeline.clearStale();
-    S.busy = false;
-    if (!j.ok) { render(); api.say('预演没跑成：' + (j.error || (j.errors || [])[0] || '未知原因'), true); return; }
-    if (api.live().on) { render(); return; } // a game started meanwhile
+    let j, text, map;
+    if (full) {
+      ({text, map} = toText());
+      S.busy = true; render();
+      api.say(lead + `正在假游戏里把战术脚本完整跑一遍${api.startName(start)}（10 分钟，约 5 秒）…`);
+      try { j = await api_('POST', '/api/script/preview', {text, start}); } catch (_) { j = {ok: false, error: '连不上本地服务'}; }
+      S.busy = false;
+      if (!j.ok) { render(); api.say('没跑成：' + (j.error || (j.errors || [])[0] || '未知原因'), true); return; }
+      if (api.live().on) { render(); return; } // a game started meanwhile
+      j.meta.name = '假游戏 · ' + api.startName(start);
+    } else { await loadLayout(start); ({j, text, map} = budget(start)); } // the start's layout first: its sites are where the walks go
     S.previewMap = map; S.previewText = text; S.timingKey = ''; S.movedPos.clear(); S.moved.clear();
     S.lastPreview = j;
     const dead = (j.script.lanes || []).filter(l => l.dead).map(l => l.label);
-    const tail = '假游戏的采集和战斗数值是估计的，时间只作参考。' + (dead.length ? ` 阵亡：${dead.join('、')}` : '') +
-      (j.resumedFrom != null ? `（从 ${api.fmt(j.resumedFrom)} 的存档点接着算，用了 ${j.seconds} 秒）` : j.note ? `（${j.note}）` : '');
-    if (S.active && !demo) { // asked from the script tab: stay in 编排, keep it for 「预演」 and the timeline tab
-      render(); api.say(lead + `已按新脚本在后台预演了${api.startName(start)}；点「预演」在沙盘上演示。`);
-      return;
-    }
-    if (S.active) { // 预演: the sandbox plays the script from 0:00
+    const tail = full ? '这是假游戏里实际跑出来的时间（采集和战斗数值也是估计的）；改动脚本后时间轴会回到预算。' + (dead.length ? ` 阵亡：${dead.join('、')}` : '') : '';
+    if (S.active && !demo && !full) { render(); if (lead) api.say(lead + '时间已按预算更新。'); return; } // the script tab: the cards show the new times
+    if (S.active) { // 演示: the sandbox plays the script from 0:00
       S.demo = true; S.view = 'time';
       api.openPreview(j, true);
       render();
@@ -205,16 +215,16 @@
     }
     api.openPreview(j);
     render();
-    api.say(lead + `按战术脚本预演了${api.startName(start)}（到 ${api.fmt(j.t)}）：事件时间轴按脚本每一行分组，地图和资源跟着时间走，拖时间轴或点「播放」看过程。` + tail);
+    if (lead || full) api.say(lead + (full ? `假游戏完整跑了一遍${api.startName(start)}（到 ${api.fmt(j.t)}）。` + tail : '时间轴已按预算更新。'));
   }
   /* 编排 (the script tab, no demo): the sandbox shows the start as it begins and every site the script
-   * builds, all draggable; nothing plays until 「预演」 */
+   * builds, all draggable; the times are the budget's */
   function editing() { return !!M && S.active && !S.demo && !api.live().on; }
   function backToEdit() {
     S.demo = false; S.placing = null; S.timingKey = '';
     if (api.live().replay && api.live().replay.preview) api.exitPreview();
     api.setMode('战术脚本 · 编排');
-    render(); api.say('回到编排：沙盘上是开局和脚本里的全部工地，拖动改位置；改完点「预演」再看。');
+    render(); api.say('回到编排：沙盘上是开局和脚本里的全部工地，拖动改位置；时间随改随算。');
   }
   /* ---------- orders from the sandbox, edits from the timeline (timeline.js) ---------- */
   // which lane of the script a runtime lane is: 农民9 may live in 「农民9、10、12」 (split it then:
@@ -293,7 +303,7 @@
         tsteps.splice(Math.min(idx, tsteps.length), 0, {raw: joinStep(o)});
       }
     });
-    if (!ok) { S.undo.pop(); api.say('脚本和时间轴对不上了（可能刚改过），先等这次预演算完再改', true); return; }
+    if (!ok) { S.undo.pop(); api.say('脚本和时间轴对不上了（可能刚改过），稍等一下再改', true); return; }
     const what = {delete: '删掉了', raw: '改了', time: `改成最早 ${api.fmt(op.at || 0)} 开始：`, move: `改派给 ${op.to}：`}[op.op];
     preview(api.startIndex(), `${op.label} 的「${op.raw}」${what}（未保存）。`, false, Math.max(0, Math.floor(op.t || 0)));
   }
@@ -323,12 +333,12 @@
   /* ---------- changes (with undo) ---------- */
   function change(fn, msg) {
     S.undo.push(JSON.stringify(M)); if (S.undo.length > 60) S.undo.shift();
-    fn(); S.saved = false; S.timingKey = ''; render(); scheduleCheck();
+    fn(); S.saved = false; S.timingKey = ''; render(); scheduleCheck(); scheduleBudget();
     if (msg) api.say(msg);
   }
   function undo() {
     if (!S.undo.length) { api.say('没有可以撤销的修改'); return; }
-    M = JSON.parse(S.undo.pop()); S.saved = false; S.sel = null; S.timingKey = ''; render(); scheduleCheck(); api.say('已撤销上一步修改');
+    M = JSON.parse(S.undo.pop()); S.saved = false; S.sel = null; S.timingKey = ''; render(); scheduleCheck(); scheduleBudget(); api.say('已撤销上一步修改');
   }
   function nextPeasant() {
     let n = 5;
@@ -349,7 +359,7 @@
     const terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}$/.test(x.trim())) : [];
     o.cond = [mm, ...terms].join(' 且 ');
     change(() => { M.lanes[l].steps[s].raw = joinStep(o); S.sel = {l, s}; },
-      `「${o.body}」改成最早 ${mm} 开始（还要等上一步做完、其他条件满足）。点「预演」看新的时间`);
+      `「${o.body}」改成最早 ${mm} 开始（还要等上一步做完、其他条件满足）`);
   }
 
   /* ---------- timing from a game: live, replay or preview ---------- */
@@ -357,9 +367,9 @@
     const L = api.live();
     if (L.on && L.state && L.state.script) return {kind: 'live', T: L.state.t, decisions: L.state.decisions || [], script: L.state.script, label: '实机'};
     if (L.replay && L.replay.state && L.replay.state.script) return {kind: L.replay.preview ? 'preview' : 'replay', T: L.replay.t, decisions: L.replay.state.decisions || [],
-      script: L.replay.state.script, label: L.replay.preview ? '预演 · ' + api.startName(L.replay.state.start) : '回放', end: L.replay.end};
+      script: L.replay.state.script, label: L.replay.preview ? (L.replay.meta && L.replay.meta.budget ? '预算 · ' : '假游戏 · ') + api.startName(L.replay.state.start) : '回放', end: L.replay.end};
     const P = S.lastPreview; // 编排: the cards still show when each step began in the last preview
-    if (P) return {kind: 'preview', T: P.t, decisions: P.decisions, script: P.script, label: '上次预演 · ' + api.startName(P.state.start), end: P.t};
+    if (P) return {kind: 'preview', T: P.t, decisions: P.decisions, script: P.script, label: (P.budget ? '预算 · ' : '假游戏 · ') + api.startName(P.state.start), end: P.t};
     return null;
   }
   function timing() {
@@ -417,15 +427,16 @@
 
   /* ---------- map markers (app.js draws them while this tab is open) ---------- */
   /* the layout the script plays on: 人族速矿二本 · <start> (fetched once per start), else what the console has loaded */
-  const layouts = {};
-  function layoutGroups(start) {
-    if (!(start in layouts)) {
+  const layouts = {}, layoutsP = {};
+  function loadLayout(start) {
+    if (!(start in layoutsP)) {
       layouts[start] = null;
-      api_('GET', '/api/strategies/' + encodeURIComponent('人族速矿二本 · ' + api.startName(start)))
+      layoutsP[start] = api_('GET', '/api/strategies/' + encodeURIComponent('人族速矿二本 · ' + api.startName(start)))
         .then(j => { if (j && j.ok) { layouts[start] = j.plan.groups; S.timingKey = ''; } }).catch(() => {});
     }
-    return layouts[start] || api.groups();
+    return layoutsP[start];
   }
+  function layoutGroups(start) { loadLayout(start); return layouts[start] || api.groups(); }
   function approxPositions() {
     const builds = layoutGroups(api.startIndex()).flatMap(g => g.children).filter(e => e.kind === 'build').sort((a, b) => a.start - b.start || (a.seq || 0) - (b.seq || 0));
     const pools = {};
@@ -572,9 +583,9 @@
       }, `${M.lanes[l].head} 的${what}放在 ${x},${y}，新建位置「${nm}」（坐标写死，只对${api.startName(api.startIndex())}准确）`);
     }
     S.moved.add(l + '|' + s);
-    if (!S.demo) return; // 编排: the player previews when ready
+    if (!S.demo) return; // 编排: change() has recomputed the budget
     const lead = document.getElementById('msg') ? document.getElementById('msg').textContent + ' ' : '';
-    clearTimeout(S.repreview); S.repreview = setTimeout(() => preview(api.startIndex(), lead, true), 1500); // a demo replays with the move
+    clearTimeout(S.repreview); S.repreview = setTimeout(() => preview(api.startIndex(), lead, true), 300); // a demo replays with the move
   }
   function onMap() { const L = api.live(); return !!M && (S.active || (L.replay && L.replay.preview) || (L.on && L.state && L.state.script)); }
 
@@ -602,23 +613,23 @@
     return (o.cond ? `<span class="c" title="开始条件">${esc(o.cond)}</span>` : '') + `<b>${esc(o.body)}</b>` +
       (o.pos ? `<span class="p">@${esc(o.pos)}</span>` : '') + (o.tag ? `<span class="g">#${esc(o.tag)}</span>` : '') +
       `<button type="button" class="x" data-del title="删除这一步" aria-label="删除这一步">×</button>` +
-      (info && info.t != null ? `<span class="tm" title="${info.stale ? '改过：这是改之前的时间，点「预演」更新' : '这一步开始的时间'}">${api.fmt(info.t)}${info.stale ? '?' : ''}</span>` : '') + who;
+      (info && info.t != null ? `<span class="tm" title="${info.stale ? '改过：这是改之前的时间' : '这一步开始的时间'}">${api.fmt(info.t)}${info.stale ? '?' : ''}</span>` : '') + who;
   }
   function render() {
     if (!root || !M) return;
     const T = timing(), src = T && T.src, time = S.view === 'time' && !!T;
     const errN = S.errors.general.length + Object.keys(S.errors.lane).length + Object.keys(S.errors.pos).length + Object.keys(S.errors.res).length;
     let h = `<div class="se-top"><div class="se-bar">
-      <span class="seg"><button type="button" data-view="flow" class="${S.view === 'flow' ? 'on' : ''}">顺序</button><button type="button" data-view="time" class="${S.view === 'time' ? 'on' : ''}" ${T ? '' : 'disabled title="先点「预演」，或连接游戏 / 打开回放"'}>时间</button></span>
-      <button type="button" class="btn ${S.demo ? '' : 'on'}" data-act="preview" ${S.busy ? 'disabled' : ''} title="在假游戏里跑这份脚本，沙盘从 0:00 演示">${S.busy ? '预演中…' : (S.demo ? '重新预演' : '▶ 预演') + '（' + esc(api.startName(api.startIndex())) + '）'}</button>
-      ${S.demo ? '<button type="button" class="btn on" data-act="edit" title="停止演示，回到可以拖工地的编排状态">回到编排</button>' : '<span class="se-mode">编排中：沙盘上的工地可以拖</span>'}
+      <span class="seg"><button type="button" data-view="flow" class="${S.view === 'flow' ? 'on' : ''}">顺序</button><button type="button" data-view="time" class="${S.view === 'time' ? 'on' : ''}" ${T ? '' : 'disabled title="还没有时间：脚本有错时算不出来"'}>时间</button></span>
+      ${S.demo ? '<button type="button" class="btn on" data-act="edit" title="停止演示，回到可以拖工地的编排状态">回到编排</button>' : '<span class="se-mode">编排中：沙盘上的工地可以拖；时间随改随算</span>'}
+      <button type="button" class="btn" data-act="full" ${S.busy ? 'disabled' : ''} title="时间是按数学模型估算的预算；这个按钮在假游戏里把脚本实际跑一遍（约 5 秒），看看预算差得多不多">${S.busy ? '跑着…' : '完整跑一遍（假游戏）'}</button>
       <button type="button" class="btn ${S.saved ? '' : 'on'}" data-act="save">保存</button>
       <button type="button" class="btn" data-act="undo" ${S.undo.length ? '' : 'disabled'}>撤销</button>
       <button type="button" class="btn ${S.showText ? 'on' : ''}" data-act="text">文本</button>
       <span class="se-state ${errN ? 'bad' : S.saved ? '' : 'warn'}">${errN ? errN + ' 处要改' : S.saved ? '已保存' : '未保存'}</span>
       <span class="zoomctl" title="缩放：「时间」视图拉宽时间轴，「顺序」视图放大卡片；也可以按住 Ctrl（Mac 用 ⌘）在卡片区滚动滚轮">
         <button class="btn" type="button" data-z="-" aria-label="缩小">－</button><b>${Math.round((time ? S.zoom : S.cardZoom) * 100)}%</b><button class="btn" type="button" data-z="+" aria-label="放大">＋</button><button class="btn" type="button" data-z="0">适应</button></span>
-      <span class="se-src">${src ? '时间来自：' + esc(src.label) + ' · ' + api.fmt(src.T) : '还没有时间：点「预演」'}</span></div>`;
+      <span class="se-src">${src ? '时间来自：' + esc(src.label) + ' · ' + api.fmt(src.T) : '还没有时间'}</span></div>`;
     h += '<div class="se-pal"><span class="hint">拖到一行里（或先点一行再点这里）：</span>' + PALETTE.map(([kind, items]) =>
       `<span class="grp"><em>${KIND_NAME[kind]}</em>${items.map(r => `<span class="chip-step k-${stepClass(r)}" draggable="true" data-raw="${esc(r)}" data-kind="${kind}">${esc(r === '农民N' ? '农民（新编号）' : r)}</span>`).join('')}</span>`).join('') + '</div>';
     h += `<div class="se-errs">${errorsHTML()}</div></div>`;
@@ -913,7 +924,7 @@
     }
     const sel = S.sel, ln = sel && M.lanes[sel.l];
     switch (act) {
-      case 'preview': preview(api.startIndex(), '', true); break;
+      case 'full': setActive(false); preview(api.startIndex(), '', false, null, true); break;
       case 'edit': backToEdit(); break;
       case 'save': save(); break;
       case 'undo': undo(); break;
@@ -930,7 +941,7 @@
       case 'addcond': addCond(); break;
       case 'share': shareStep(); break;
       case 'lanesplit': splitLane(); break;
-      case 'lanemute': change(() => { ln.muted = !ln.muted; }, ln.muted ? `「${ln.head}」暂停执行（写成 #⏸，预演和实战都跳过它）` : `「${ln.head}」恢复执行`); break;
+      case 'lanemute': change(() => { ln.muted = !ln.muted; }, ln.muted ? `「${ln.head}」暂停执行（写成 #⏸，预算和实战都跳过它）` : `「${ln.head}」恢复执行`); break;
       case 'pickmap': {
         const f = stepFields(ln.steps[sel.s].raw, laneKind(ln.head));
         if (!editing()) { api.say('先「回到编排」，再在沙盘上点选位置', true); break; }
@@ -1118,7 +1129,7 @@
       if (L.replay && L.replay.preview) api.exitPreview();
       if (!L.on && !L.replay) api.setMode('战术脚本 · 编排');
       render();
-      if (!L.on) api.say('编排中：沙盘上是开局和脚本里的全部工地，可以直接拖；点卡片定位；点「预演」看演示。');
+      if (!L.on) api.say('编排中：沙盘上是开局和脚本里的全部工地，可以直接拖；点卡片定位；时间随改随算，切到「事件时间轴」看整局。');
     } else { // the timeline shows the script's last preview
       S.placing = null;
       if (S.lastPreview && !L.on && !L.replay) api.openPreview(S.lastPreview);
@@ -1146,10 +1157,10 @@
     root.addEventListener('wheel', onWheel, {passive: false});
     document.addEventListener('keydown', onKey);
     scheduleCheck();
-    try { // the event timeline shows the script from the start: preview it unless a game is on
+    try { // the event timeline shows the script's budget from the start unless a game is on
       const h = await api_('GET', '/api/health');
       if (!h.running && !h.waiting && !api.live().on && !api.live().replay) preview(api.startIndex());
-    } catch (_) { /* no preview */ }
+    } catch (_) { /* no budget */ }
   }
   function tick(now) { // from app.js's frame loop: keep the cards in step with a live or replayed game
     if (!S.active || now - S.lastTick < 500 || S.drag) return;
@@ -1158,7 +1169,7 @@
     if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf, toggleMute,
+  window.ScriptEditor = {init, tick, preview, budget: () => (M ? budget(api.startIndex()).j : null), planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf, toggleMute,
     placing: () => S.placing, cancelPlacing: () => { if (S.placing) { S.placing = null; api.say('已取消放置'); } },
     placed: (pos) => { const p = S.placing; S.placing = null; if (p) moveSite(p.l, p.s, pos); }, markerAt, moveMarker, selectPos, active: () => S.active,
     _test: {splitStep, joinStep, laneKind, laneCids, toText: () => toText(), model: () => M}};

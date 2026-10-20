@@ -975,7 +975,7 @@
       if (st.start != null) { startIndex = st.start; startSel.value = String(st.start); }
       Live.syncArbiter(st); live.feedback = j.feedback || [];
       playing = false; bPlay.textContent = '▶ 播放'; ['bPlay', 'speeds', 'bReset'].forEach(x => $(x).hidden = false);
-      live.replayExit.hidden = false; live.replayExit.textContent = preview ? '退出预演' : '退出回放';
+      live.replayExit.hidden = !!j.meta.budget; live.replayExit.textContent = preview ? '回到预算' : '退出回放'; // the budget is the console's home: nothing to leave
       $('modeTag').textContent = (preview ? '战术脚本' : '回放') + ' · ' + (j.meta.name || id); $('modeTag').classList.add('live');
       sel = null; home(); this.seek(preview ? live.replay.end : 0); renderCmd();
     },
@@ -1004,7 +1004,9 @@
       const was = live.replay && live.replay.preview;
       live.replay = null; live.arbMode = false; live.arb = null; live.replayExit.hidden = true; playing = false;
       groups = Sim.defaultPlan(); checkpoints = []; buildTimeline();
-      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0); sel = null; renderCmd(); if (!quiet) say(was ? '已退出预演：时间轴回到模拟器的默认计划' : '已退出回放');
+      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0); sel = null; renderCmd();
+      if (!quiet && window.ScriptEditor && ScriptEditor.budget()) { ScriptEditor.preview(startIndex); say(was ? '回到预算：时间轴按数学模型估算' : '已退出回放，回到预算'); return; }
+      if (!quiet) say(was ? '已退出预演：时间轴回到模拟器的默认计划' : '已退出回放');
     },
   };
 
@@ -1116,6 +1118,7 @@
       $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live');
       if (live.arbMode) { live.arbMode = false; live.arb = null; groups = Sim.defaultPlan(); checkpoints = []; buildTimeline(); } // back to an editable plan
       resim(0);
+      if (window.ScriptEditor && ScriptEditor.budget()) ScriptEditor.preview(startIndex); // back to the script's budget
     },
     showTactic(on) { live.tactic = on; const tk = live.tacticBtn; tk.textContent = on ? '战术：开' : '战术：关'; tk.classList.toggle('on', on); },
     tactic(on) { // the bridge keeps reading the game either way; off only stops it giving orders
@@ -1162,7 +1165,7 @@
       try { const j = await (await fetch('/api/feedback')).json(); live.feedback = j.feedback || []; lastStatus = ''; } catch (_) { /* keep */ }
     },
     async rate(e, f) {
-      if (live.replay && live.replay.preview) { say('这是假游戏里的预演，不是真实对局，不用打分', true); return; }
+      if (live.replay && live.replay.preview) { say('这是预算或假游戏，不是真实对局，不用打分', true); return; }
       try {
         const r = await fetch('/api/feedback', {method: 'POST', headers: {'content-type': 'application/json'},
           body: JSON.stringify({event: e.id, rule: e.rule, action: e.name, t: e.start, ...f, ...(live.replay ? {run: live.replay.id} : {})})});
