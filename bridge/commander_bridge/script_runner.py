@@ -26,6 +26,8 @@ from .script import parse
 
 HERO_TIME = 55.0
 QUEUE_LEAD = 1.0  # the next unit in a building's lane is ordered this long before the current one comes out
+ARRIVED, ARMY_LIMIT = 350, 90.0  # an attack-move is over once everyone is this close, or after this long
+ARRIVED_ONE = 200  # a 移动 is over once the unit is this close
 PEASANT_SPEED, MILITIA_SPEED, CALL_TO_ARMS = 190.0, 270.0, 2.0
 ONGOING = ("采金", "伐木", "集合", "待命")
 
@@ -48,23 +50,69 @@ class ScriptRunner(Arbiter):
     def set_plan(self, plan: dict) -> None:
         super().set_plan(plan)  # the layout's sites
         self.model, self.errors = parse(plan.get("script") or "")
-        self.lanes, self.reserves = [], []
-        for ln in self.model.get("lanes", []):
+        self.lanes = self._build_lanes(self.model)
+        self.reserves = [dict(r, on=False, off=False) for r in self.model.get("reserves", [])]
+
+    def _build_lanes(self, model) -> list[dict]:
+        lanes = []
+        self.tag_prio = {}
+        for ln in model.get("lanes", []):
             prio = 100000 - ln["line"] * 10
-            base = {"line": ln["line"], "prio": prio, "steps": ln["steps"], "i": 0, "on": False, "done": False, "dead": False}
+            base = {"line": ln["line"], "prio": prio, "i": 0, "on": False, "done": False, "dead": False}
+            steps = lambda: [dict(s) for s in ln["steps"]]
             if ln["kind"] == "peasant":
                 for c in ln["cids"]:
-                    self.lanes.append(dict(base, kind="peasant", cid=c, label=f"农民{c}", steps=[dict(s) for s in ln["steps"]]))
+                    lanes.append(dict(base, kind="peasant", cid=c, label=f"农民{c}", steps=steps()))
             elif ln["kind"] == "hero":
-                self.lanes.append(dict(base, kind="hero", hero=ln["hero"], label=self.eco[ln["hero"]]["name"]))
+                lanes.append(dict(base, kind="hero", hero=ln["hero"], label=self.eco[ln["hero"]]["name"], steps=steps()))
+            elif ln["kind"] == "army":
+                lanes.append(dict(base, kind="army", unit=ln.get("unit", "hfoo"), label="步兵", steps=steps()))
             else:
                 label = "#" + ln["tag"] if ln.get("tag") else self.eco[ln["btype"]]["name"]
-                self.lanes.append(dict(base, kind="building", btype=ln.get("btype"), tag=ln.get("tag"), label=label, made=0))
+                lanes.append(dict(base, kind="building", btype=ln.get("btype"), tag=ln.get("tag"), label=label, made=0, steps=steps()))
             for st in ln["steps"]:
                 if st.get("tag"):
                     self.tag_prio[st["tag"]] = prio
-        for r in self.model.get("reserves", []):
-            self.reserves.append(dict(r, on=False, off=False))
+        return lanes
+
+    def reload_script(self, text: str) -> list[str]:
+        """Take a changed script while the game goes on (the console resumes a preview from a save
+        point). A lane keeps where it is when the steps it has already begun are unchanged; the steps
+        after them are the new ones. Returns what could not be carried over (empty: all of it)."""
+        model, errors = parse(text)
+        if errors:
+            return errors
+        old = {(L["kind"], L["label"]): L for L in self.lanes}
+        lanes, bad = self._build_lanes(model), []
+        for L in lanes:
+            O = old.pop((L["kind"], L["label"]), None)
+            if O is None:
+                continue
+            k = O["i"]
+            if [x["raw"] for x in O["steps"][:k + 1]] != [x["raw"] for x in L["steps"][:k + 1]]:
+                bad.append(f"{L['label']} 已经做过的步骤被改了")
+                continue
+            for f in ("i", "on", "done", "dead", "made", "since"):
+                if f in O:
+                    L[f] = O[f]
+            for a, b in zip(O["steps"][:k + 1], L["steps"]):
+                for key in ("_events", "_made"):
+                    if key in a:
+                        b[key] = a[key]
+            if L["done"] and len(L["steps"]) > len(O["steps"]):
+                L["done"] = False  # a finished lane got more to do
+        bad += [f"{O['label']} 那一行被删了，但它已经开始" for O in old.values() if O["i"] > 0 or O["on"]]
+        if bad:
+            return bad
+        exprs = {p["name"]: p["expr"] for p in model.get("positions", [])}
+        before = {p["name"]: p["expr"] for p in self.model.get("positions", [])}
+        for name in [n for n in self._pos if exprs.get(n) != before.get(n)]:
+            self._pos.pop(name)  # a place that changed is found again
+        res = {(r["tag"], r["gold"], r["wood"]): r for r in self.reserves}
+        self.reserves = [dict(r, on=res.get((r["tag"], r["gold"], r["wood"]), {}).get("on", False),
+                              off=res.get((r["tag"], r["gold"], r["wood"]), {}).get("off", False)) for r in model.get("reserves", [])]
+        self.model, self.errors, self.lanes = model, [], lanes
+        return []
 
     # ---- numbering: the script's peasant numbers ---------------------------------------------
     def _map(self, unit_id: int) -> int:
@@ -252,7 +300,7 @@ class ScriptRunner(Arbiter):
         for L in self.lanes:
             if L["done"] or L["dead"]:
                 continue
-            self._in(("L%d" % L["line"], None), {"peasant": self._peasant, "hero": self._hero, "building": self._building}[L["kind"]], L)
+            self._in(("L%d" % L["line"], None), {"peasant": self._peasant, "hero": self._hero, "building": self._building, "army": self._army}[L["kind"]], L)
         if self.clear and not self.clear.get("result"):
             self._in(("L%d" % self.clear["line"], self.clear["event"]), self._tick_clear)
 
@@ -338,7 +386,7 @@ class ScriptRunner(Arbiter):
         elif a == "敲钟":
             self.roles[uid] = "militia"
             self.order(uid, "cast", order=MILITIA_ORDER)
-        elif a in ("集合", "待命"):
+        elif a in ("集合", "待命", "移动"):
             p = self.pos(st["pos"])
             if not p:
                 return False
@@ -364,6 +412,9 @@ class ScriptRunner(Arbiter):
             return u["type_id"] == "hmil"
         if a == "清野":
             return bool(self.clear and self.clear.get("result") == "done")
+        if a == "移动":
+            p = self.pos(st["pos"])
+            return not p or dist(u, p) < ARRIVED_ONE
         return True
 
     def _p_keep(self, L, st, u):
@@ -372,7 +423,7 @@ class ScriptRunner(Arbiter):
         if uid in self.ordered or self.t - self.last_order.get(uid, -99) < 3:
             return
         order = (u.get("order") or {}).get("name")
-        if a in ("集合", "待命"):
+        if a in ("集合", "待命", "移动"):
             p = self.pos(st["pos"])
             if p and dist(u, p) > 300 and order != "move":  # e.g. Warcraft sent a turned-back militia to his old work
                 self.order(uid, "move", x=p["x"], y=p["y"])
@@ -419,18 +470,52 @@ class ScriptRunner(Arbiter):
                 a = st["act"]
                 if a == "学":
                     self._emit(L, st, "learn", f"{L['label']}学{st['abilityName']}", hero=L["hero"], ability=st["ability"], abilityName=st["abilityName"])
-                elif a in ("集合", "待命"):
+                elif a in ("集合", "待命", "移动"):
                     p = self.pos(st["pos"])
                     if not p:
                         return
                     self.order(u["unit_id"], "move", x=p["x"], y=p["y"])
                 elif a == "清野":
                     self._start_clear(L, st, u)
+                elif a == "攻击移动":
+                    p = self.pos(st["pos"])
+                    if not p:
+                        return
+                    self.order(u["unit_id"], "attack", x=p["x"], y=p["y"])
                 L["on"] = True
                 self.note("L%d" % L["line"], f"{L['label']}：{st['raw']}", f"第 {L['line']} 行第 {L['i'] + 1} 步")
             a = st["act"]
             done = (a in ONGOING) or (a == "学" and self._evs(st) and self._evs(st)[-1].get("status") == "done") \
-                or (a == "清野" and self.clear and self.clear.get("result"))
+                or (a == "清野" and self.clear and self.clear.get("result")) \
+                or (a == "攻击移动" and (dist(u, self.pos(st["pos"]) or u) < ARRIVED)) \
+                or (a == "移动" and (dist(u, self.pos(st["pos"]) or u) < ARRIVED_ONE))
+            if not self._next_step(L, bool(done)):
+                return
+
+    def _army(self, L):
+        """The 步兵 lane: every footman that is not in the clear moves, attack-moves or holds together;
+        an attack-move is done once they have all arrived (or after ARMY_LIMIT seconds)."""
+        clearing = set(self.clear["job"].members) if self.clear and not self.clear.get("result") else set()
+        army = [u for u in self.units() if u["type_id"] == L["unit"] and u["unit_id"] not in clearing]
+        if not army:
+            return
+        for _ in range(3):
+            st = L["steps"][L["i"]]
+            p = self.pos(st["pos"])
+            if not p:
+                return
+            if not L["on"]:
+                if not self.holds(st["cond"]):
+                    return
+                for u in army:
+                    self.order(u["unit_id"], "attack" if st["act"] == "攻击移动" else "move", x=p["x"], y=p["y"])  # 移动 too
+                L["on"], L["since"] = True, self.t
+                self.note("L%d" % L["line"], f"步兵：{st['raw']}", f"第 {L['line']} 行第 {L['i'] + 1} 步：{len(army)} 个步兵")
+            elif st["act"] in ONGOING:  # newly trained footmen join where the others stand
+                for u in army:
+                    if dist(u, p) > 300 and (u.get("order") or {}).get("name") is None and u["unit_id"] not in self.ordered:
+                        self.order(u["unit_id"], "move", x=p["x"], y=p["y"])
+            done = st["act"] in ONGOING or all(dist(u, p) < ARRIVED for u in army) or self.t - L.get("since", self.t) > ARMY_LIMIT
             if not self._next_step(L, bool(done)):
                 return
 

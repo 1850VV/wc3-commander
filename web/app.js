@@ -285,6 +285,7 @@
       label('最窄 ' + wr.K + ' 格', x, y - r - 9, ls * .9, col);
     }
     if (window.ScriptEditor && ScriptEditor.onMap()) drawScriptSites(ls);
+    if (orderMode()) drawOrders(ls);
     if (window.ScriptEditor && ScriptEditor.active()) drawScriptMarkers(ls);
     const ghost = placing && placing.pos ? placing : dragging && drag.ghost;
     if (ghost) {
@@ -301,13 +302,72 @@
       if (u.hidden) continue;
       const [x, y] = toScreen(u.x, u.y), hero = /^[A-Z]/.test(u.type), r = Math.max(3.5, (hero ? 26 : 16) * cam.s);
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = hero ? '#b78be0' : u.type === 'hpea' ? (u.task === '空闲' ? '#cdd6de' : '#79b0ee') : '#9fb3c4'; ctx.fill();
+      ctx.fillStyle = hero ? '#b78be0' : u.type === 'hpea' ? (u.task === '空闲' ? '#cdd6de' : '#79b0ee') : u.type === 'hmil' ? '#e0904a' : '#9fb3c4'; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = '#0b1a2a'; ctx.stroke();
       if (u.amt > 0) { ctx.beginPath(); ctx.arc(x + r * .8, y - r * .8, Math.max(2, r * .45), 0, Math.PI * 2); ctx.fillStyle = u.carry === 'gold' ? '#e4c14a' : '#76a650'; ctx.fill(); }
       if (r >= 8) { ctx.fillStyle = '#0b1a2a'; ctx.font = font(Math.max(8, r * .95), 700); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(u.id, x, y + .5); }
       if (su && su.id === u.id) { ctx.beginPath(); ctx.arc(x, y, r + 3, 0, Math.PI * 2); ctx.strokeStyle = '#d6a03f'; ctx.lineWidth = 2; ctx.stroke(); }
     }
     drawMini(v);
+  }
+  /* ---------- 时间轴编排: in a script preview the sandbox is the moment at the red line; select and
+   * command units like in the game, every order goes into the script (script-editor.js addOrder) ---------- */
+  const UTL = () => window.UnifiedTimeline;
+  const orderMode = () => !!(live.replay && live.replay.preview && !live.on && UTL() && UTL().has() && !editingScript());
+  let cmdMode = null, cmdMenu = 'main', flags = [], boxSel = null, cmdGhost = null;
+  const pickedUnits = () => V().units.filter(u => UTL().pick.has(u.id) && !u.hidden);
+  function creepsUp(t) {
+    const L = UTL().lanes().find(x => x.label === '大法师'), s = L && L.steps.find(x => /^清野/.test(x.body));
+    return !(s && s.start != null && t >= (s.done ?? s.end ?? Infinity));
+  }
+  function issue(cmd, extra) {
+    if (!UTL().pick.size) { say('先选单位：点一下，或拖一个框'); return; }
+    let cids = pickedUnits().map(u => u.id); // only those on the map at the red line (not yet born, inside a mine: no order)
+    if (!cids.length) { say(`选中的单位在 ${fmt(live.replay.t)} 这一刻不在地图上（还没出生或在金矿里）`, true); return; }
+    if (['gold-main', 'gold-nat', 'wood', 'build', 'assist', 'bell'].includes(cmd)) {
+      cids = cids.filter(c => UTL().typeOf(c) === 'hpea' || UTL().typeOf(c) === 'hmil');
+      if (!cids.length) { say('这个命令只有农民能做', true); return; }
+    }
+    ScriptEditor.addOrder({cids, t: live.replay.t, cmd, ...extra});
+  }
+  function orderAt(wx, wy, queue) { // right-click: what is under the mouse decides the order
+    const v = V(), us = pickedUnits(); if (!us.length) return;
+    const peas = us.every(u => u.type === 'hpea' || u.type === 'hmil'), nat = UTL().natural(), now = live.replay.t;
+    const flag = c => flags.push({x: wx, y: wy, at: performance.now(), c});
+    const mine = W.mines.find(m => Math.hypot(m.x - wx, m.y - wy) < 260);
+    if (mine && peas) { flag('228,193,74'); issue(nat && Math.hypot(mine.x - nat[0], mine.y - nat[1]) < 400 ? 'gold-nat' : 'gold-main', {queue}); return; }
+    const b = v.buildings.find(o => !o.done && inRect(W.rectOf(o.x, o.y, o.tex), wx, wy));
+    if (b && peas) {
+      let found = null;
+      for (const L of UTL().lanes()) L.steps.forEach((st, k) => { if (/^建造/.test(st.body) && st.at && Math.hypot(st.at[0] - b.x, st.at[1] - b.y) < 220) found = {label: L.label, k}; });
+      if (found) { flag('121,176,238'); issue('assist', {assist: found, queue}); return; }
+    }
+    if (nat && Math.hypot(wx - nat[0], wy - nat[1]) < 900 && creepsUp(now)) { flag('208,88,74'); issue('clear', {queue}); return; }
+    if (peas && W.trees.some(t2 => Math.hypot(t2.x - wx, t2.y - wy) < 80 && (!v.treeAlive || v.treeAlive(t2.id)))) { flag('118,166,80'); issue('wood', {xy: [wx, wy], queue}); return; }
+    flag('127,224,138'); issue('move', {xy: [wx, wy], queue});
+  }
+  function drawOrders(ls) {
+    const v = V(), t = live.replay.t, picked = UTL().pick;
+    for (const u of v.units) {
+      if (!picked.has(u.id) || u.hidden) continue;
+      const [x, y] = toScreen(u.x, u.y), r = Math.max(3.5, (/^[A-Z]/.test(u.type) ? 26 : 16) * cam.s);
+      ctx.beginPath(); ctx.arc(x, y, r + 3.5, 0, Math.PI * 2); ctx.strokeStyle = '#7fe08a'; ctx.lineWidth = 2; ctx.stroke();
+      const to = UTL().routeOf(u.id, t);
+      if (to) {
+        const [tx, ty] = toScreen(to[0], to[1]);
+        ctx.setLineDash([4, 4]); ctx.strokeStyle = 'rgba(127,224,138,.75)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#7fb069'; ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx, ty - 12); ctx.lineTo(tx + 8, ty - 9); ctx.lineTo(tx, ty - 6); ctx.fill();
+      }
+    }
+    for (const f of flags) { const k = (performance.now() - f.at) / 600; if (k > 1) continue; const [x, y] = toScreen(f.x, f.y); ctx.beginPath(); ctx.arc(x, y, 6 + k * 14, 0, Math.PI * 2); ctx.strokeStyle = `rgba(${f.c},${1 - k})`; ctx.lineWidth = 2; ctx.stroke(); }
+    flags = flags.filter(f => performance.now() - f.at < 600);
+    if (boxSel) { ctx.setLineDash([4, 3]); ctx.strokeStyle = '#7fe08a'; ctx.lineWidth = 1; ctx.strokeRect(Math.min(boxSel.x0, boxSel.x1), Math.min(boxSel.y0, boxSel.y1), Math.abs(boxSel.x1 - boxSel.x0), Math.abs(boxSel.y1 - boxSel.y0)); ctx.setLineDash([]); }
+    if (cmdMode && cmdMode.kind === 'build' && cmdGhost) {
+      const [x, y, w, h] = rectScreen(W.bodyRect(cmdGhost.pos[0], cmdGhost.pos[1], W.buildingTex(cmdMode.btype)));
+      ctx.fillStyle = cmdGhost.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)'; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = cmdGhost.ok ? '#7fb069' : '#d0584a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+      label(cmdGhost.ok ? `放${cmdMode.what}（Shift 排队）` : cmdGhost.why, x + w / 2, y - 10, ls * .9, cmdGhost.ok ? '#c8f0b4' : '#f0a090');
+    } else if (cmdMode && cmdGhost) label(cmdMode.kind === 'attack' ? '攻击移动：点地面' : '移动：点地面', cmdGhost.sx, cmdGhost.sy - 16, ls * .9, cmdMode.kind === 'attack' ? '#f0a090' : '#c8f0b4');
   }
   /* the tactic script's named places: a diamond each (solid = where this game put it, hollow = estimated
    * from the layout); only 「坐标 x,y」 places can be dragged, layout sites move with their build box */
@@ -377,10 +437,29 @@
 
   /* ---------- pointer input on the map ---------- */
   let drag = null;
+  cv.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (!orderMode()) return;
+    if (cmdMode) { cmdMode = null; cmdGhost = null; renderCmd(); return; }
+    const r = cv.getBoundingClientRect(); orderAt(...toWorld(e.clientX - r.left, e.clientY - r.top), e.shiftKey);
+  });
   cv.addEventListener('pointerdown', e => {
     cv.setPointerCapture(e.pointerId);
     const r = cv.getBoundingClientRect(), [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
     drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false};
+    if (orderMode()) {
+      if (e.button === 2) { drag = null; return; } // the order is given on contextmenu
+      if (e.button === 0 && cmdMode) { // a command waiting for its point
+        drag = null;
+        if (cmdMode.kind === 'build') {
+          const g = scriptGhost({btype: cmdMode.btype, l: -1, s: -1}, wx, wy);
+          if (!g.ok) { say('这里不能放：' + g.why, true); return; }
+          flags.push({x: g.pos[0], y: g.pos[1], at: performance.now(), c: '121,176,238'}); issue('build', {xy: g.pos, what: cmdMode.what, queue: e.shiftKey});
+        } else { flags.push({x: wx, y: wy, at: performance.now(), c: cmdMode.kind === 'attack' ? '208,88,74' : '127,224,138'}); issue(cmdMode.kind, {xy: [wx, wy], queue: e.shiftKey}); }
+        if (!e.shiftKey) { cmdMode = null; cmdGhost = null; } renderCmd(); return;
+      }
+      if (e.button === 0 && !e.altKey) { drag.box = true; boxSel = {x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top}; return; }
+    }
     const site = !placing && siteAt(wx, wy); // grabbing a planned site moves it instead of the map
     const ss = !placing && !site && !live.on && scriptSiteAt(wx, wy); // or a tactic-script build site
     if (site) Object.assign(drag, {site, off: [wx - site.site[0], wy - site.site[1]], ghost: null});
@@ -392,6 +471,8 @@
     if (placing) updateGhost(...toWorld(sx, sy));
     const spl = window.ScriptEditor && ScriptEditor.placing();
     placeGhost = spl ? scriptGhost(spl, ...toWorld(sx, sy)) : null;
+    if (cmdMode && orderMode()) { const [wx, wy] = toWorld(sx, sy); cmdGhost = cmdMode.kind === 'build' ? scriptGhost({btype: cmdMode.btype, l: -1, s: -1}, wx, wy) : {sx, sy}; }
+    if (drag && drag.box) { boxSel.x1 = sx; boxSel.y1 = sy; if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true; return; }
     if (!drag) { if (!placing) cv.style.cursor = siteAt(...toWorld(sx, sy)) || (!live.on && scriptSiteAt(...toWorld(sx, sy))) ? 'move' : ''; return; }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 4) drag.moved = true;
@@ -405,6 +486,24 @@
   cv.addEventListener('pointerup', e => {
     const r = cv.getBoundingClientRect(), [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
     const d = drag, click = d && !d.moved; drag = null; cv.style.cursor = '';
+    if (d && d.box) { // select like in the game: a click picks one, a box picks all (the army first when it holds both)
+      const b = boxSel; boxSel = null;
+      const P = UTL().pick, v = V();
+      if (d.moved) {
+        const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+        let inside = v.units.filter(u => !u.hidden && (([x, y]) => x >= x0 && x <= x1 && y >= y0 && y <= y1)(toScreen(u.x, u.y)));
+        const army = inside.filter(u => u.type !== 'hpea' && u.type !== 'hmil'); if (army.length && army.length < inside.length) inside = army;
+        if (!e.shiftKey) P.clear(); inside.forEach(u => P.add(u.id));
+        if (inside.length) say(`选中 ${inside.length} 个：右键下令（金矿=采金，树=伐木，在建的建筑=协助，分矿野点=清野，地面=移动），Shift 排队；命令从红线 ${fmt(live.replay.t)} 开始`);
+      } else {
+        const [sx, sy] = [b.x0, b.y0];
+        let best = null, bd = 14; for (const u of v.units) { if (u.hidden) continue; const [x, y] = toScreen(u.x, u.y), dd = Math.hypot(x - sx, y - sy); if (dd < bd) { bd = dd; best = u; } }
+        if (best && (e.ctrlKey || e.metaKey)) { P.clear(); v.units.filter(u => u.type === best.type && !u.hidden).forEach(u => { const [x, y] = toScreen(u.x, u.y); if (x >= 0 && x <= CW && y >= 0 && y <= CH) P.add(u.id); }); }
+        else if (best) { if (e.shiftKey) P.has(best.id) ? P.delete(best.id) : P.add(best.id); else { P.clear(); P.add(best.id); } sel = {type: 'unit', id: best.id}; }
+        else { if (!e.shiftKey) P.clear(); pick(wx, wy); }
+      }
+      UTL().redraw(); renderCmd(); return;
+    }
     if (d && d.site && d.moved && d.ghost) {
       const e2 = d.site, g = d.ghost;
       if (!movable(e2)) say(name(e2.btype) + '已经开工，不能再改位置', true);
@@ -574,7 +673,26 @@
         : '<div class="hint">还没有。用命令面板打分、调优先级或写意见，会记进这一局的反馈。</div>');
   }
   const trainBtn = (key, ut, then) => [key, '训练' + name(ut) + (then ? (then === 'gold' ? '→金' : '→木') : ''), () => addTo('g_user', Sim.ev('train', '训练' + name(ut) + (then ? ' → ' + RES[then] : ''), nowT(), {utype: ut, then}))];
+  function renderScriptCmd() {
+    const us = pickedUnits(), t = live.replay.t, peas = us.length && us.every(u => u.type === 'hpea' || u.type === 'hmil');
+    const groups = {}; for (const u of us) { const n = u.type === 'hpea' ? '农民' : u.type === 'hmil' ? '民兵' : /^H/.test(u.type) ? name(u.type) : '步兵'; groups[n] = (groups[n] || 0) + 1; }
+    let btns = [];
+    if (cmdMenu === 'build') btns = ['农场', '兵营', '国王祭坛', '伐木场', '城镇大厅', '侦察塔', '神秘藏宝室', '神秘圣所', '铁匠铺'].map((b, i) => [String(i + 1), b, 'build', () => { cmdMode = {kind: 'build', what: b, btype: {农场: 'hhou', 兵营: 'hbar', 国王祭坛: 'halt', 伐木场: 'hlum', 城镇大厅: 'htow', 侦察塔: 'hwtw', 神秘藏宝室: 'hvlt', 神秘圣所: 'hars', 铁匠铺: 'hbla'}[b]}; cmdMenu = 'main'; renderCmd(); say(`在沙盘上点一下放${b}；Shift 连着放；右键或 Esc 取消`); }]).concat([['ESC', '返回', 'wait', () => { cmdMenu = 'main'; renderCmd(); }]]);
+    else if (us.length) {
+      btns = [['M', '移动', 'wait', () => { cmdMode = {kind: 'move'}; renderCmd(); }], ['A', '攻击移动', 'fight', () => { cmdMode = {kind: 'attack'}; renderCmd(); }], ['H', '待命', 'wait', () => { const u = us[0]; issue('hold', {xy: [u.x, u.y]}); }]];
+      if (peas) btns.push(['G', '采金 主矿', 'gold', () => issue('gold-main', {})], ['N', '采金 分矿', 'gold', () => issue('gold-nat', {})], ['L', '伐木', 'wood', () => issue('wood', {})], ['C', '敲钟', 'bell', () => issue('bell', {})], ['B', '建造…', 'build', () => { cmdMenu = 'build'; renderCmd(); }]);
+      else btns.push(['Q', '去分矿清野', 'fight', () => issue('clear', {})]);
+    }
+    cmdEl.innerHTML = `<div class="scmd"><div class="selsum">${us.length ? Object.entries(groups).map(([n, c]) => `<b>${esc(n)} ×${c}</b>`).join(' ') + ` · 红线 ${fmt(t)}` : `在沙盘上点选或拖框选单位（时间轴上点名字也行）；命令从红线 ${fmt(t)} 开始，写进脚本`}</div></div>`;
+    const grid = cmdEl.firstChild;
+    for (const [k, n, c, fn] of btns) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'c-' + c + (cmdMode && ((cmdMode.kind === 'move' && k === 'M') || (cmdMode.kind === 'attack' && k === 'A')) ? ' on' : '');
+      b.dataset.key = k === 'ESC' ? 'Esc' : k; b.innerHTML = `<kbd>${k === 'ESC' ? 'Esc' : k}</kbd>${esc(n)}`; b.onclick = fn; grid.appendChild(b);
+    }
+    if (us.length) grid.insertAdjacentHTML('beforeend', '<div class="q">右键：金矿=采金，树=伐木，在建的建筑=协助，分矿野点=清野，地面=移动。按住 Shift = 排队（做完手上的再做）。中键或 Alt+拖动平移。</div>');
+  }
   function renderCmd() {
+    if (orderMode()) { renderScriptCmd(); return; }
     let btns = [];
     const v = V(), u = sel && sel.type === 'unit' ? v.units.find(x => x.id === sel.id) : null;
     const b = sel && sel.type === 'building' ? v.buildings.find(x => x.id === sel.id) : null;
@@ -626,6 +744,7 @@
     if (window.ScriptEditor && ScriptEditor.active()) return; // its own keys (Delete, Ctrl+Z) act on the script's cards
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && lastDel) { e.preventDefault(); undoDel(); return; }
     if (e.key === 'Escape' && window.ScriptEditor && ScriptEditor.placing()) { ScriptEditor.cancelPlacing(); placeGhost = null; return; }
+    if (e.key === 'Escape' && cmdMode) { cmdMode = null; cmdGhost = null; cmdMenu = 'main'; renderCmd(); return; }
     if (e.key === 'Escape') { if (placing) stopPlace(); else { sel = null; renderCmd(); markSel(); } return; }
     const k = e.key.length === 1 ? e.key.toUpperCase() : ({ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Delete: 'X'})[e.key];
     const btn = k && [...cmdEl.querySelectorAll('button')].find(b => b.dataset.key === k); if (btn) { e.preventDefault(); btn.click(); }
@@ -1096,13 +1215,27 @@
     if (now - lastPaint < (live.on ? 100 : 33)) return;
     lastPaint = now;
     const v = V();
-    draw(); renderStatus(); updateTimeline(); if (window.ScriptEditor) ScriptEditor.tick(now);
+    draw(); renderStatus(); updateTimeline(); if (window.ScriptEditor) ScriptEditor.tick(now); if (window.UnifiedTimeline) syncUT();
     $('rGold').textContent = Math.floor(v.gold); $('rWood').textContent = Math.floor(v.wood); $('rFood').textContent = v.foodUsed + '/' + v.foodCap; $('clock').textContent = fmt(v.t);
   }
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
   if (tlZoom !== 1) setTlZoom(tlZoom);
+  if (window.UnifiedTimeline) UnifiedTimeline.mount({
+    getT: () => (live.replay ? live.replay.t : V().t), setT: v => { if (live.replay) Replay.seek(v); },
+    pause: () => { playing = false; bPlay.textContent = '▶ 播放'; }, playing: () => playing && !!live.replay, say,
+    picked: () => { const us = pickedUnits(); if (us.length) lookAt(us.reduce((a, u) => a + u.x, 0) / us.length, us.reduce((a, u) => a + u.y, 0) / us.length); renderCmd(); },
+    editStep: op => ScriptEditor.editFromTimeline(op), openCard: (label, k) => ScriptEditor.openCardOf(label, k),
+  }, document.querySelector('.tl .tl-head'));
+  let utOn = null;
+  let cmdSec = -1;
+  function syncUT() { // the timeline tab shows the script's lanes while a preview is open
+    if (orderMode() && Math.floor(live.replay.t) !== cmdSec) { cmdSec = Math.floor(live.replay.t); if (UTL().pick.size) renderCmd(); } // the card names the moment
+    const on = orderMode() && !(window.ScriptEditor && ScriptEditor.active());
+    if (on === utOn) return; utOn = on;
+    UnifiedTimeline.show(on); document.querySelector('.tl').classList.toggle('ut-mode', on); renderCmd();
+  }
   if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
-      const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null);
+      const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null); if (window.UnifiedTimeline) { UnifiedTimeline.setData(j); utOn = null; syncUT(); } // new data: draw it again
       if (fromStart) { Replay.seek(0); playing = true; bPlay.textContent = '❚❚ 暂停'; } else if (keep != null) Replay.seek(keep); },
     exitPreview: () => Replay.exit(true),
     setMode: t => { $('modeTag').textContent = t; $('modeTag').classList.toggle('live', t !== '离线预演'); }, view: () => V(),

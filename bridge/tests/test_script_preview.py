@@ -40,5 +40,50 @@ class PreviewRecordTest(unittest.TestCase):
         self.assertEqual(farm3["step"], 1)  # 农民11：伐木 主矿 → [1:30] 建造 农场 → …
 
 
+class ResumeTest(unittest.TestCase):
+    """The console changes the script at a moment and goes on from the save point before it."""
+
+    def setUp(self):  # each resume goes on from a fresh run of the shipped script (the server keeps only the last one)
+        self.data = load_data()
+        self.full = preview_script(self.data, SCRIPT, 0, seconds=260)
+
+    def test_resuming_the_same_script_gives_the_same_game(self):
+        again = preview_script(self.data, SCRIPT, 0, seconds=260, resume_from=200)
+        self.assertEqual(again["resumedFrom"], 200.0)
+        self.assertEqual([d["action"] for d in again["decisions"]], [d["action"] for d in self.full["decisions"]])
+        self.assertEqual(len(again["frames"]), len(self.full["frames"]))
+
+    def test_an_order_added_at_a_moment_runs_from_there(self):
+        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25] 集合 @前方空地 → [3:50] 采金 主矿")
+        r = preview_script(self.data, changed, 0, seconds=260, resume_from=205)
+        self.assertEqual(r["resumedFrom"], 200.0)
+        lane = next(x for x in r["timeline"]["lanes"] if x["label"] == "农民7")
+        self.assertEqual([s["start"] for s in lane["steps"]][1:], [205.0, 230.0])
+
+    def test_a_move_ends_on_arrival_and_the_next_step_follows(self):
+        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25] 移动 @前方空地 → 采金 主矿")
+        r = preview_script(self.data, changed, 0, seconds=260, resume_from=205)
+        lane = next(x for x in r["timeline"]["lanes"] if x["label"] == "农民7")
+        move, back = lane["steps"][1]["start"], lane["steps"][2]["start"]
+        self.assertEqual(move, 205.0)
+        self.assertGreater(back - move, 2, "he walked there before going back to the mine")
+
+    def test_changing_what_already_happened_starts_over(self):
+        changed = SCRIPT.replace("农民4：建造 国王祭坛 @祭坛", "农民4：建造 兵营 @祭坛")
+        r = preview_script(self.data, changed, 0, seconds=120, resume_from=100)
+        self.assertIsNone(r["resumedFrom"])
+        self.assertIn("农民4", r["note"])
+
+
+class FootmenLaneTest(unittest.TestCase):
+    def test_the_footmen_lane_moves_every_footman(self):
+        text = SCRIPT.rstrip() + "\n步兵：[3:40] 攻击移动 @分矿 → 待命 @分矿\n"
+        r = preview_script(load_data(), text, 0, seconds=330)
+        self.assertTrue(r["ok"], r)
+        lane = next(x for x in r["timeline"]["lanes"] if x["label"] == "步兵")
+        self.assertEqual(lane["steps"][0]["start"], 220.0)
+        self.assertIsNotNone(lane["steps"][1]["start"], "the attack-move ended once they arrived")
+
+
 if __name__ == "__main__":
     unittest.main()

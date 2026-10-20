@@ -13,22 +13,24 @@
   const PALETTE = [
     ['peasant', ['采金 主矿', '伐木 主矿', '采金 分矿', '伐木 分矿', '建造 农场 @自动', '协助 #分基地', '敲钟', '集合 @前方空地', '清野 @分矿', '待命 @分矿']],
     ['building', ['农民N', '步兵 ×1', '集结点 @前方空地', '升级 主城']],
-    ['hero', ['学 水元素', '集合 @前方空地', '清野 @分矿', '待命 @分矿']],
+    ['hero', ['学 水元素', '集合 @前方空地', '清野 @分矿', '待命 @分矿', '攻击移动 @分矿']],
+    ['army', ['集合 @前方空地', '攻击移动 @分矿', '待命 @分矿']],
   ];
-  const KIND_NAME = {peasant: '农民', building: '建筑', hero: '英雄'};
-  const SECTIONS = [['peasant', '农民（每人的一生）'], ['building', '建筑（生产顺序）'], ['hero', '英雄']];
+  const KIND_NAME = {peasant: '农民', building: '建筑', hero: '英雄', army: '步兵'};
+  const SECTIONS = [['peasant', '农民（每人的一生）'], ['building', '建筑（生产顺序）'], ['hero', '英雄'], ['army', '步兵（所有步兵一起）']];
   const COND_PRESETS = ['1:30', '金≥385 木≥205', '#分基地 开工', '#分基地 完成', '大法师 出生', '大法师剩余 ≤ 集合用时', '清野 完成', '人口剩 ≤ 4'];
   const EXPR_HINTS = ['布局.国王祭坛', '布局.农场1', '布局.兵营', '布局.神秘藏宝室', '布局.神秘圣所1', '分矿.城镇大厅', '分矿.侦察塔', '本方向分矿',
     '祭坛 前方 400', '分矿 后方 640', '坐标 0,0'];
   const ACT_CLASS = {采金: 'gold', 伐木: 'wood', 建造: 'build', 协助: 'assist', 敲钟: 'bell', 集合: 'bell', 清野: 'fight', 待命: 'wait', 农民: 'train',
-    学: 'learn', 集结点: 'rally', 升级: 'upgrade'};
+    学: 'learn', 集结点: 'rally', 升级: 'upgrade', 攻击移动: 'fight', 移动: 'wait'};
   /* what each kind of lane can be told to do, with the choices each action takes */
   const ACTS = {
-    peasant: [['采金', '一直采金，后面的步骤开始时才停下'], ['伐木', '一直伐木，后面的步骤开始时才停下'], ['建造', '走到工地，钱够就开工，建完才算这一步做完'],
+    peasant: [['移动', '走到那里，到了就接着做下一步'], ['采金', '一直采金，后面的步骤开始时才停下'], ['伐木', '一直伐木，后面的步骤开始时才停下'], ['建造', '走到工地，钱够就开工，建完才算这一步做完'],
       ['协助', '去帮忙建一座建筑（等它开工再过去），建完才算做完'], ['敲钟', '走到城镇大厅变民兵，45 秒后变回农民'], ['集合', '走到一个位置等着'],
       ['清野', '跟大法师一起清野，清完才算做完'], ['待命', '走到一个位置站着，等后面的条件']],
     building: [['农民', '训练一个指定编号的农民（他的一生写在农民那一栏）'], ['训练', '训练单位，可以连续几个'], ['集结点', '设集结点：一个位置，或跟着英雄'], ['升级', '把这座建筑升级']],
-    hero: [['学', '学一个技能'], ['集合', '走到一个位置等着'], ['清野', '带队清野，清完才算做完'], ['待命', '走到一个位置站着，等后面的条件']],
+    hero: [['学', '学一个技能'], ['移动', '走到那里，到了就接着做下一步'], ['集合', '走到一个位置等着'], ['清野', '带队清野，清完才算做完'], ['待命', '走到一个位置站着，等后面的条件'], ['攻击移动', '一路打过去，到了才算做完']],
+    army: [['移动', '所有步兵走到那里，都到了就接着做下一步'], ['集合', '所有步兵走到一个位置等着'], ['攻击移动', '所有步兵一路打过去，都到了才算做完'], ['待命', '所有步兵走到一个位置站着']],
   };
   const BUILD_LIST = ['农场', '兵营', '国王祭坛', '伐木场', '城镇大厅', '侦察塔', '神秘藏宝室', '神秘圣所', '铁匠铺', '车间', '狮鹫笼'];
   const UNIT_LIST = ['步兵', '牧师', '女巫', '破法者', '大法师', '山丘之王'], UPGRADE_LIST = ['主城', '城堡', '奥术塔', '防御塔'];
@@ -47,7 +49,7 @@
     preview: null, busy: false, undo: [], movedPos: new Set(), moved: new Set(), repreview: 0, drag: null, check: 0, showText: false, lastTick: 0, timingKey: '', timing: null};
 
   /* ---------- the script's pieces ---------- */
-  function laneKind(head) { return /^农民/.test(head) ? 'peasant' : HEROES.includes(head) ? 'hero' : 'building'; }
+  function laneKind(head) { return /^农民/.test(head) ? 'peasant' : HEROES.includes(head) ? 'hero' : /^(步兵|部队)$/.test(head) ? 'army' : 'building'; }
   function laneCids(head) { const m = /^农民([\d、,，\s]+)$/.exec(head); return m ? m[1].split(/[、,，\s]+/).filter(Boolean).map(Number) : []; }
   function splitStep(raw) {
     let s = String(raw).trim(), cond = '', pos = '', tag = '';
@@ -76,7 +78,7 @@
       case '采金': case '伐木': body += ' ' + (f.mine || '主矿'); break;
       case '建造': body += ' ' + (f.bname || '农场'); pos = f.pos || '自动'; tag = f.tag || ''; break;
       case '协助': tag = f.tag || ''; break;
-      case '集合': case '待命': case '清野': pos = f.pos || ''; break;
+      case '集合': case '待命': case '清野': case '攻击移动': case '移动': pos = f.pos || ''; break;
       case '农民': body = '农民' + (f.peasant || 6); break;
       case '训练': body = (f.unit || '步兵') + ((f.count || 1) > 1 ? ' ×' + f.count : ''); break;
       case '集结点': if (f.rally && f.rally.startsWith('@')) pos = f.rally.slice(1); else body += ' ' + (f.rally || '大法师'); break;
@@ -113,7 +115,8 @@
     for (const h of (M.header || '').split('\n').filter(Boolean)) push('# ' + h);
     push('# ---------- 位置 ----------');
     M.positions.forEach((p, i) => { if (p.note) push('# ' + p.note); push(`位置 ${p.name} = ${p.expr}`, {type: 'pos', i}); });
-    for (const [kind, title] of [['peasant', '农民'], ['building', '建筑生产顺序'], ['hero', '英雄']]) {
+    for (const [kind, title] of [['peasant', '农民'], ['building', '建筑生产顺序'], ['hero', '英雄'], ['army', '部队']]) {
+      if (kind === 'army' && !M.lanes.some(ln => laneKind(ln.head) === 'army')) continue; // as the bridge writes it
       push(''); push(`# ---------- ${title} ----------`);
       M.lanes.forEach((ln, i) => {
         if (laneKind(ln.head) !== kind) return;
@@ -170,22 +173,25 @@
   }
   /* play the script (as edited, saved or not) on the fake world; the console opens the result like a
    * replay, so the event timeline, the map and these cards all show it */
-  async function preview(start, lead = '', demo = false) {
+  async function preview(start, lead = '', demo = false, from = null) {
     if (S.busy || !M) return;
     if (api.live().on) { api.say('连着游戏时不能预演，先点「断开」', true); return; }
     start = start == null ? api.startIndex() : start;
     const {text, map} = toText();
     S.busy = true; render();
-    api.say(lead + `正在按战术脚本预演${api.startName(start)}（假游戏跑 10 分钟，约 10 秒）…`);
+    api.say(lead + (from != null ? `从 ${api.fmt(from)} 的存档点接着预演…` : `正在按战术脚本预演${api.startName(start)}（假游戏跑 10 分钟，约 5 秒）…`));
+    if (from != null && window.UnifiedTimeline) UnifiedTimeline.markStale(from);
     let j;
-    try { j = await api_('POST', '/api/script/preview', {text, start}); } catch (_) { j = {ok: false, error: '连不上本地服务'}; }
+    try { j = await api_('POST', '/api/script/preview', from != null ? {text, start, from} : {text, start}); } catch (_) { j = {ok: false, error: '连不上本地服务'}; }
+    if (!j.ok && window.UnifiedTimeline) UnifiedTimeline.clearStale();
     S.busy = false;
     if (!j.ok) { render(); api.say('预演没跑成：' + (j.error || (j.errors || [])[0] || '未知原因'), true); return; }
     if (api.live().on) { render(); return; } // a game started meanwhile
     S.previewMap = map; S.previewText = text; S.timingKey = ''; S.movedPos.clear(); S.moved.clear();
     S.lastPreview = j;
     const dead = (j.script.lanes || []).filter(l => l.dead).map(l => l.label);
-    const tail = '假游戏的采集和战斗数值是估计的，时间只作参考。' + (dead.length ? ` 阵亡：${dead.join('、')}` : '');
+    const tail = '假游戏的采集和战斗数值是估计的，时间只作参考。' + (dead.length ? ` 阵亡：${dead.join('、')}` : '') +
+      (j.resumedFrom != null ? `（从 ${api.fmt(j.resumedFrom)} 的存档点接着算，用了 ${j.seconds} 秒）` : j.note ? `（${j.note}）` : '');
     if (S.active && !demo) { // asked from the script tab: stay in 编排, keep it for 「预演」 and the timeline tab
       render(); api.say(lead + `已按新脚本在后台预演了${api.startName(start)}；点「预演」在沙盘上演示。`);
       return;
@@ -210,6 +216,91 @@
     api.setMode('战术脚本 · 编排');
     render(); api.say('回到编排：沙盘上是开局和脚本里的全部工地，拖动改位置；改完点「预演」再看。');
   }
+  /* ---------- orders from the sandbox, edits from the timeline (timeline.js) ---------- */
+  // which lane of the script a runtime lane is: 农民9 may live in 「农民9、10、12」 (split it then:
+  // he gets his own life from here); buildings show the game's name (神秘圣地 for 神秘圣所)
+  function laneIndexOf(label, split) {
+    let i = -1;
+    const m = /^农民(\d+)$/.exec(label);
+    if (m) i = M.lanes.findIndex(ln => laneCids(ln.head).includes(+m[1]));
+    else i = M.lanes.findIndex(ln => ln.head === label || (BT[ln.head] && api.name(BT[ln.head]) === label));
+    if (i >= 0 && m && split && laneCids(M.lanes[i].head).length > 1) {
+      const ln = M.lanes[i];
+      M.lanes.splice(i, 1, ...laneCids(ln.head).map(c => ({head: '农民' + c, note: ln.note, steps: ln.steps.map(x => ({raw: x.raw}))})));
+      i = M.lanes.findIndex(x => x.head === label);
+    }
+    return i;
+  }
+  function newPlace(base, xy) {
+    let n = 1, nm; do { nm = base + n++; } while (M.positions.some(p => p.name === nm));
+    M.positions.push({name: nm, expr: `坐标 ${Math.round(xy[0])},${Math.round(xy[1])}`, note: `在沙盘上点的，只对${api.startName(api.startIndex())}准确`});
+    return nm;
+  }
+  function newTag(base) { const taken = new Set(builds().map(b => b.tag).filter(Boolean)); let n = 1, nm = base; while (taken.has(nm)) nm = base + ++n; return nm; }
+  /* cids: unit numbers; t: the red line; cmd as on the command card; xy: the point clicked */
+  function addOrder({cids, t, cmd, xy, what, assist, queue}) {
+    if (!M) return;
+    const UT = window.UnifiedTimeline, T = Math.round(t), cond = queue ? '' : `[${api.fmt(T)}] `, nat = UT && UT.natural();
+    const done = [], notes = [];
+    change(() => {
+      const place = xy && ['move', 'hold', 'attack', 'build'].includes(cmd) ? newPlace(cmd === 'build' ? what : '点', xy) : null;
+      let tag = null;
+      if (cmd === 'assist' && assist) { const li = laneIndexOf(assist.label, true); if (li >= 0) tag = nameBuild(li, assist.k); }
+      if (cmd === 'build' && cids.length > 1) tag = newTag(what);
+      let armyDone = false;
+      cids.forEach((cid, n) => {
+        const type = UT.typeOf(cid), runtime = type === 'hpea' || type === 'hmil' ? '农民' + cid : type === 'Hamg' ? '大法师' : type === 'Hmkg' ? '山丘之王' : type === 'hfoo' ? '步兵' : null;
+        if (!runtime) return;
+        let li = laneIndexOf(runtime, true);
+        if (li < 0 && runtime === '步兵') { if (armyDone) return; M.lanes.push({head: '步兵', note: '在时间轴上给步兵下的命令（所有步兵一起）', steps: []}); li = M.lanes.length - 1; }
+        if (li < 0) { notes.push(`${runtime} 在脚本里没有自己的一行`); return; }
+        if (runtime === '步兵') { if (armyDone) return; armyDone = true; }
+        const kind = laneKind(M.lanes[li].head), near = xy && nat && Math.hypot(xy[0] - nat[0], xy[1] - nat[1]) < 1800;
+        let body = null;
+        if (kind === 'peasant') body = {'gold-main': '采金 主矿', 'gold-nat': '采金 分矿', wood: near ? '伐木 分矿' : '伐木 主矿', bell: '敲钟', clear: '清野 @分矿',
+          move: `移动 @${place}`, attack: `移动 @${place}`, hold: `待命 @${place}`,
+          build: n === 0 ? `建造 ${what} @${place}${tag ? ' #' + tag : ''}` : `协助 #${tag}`, assist: tag ? `协助 #${tag}` : null}[cmd];
+        else if (kind === 'hero' || kind === 'army') body = {move: `移动 @${place}`, attack: `攻击移动 @${place}`, hold: `待命 @${place}`, clear: kind === 'hero' ? '清野 @分矿' : `攻击移动 @分矿`}[cmd];
+        if (!body) { notes.push(`${runtime} 不会这个命令`); return; }
+        const steps = M.lanes[li].steps;
+        let idx = UT.stepIndexAt(runtime, T) + 1; if (idx <= 0) idx = steps.length; idx = Math.min(idx, steps.length);
+        const cur = UT.stepAt(runtime, T);
+        if (cur && !queue && !/^(采金|伐木|待命|集合|跟随)/.test(cur.body)) notes.push(`${runtime} 这时在「${cur.body}」，做完才会接着做`);
+        steps.splice(idx, 0, {raw: (cond + body).trim()});
+        done.push(runtime);
+      });
+    });
+    if (!done.length) { api.say('没有能接这个命令的单位' + (notes.length ? '：' + notes.join('；') : ''), true); return; }
+    const lead = `${api.fmt(T)}：${done.join('、')} → ${cmd === 'build' ? '建造 ' + what : {'gold-main': '采金 主矿', 'gold-nat': '采金 分矿', wood: '伐木', bell: '敲钟', clear: '清野', move: '移动', attack: '攻击移动', hold: '待命', assist: '协助'}[cmd]}${queue ? '（排队）' : ''}，已写进脚本（未保存）。` + (notes.length ? notes.join('；') + '。' : '');
+    preview(api.startIndex(), lead, false, T);
+  }
+  function editFromTimeline(op) { // {op: time | move | delete | raw, label, k, raw, to, at, t}
+    if (!M) return;
+    let ok = true;
+    change(() => {
+      const li = laneIndexOf(op.label, true), steps = li >= 0 ? M.lanes[li].steps : null;
+      if (!steps || !steps[op.k] || steps[op.k].raw.trim() !== op.raw.trim()) { ok = false; return; }
+      if (op.op === 'delete') steps.splice(op.k, 1);
+      else if (op.op === 'raw') steps[op.k].raw = op.to;
+      else if (op.op === 'time') { const o = splitStep(steps[op.k].raw), terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}$/.test(x.trim())) : []; o.cond = [api.fmt(op.at), ...terms].join(' 且 '); steps[op.k].raw = joinStep(o); }
+      else if (op.op === 'move') {
+        const ti = laneIndexOf(op.to, true); if (ti < 0) { ok = false; return; }
+        const [st] = M.lanes[laneIndexOf(op.label, false)].steps.splice(op.k, 1), o = splitStep(st.raw);
+        const terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}$/.test(x.trim())) : []; o.cond = [api.fmt(op.at), ...terms].join(' 且 ');
+        const tsteps = M.lanes[ti].steps; let idx = window.UnifiedTimeline.stepIndexAt(op.to, op.at) + 1; if (idx <= 0) idx = tsteps.length;
+        tsteps.splice(Math.min(idx, tsteps.length), 0, {raw: joinStep(o)});
+      }
+    });
+    if (!ok) { S.undo.pop(); api.say('脚本和时间轴对不上了（可能刚改过），先等这次预演算完再改', true); return; }
+    const what = {delete: '删掉了', raw: '改了', time: `改成最早 ${api.fmt(op.at || 0)} 开始：`, move: `改派给 ${op.to}：`}[op.op];
+    preview(api.startIndex(), `${op.label} 的「${op.raw}」${what}（未保存）。`, false, Math.max(0, Math.floor(op.t || 0)));
+  }
+  function openCardOf(label, k) {
+    const li = laneIndexOf(label, false); if (li < 0) return;
+    api.showScript(); S.sel = {l: li, s: k}; render();
+    const el = root.querySelector(`.sc[data-l="${li}"][data-s="${k}"]`); if (el) el.scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
+
   /* the plan that plays this script on a start: that start's layout + the text */
   async function planFor(start) {
     if (!M) return null;
@@ -608,7 +699,7 @@
         params = `<label>帮谁<select data-sf="assist"><option value="">（选一座要帮忙建的建筑）</option>${list.map(b => b.tag
           ? opt(b.tag, `#${b.tag} · ${b.who} 建造 ${b.what}`, f.tag) : opt(`new:${b.l}:${b.s}`, `${b.who} 建造 ${b.what}（还没起名，选它会自动起名）`, '')).join('')}${f.tag && !list.some(b => b.tag === f.tag) ? opt(f.tag, '#' + f.tag + '（脚本里没人建它）', f.tag) : ''}</select></label>`; break;
       }
-      case '集合': case '待命': case '清野': params = `<label>位置${posSel(f.pos || '', false)}</label>`; break;
+      case '集合': case '待命': case '清野': case '攻击移动': case '移动': params = `<label>位置${posSel(f.pos || '', false)}</label>`; break;
       case '农民': params = `<label>编号<input type="number" min="6" data-sf="peasant" value="${f.peasant || 6}"></label>`; break;
       case '训练': params = `<label>训练${sel('unit', UNIT_LIST, f.unit)}</label><label>几个<input type="number" min="1" max="12" data-sf="count" value="${f.count || 1}"></label>`; break;
       case '集结点': params = `<label>集结到${sel('rally', [...names.map(n => ['@' + n, '@' + n]), ['大法师', '跟着大法师'], ['山丘之王', '跟着山丘之王']], f.rally)}</label>`; break;
@@ -807,7 +898,7 @@
     if (t.classList.contains('sc')) { S.sel = {l: +t.dataset.l, s: +t.dataset.s}; render(); focusFor(S.sel.l, S.sel.s); return; }
     if (t.classList.contains('se-lab')) { S.sel = {l: +t.dataset.l}; render(); focusFor(S.sel.l); return; }
     if (t.classList.contains('se-add')) {
-      const l = +t.dataset.l, kind = laneKind(M.lanes[l].head), raw = kind === 'building' ? '步兵 ×1' : kind === 'hero' ? '待命 @分矿' : '伐木 主矿';
+      const l = +t.dataset.l, kind = laneKind(M.lanes[l].head), raw = kind === 'building' ? '步兵 ×1' : kind === 'hero' || kind === 'army' ? '待命 @分矿' : '伐木 主矿';
       change(() => { M.lanes[l].steps.push({raw}); S.sel = {l, s: M.lanes[l].steps.length - 1}; });
       return;
     }
@@ -855,6 +946,11 @@
     change(() => { const [x] = M.lanes.splice(i, 1); M.lanes.splice(j, 0, x); S.sel = {l: j}; });
   }
   function addLane(kind) {
+    if (kind === 'army') {
+      if (M.lanes.some(ln => laneKind(ln.head) === 'army')) { api.say('步兵只有一行（管所有步兵）'); return; }
+      change(() => { M.lanes.push({head: '步兵', note: '', steps: [{raw: '待命 @前方空地'}]}); S.sel = {l: M.lanes.length - 1}; }, '加了「步兵」一行：所有不在清野的步兵一起行动');
+      return;
+    }
     if (kind === 'peasant') {
       const n = nextPeasant();
       change(() => { ensurePeasantLane(n); S.sel = {l: M.lanes.findIndex(ln => laneCids(ln.head).includes(n))}; },
@@ -1052,7 +1148,7 @@
     if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing,
+  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf,
     placing: () => S.placing, cancelPlacing: () => { if (S.placing) { S.placing = null; api.say('已取消放置'); } },
     placed: (pos) => { const p = S.placing; S.placing = null; if (p) moveSite(p.l, p.s, pos); }, markerAt, moveMarker, selectPos, active: () => S.active,
     _test: {splitStep, joinStep, laneKind, laneCids, toText: () => toText(), model: () => M}};

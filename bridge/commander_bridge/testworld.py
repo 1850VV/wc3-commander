@@ -49,6 +49,7 @@ class LostTempleWorld:
             mid = self._id()
             self.mines[mid] = {"unit_id": mid, "type_id": "ngol", "owner": 15, "x": m["x"], "y": m["y"], "gold": m["gold"]}
         self.trees = {}
+        self._tree_key, self._tree_ids = None, []  # trees in sight, kept until the anchor moves
         flat = data["trees"]
         for k in range(0, len(flat), 2):
             tid = 50000 + k // 2
@@ -320,9 +321,14 @@ class LostTempleWorld:
                 inside.append({"unit_id": u["unit_id"], "type_id": u["type_id"], "x": u["x"], "y": u["y"], "hp": u["hp"], "order": order})
             else:
                 own.append(pub)
-        anchors = [(u["x"], u["y"]) for u in self.units.values() if u["owner"] == player]
-        trees = [{"id": t["id"], "type_id": t["type_id"], "x": t["x"], "y": t["y"], "hp": t["hp"], "resource": "lumber", "invulnerable": False}
-                 for t in self.trees.values() if any(abs(t["x"] - x) < SIGHT and abs(t["y"] - y) < SIGHT for x, y in anchors[:1] or [(0, 0)])]
+        trees = []
+        if player == 0:  # which trees are in sight changes only when the first own object moves: keep the list
+            key = next(((u["x"], u["y"]) for u in self.units.values() if u["owner"] == player), (0.0, 0.0))
+            if key != self._tree_key:
+                self._tree_key = key
+                self._tree_ids = [tid for tid, t in self.trees.items() if abs(t["x"] - key[0]) < SIGHT and abs(t["y"] - key[1]) < SIGHT]
+            trees = [{"id": t["id"], "type_id": t["type_id"], "x": t["x"], "y": t["y"], "hp": t["hp"], "resource": "lumber", "invulnerable": False}
+                     for t in (self.trees.get(tid) for tid in self._tree_ids) if t is not None]
         used, cap = self._food()
         events, self.events = (self.events, []) if player == 0 else ([], self.events)
         mines = [{k: v for k, v in m.items() if k != "gold"} | {"hp": 1, "max_hp": 1, "mana": 0, "max_mana": 0, "structure": True, "hero": False, "level": 0, "buffs": []}

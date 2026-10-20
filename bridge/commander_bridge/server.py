@@ -18,7 +18,8 @@
   PUT  /api/strategies/<name>   save the console plan in the body under that name
   GET  /api/script              the tactic script (strategies/战术脚本-人族速矿二本.txt): {text, model, errors}
   PUT  /api/script              {text} or {model}: check it and, without mistakes, save it ({dryRun: true} only checks)
-  POST /api/script/preview      {text, start}: play it on the fake world, return when each step began (a few seconds)
+  POST /api/script/preview      {text, start, from?}: play it on the fake world (about 10 s), or go on from the save point
+                                before `from` when the script changed there (a few seconds); a recorded game + timeline
 
 Binds to 127.0.0.1 unless --host says otherwise. There is no login: anyone who can reach the port
 can start the game, so only open it to a trusted home network. Uses the standard library; wc3env
@@ -26,7 +27,9 @@ is the only dependency.
 """
 from __future__ import annotations
 
+import copy
 import json
+import math
 import queue
 import re
 import threading
@@ -72,7 +75,7 @@ class FakeGame:
 
 
 def make_session(backend: str, data: dict, start: int, opponent: str, window: str = "background", seed: int = 1,
-                 speed_factor: float = 0.0, render: bool = True, human_slot: int = 0, **world):
+                 speed_factor: float = 0.0, render: bool = True, human_slot: int = 0, restore=None, **world):
     from wc3env import GameConfig, GameSession, MatchSetup, PlayerConfig
 
     if backend == "fake":
@@ -81,8 +84,11 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
         from .testworld import LostTempleWorld
 
         config = GameConfig(map="(4)LostTemple.w3m", players=(PlayerConfig(0, "human"), PlayerConfig(1, control="computer")), mode="stepping", step_ms=250)
-        server = FakeServer(world_factory=lambda: LostTempleWorld(data, start, **world))  # world: test-only options
-        return GameSession(config, game_factory=lambda cfg: FakeGame(cfg.map, server))
+        # world: test-only options; restore: a saved world to go on from (a preview's save point)
+        server = FakeServer(world_factory=(lambda: restore) if restore is not None else (lambda: LostTempleWorld(data, start, **world)))
+        session = GameSession(config, game_factory=lambda cfg: FakeGame(cfg.map, server))
+        session.fake_server = server  # the preview saves its world
+        return session
     # The start point is the player slot on Lost Temple: slot 0 south, 1 west, 2 north, 3 east. Put the
     # human at the requested slot; every other slot is an agent (AI off) so the map's default computer
     # in slot 1 cannot attack from its own base.
@@ -120,31 +126,110 @@ PREVIEW_CAMP = ((0, 0, "nftr"), (-60, 70, "nfsp"), (60, -50, "nftr"))
 _preview_lock = threading.Lock()
 
 
-def preview_script(data: dict, text: str, start: int, seconds: float = 600.0) -> dict:
+SAVE_EVERY = 10.0  # seconds of game between save points of a preview
+_previews: dict[int, dict] = {}  # start -> the last preview there: its text, frames and save points
+
+
+def _snap(world, c, obs, data):
+    """A save point: the fake game's world, the commander and the observation it was about to read.
+    The static map data is shared, not copied."""
+    return copy.deepcopy((world, c, obs), {id(data): data})
+
+
+def timeline_of(c, data) -> dict:
+    """What the console's timeline draws: each lane's steps with when they began, went to work and
+    finished (from the decision record and the events), the places, and where the mines are."""
+    starts = {}
+    for d in c.decisions:
+        m = re.match(r"第 (\d+) 行第 (\d+) 步", d.get("why") or "")
+        if m and "：" in d["action"]:
+            starts.setdefault(d["action"].split("：")[0], {}).setdefault(int(m[2]) - 1, d["t"])
+    by_step = {}
+    for e in c.events:
+        if e.get("phase") is not None and e.get("step") is not None:
+            by_step[(e["phase"], e["step"])] = (e, c.rt.get(e["id"], {}))
+    lanes = []
+    for L in sorted(c.lanes, key=lambda x: (x["line"], x["label"])):
+        ss, steps = starts.get(L["label"], {}), []
+        for k, st in enumerate(L["steps"]):
+            nxt = next((ss[j] for j in range(k + 1, len(L["steps"])) if j in ss), None)
+            step = {"raw": st["raw"], "start": ss.get(k), "end": nxt}
+            ev = by_step.get((L["label"], k))
+            if ev:
+                e, rt = ev
+                for a, b in (("bStart", "work"), ("trainStart", "work"), ("aEnd", "done")):
+                    if rt.get(a) is not None:
+                        step[b] = rt[a]
+                if rt.get("builtAt") or e.get("site"):
+                    step["at"] = rt.get("builtAt") or e.get("site")
+                if step["end"] is None and step.get("done") is not None:
+                    step["end"] = step["done"]
+            steps.append(step)
+        lanes.append({"label": L["label"], "kind": L["kind"], "line": L["line"], "steps": steps, "dead": L["dead"]})
+    places = {}
+    for q in c.model.get("positions", []):
+        try:
+            p = c._pos.get(q["name"]) or c._resolve(q["expr"])
+        except (KeyError, IndexError, TypeError):
+            p = None
+        if p:
+            places[q["name"]] = [round(p["x"]), round(p["y"])]
+    mine = min(data["mines"], key=lambda m: math.hypot(m["x"] - c.hall["x"], m["y"] - c.hall["y"]))
+    return {"lanes": lanes, "places": places, "hall": [c.hall["x"], c.hall["y"]], "mine": [mine["x"], mine["y"]],
+            "natural": list(c.natural_at) if c.natural_at else None, "mineGold": mine["gold"],
+            "units": {str(c.cid[u["unit_id"]]): u["type_id"] for u in c.units() if u["unit_id"] in c.cid}}
+
+
+def preview_script(data: dict, text: str, start: int, seconds: float = 600.0, resume_from: float | None = None) -> dict:
     """Play a tactic script on the fake Lost Temple world (fast, no game) and return it as a recorded
-    game: one frame per second and the final state (events with their times, decisions, the script's
-    lanes). The console opens it like a replay, so the event timeline, the map and the script's cards
-    all show this script. The fake world's numbers (mining, building, fighting) are rough, so these
-    times are a preview, not a promise."""
+    game: one frame per second, the final state and the timeline. The console opens it like a replay.
+
+    Every SAVE_EVERY seconds the game is saved. Asked to resume from a moment (the player changed
+    the script there), it restarts from the last save point before it, keeping everything before:
+    a few seconds instead of a full run. If the change touches steps that had already begun by then,
+    it plays from the start instead and says so. The fake world's numbers are rough, so these times
+    are a preview, not a promise."""
     model, errors = tactic_script.parse(text)
     if errors:
         return {"ok": False, "errors": errors}
     name = "人族速矿二本 · " + data["starts"][start]["name"]
     plan = strategies.load(name)["plan"]
-    c = ScriptRunner(data)
-    c.set_plan(dict(plan, script=text, start=start))
     nx, ny = NATURALS[start]
     camp = [{"type": t, "x": nx + 280 + dx, "y": ny + 230 + dy, "hp": 240 if t == "nftr" else 200, "dps": 6 if t == "nftr" else 4}
             for dx, dy, t in PREVIEW_CAMP]
+    t_begin = time.time()
     with _preview_lock:  # one at a time: each takes a few seconds of CPU
-        session = make_session("fake", data, start, "none", creeps=camp)
-        try:
+        prev, point, note = _previews.get(start), None, ""
+        if resume_from is not None and prev and prev["layout"] == plan.get("groups"):
+            point = next((p for p in reversed(prev["points"]) if p[0] <= resume_from + 1e-6), None)
+        if point:
+            world, c, obs = copy.deepcopy(point[1], {id(data): data})
+            bad = c.reload_script(text)
+            if bad:
+                note, point = "从头算（" + "；".join(bad[:2]) + "）", None
+        if point:
+            session = make_session("fake", data, start, "none", restore=world)
+            session.reset()  # the world as saved; its first observation is the one saved with it
+            frames = [f for f in prev["frames"] if f["t"] < point[0]]
+            points = [p for p in prev["points"] if p[0] <= point[0]]
+            next_frame, next_save = (frames[-1]["t"] + 1 if frames else 0.0), point[0] + SAVE_EVERY
+            resumed = point[0]
+        else:
+            c = ScriptRunner(data)
+            c.set_plan(dict(plan, script=text, start=start))
+            session = make_session("fake", data, start, "none", creeps=camp)
             obs = session.reset()[0]
-            frames, next_frame = [], 0.0
+            frames, points, next_frame, next_save, resumed = [], [], 0.0, 0.0, None
+        try:
             while obs["game_time_seconds"] < seconds:
+                if obs["game_time_seconds"] >= next_save:
+                    points.append((obs["game_time_seconds"], _snap(session.fake_server.world, c, obs, data)))
+                    next_save += SAVE_EVERY
                 actions = c.tick(obs)
                 if c.t >= next_frame:
-                    frames.append(frame_of(c.snapshot()))
+                    f = frame_of(c.snapshot())
+                    f["got"] = [round(c._got[0]), round(c._got[1])]
+                    frames.append(f)
                     next_frame = int(c.t) + 1
                 observations, done, info = session.step({0: actions}, ms=250)
                 c.feedback(actions, info["placements"][0], info["rejected"][0])
@@ -152,12 +237,16 @@ def preview_script(data: dict, text: str, start: int, seconds: float = 600.0) ->
             c.tick(obs)
         finally:
             session.close()
+        _previews[start] = {"layout": plan.get("groups"), "text": text, "frames": frames, "points": points}
     snap = c.snapshot()
-    frames.append(frame_of(snap))
+    last = frame_of(snap)
+    last["got"] = [round(c._got[0]), round(c._got[1])]
+    frames.append(last)
     state = dict(snap, consistency=c.consistency())
     return {"ok": True, "errors": [], "layout": name, "t": snap["t"], "decisions": c.decisions, "script": snap["script"],
             "gold": snap["gold"], "wood": snap["wood"], "foodUsed": snap["foodUsed"], "foodCap": snap["foodCap"],
-            "meta": {"name": "预演 · " + data["starts"][start]["name"], "start": start, "preview": True}, "state": state, "frames": frames}
+            "meta": {"name": "预演 · " + data["starts"][start]["name"], "start": start, "preview": True}, "state": state, "frames": frames,
+            "timeline": timeline_of(c, data), "resumedFrom": resumed, "note": note, "seconds": round(time.time() - t_begin, 1)}
 
 
 class Runner:
@@ -667,7 +756,9 @@ class Handler(SimpleHTTPRequestHandler):
             if not isinstance(start, int) or not 0 <= start < len(self.runner.data["starts"]):
                 return self._json(400, {"ok": False, "error": "出生点不对"})
             try:
-                return self._json(200, preview_script(self.runner.data, text, start, float(body.get("seconds") or 600)))
+                frm = body.get("from")
+                frm = float(frm) if isinstance(frm, (int, float)) and not isinstance(frm, bool) else None
+                return self._json(200, preview_script(self.runner.data, text, start, float(body.get("seconds") or 600), resume_from=frm))
             except FileNotFoundError:
                 return self._json(400, {"ok": False, "error": "这个出生点还没有布局（人族速矿二本 · 方向）"})
             except ImportError as exc:
