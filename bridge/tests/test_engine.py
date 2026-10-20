@@ -9,6 +9,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import unittest
@@ -106,6 +107,40 @@ class TacticSwitchTest(unittest.TestCase):
         self.assertTrue(c.sent)  # orders start once it is on
         self.assertEqual(rejected, [])
         self.assertTrue(c.snapshot()["enabled"])
+
+
+class WoodTest(unittest.TestCase):
+    """Lumberjacks get trees they can stand next to, and are moved when Warcraft drops their order."""
+
+    def setUp(self):
+        self.c = Commander(load_data())
+        t = self.c.data["trees"]
+        self.trees = [{"id": i // 2, "x": t[i], "y": t[i + 1], "resource": "lumber"} for i in range(0, len(t), 2)]
+        self.living = {(d["x"], d["y"]) for d in self.trees}
+
+    def test_a_tree_inside_a_grove_is_not_picked(self):
+        inner = next(d for d in self.trees if all((d["x"] + dx, d["y"] + dy) in self.living for dx in (-128, 0, 128) for dy in (-128, 0, 128)))
+        self.assertFalse(self.c.tree_open(inner, self.living))
+        for dy in (-128, 0, 128):  # the column of trees east of it is cut: now there is room
+            self.living.discard((inner["x"] + 128, inner["y"] + dy))
+        self.assertTrue(self.c.tree_open(inner, self.living))
+
+    def test_lumber_order_dropped_back_to_gold_marks_the_spot_and_picks_another_tree(self):
+        c, west = self.c, self.c.data["starts"][1]
+        mine = {"unit_id": 900, "type_id": "ngol", "x": -7296, "y": -3328}
+        hall = {"unit_id": 901, "type_id": "htow", "structure": True, "x": west["x"], "y": west["y"]}
+        u = {"unit_id": 902, "type_id": "hpea", "structure": False, "x": -7200, "y": -3200, "order": None}
+        c.obs = {"units": [hall, u], "destructables": self.trees, "player": {}}
+        c.hall, c.mines, c.t = hall, {900: mine}, 100.0
+        c.actions, c.ordered = [], set()
+        self.assertTrue(c.harvest(u, "wood"))
+        first = c.wood_tree[902]
+        u["order"] = {"name": "harvest", "target_id": 900}  # Warcraft sent him back to the mine
+        c.actions, c.ordered, c.t = [], set(), 103.0
+        c._unstick_wood()
+        self.assertIn(first, c.bad_wood)
+        self.assertEqual(c.actions[-1]["command"], "harvest")
+        self.assertGreaterEqual(math.hypot(c.wood_tree[902][0] - first[0], c.wood_tree[902][1] - first[1]), c.BAD_RADIUS)
 
 
 class EditTest(unittest.TestCase):

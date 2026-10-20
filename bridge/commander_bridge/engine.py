@@ -58,6 +58,10 @@ class Commander:
         self.mines: dict[int, dict] = {}         # gold mines seen so far, by unit_id
         self.natural_at: tuple | None = None     # map position of the natural expansion's mine
         self.mine_of: dict[int, str] = {}        # gold worker -> "main" | "natural"
+        self.wood_tree: dict[int, tuple] = {}     # lumberjack -> the tree we sent him to
+        self.still: dict[int, tuple] = {}         # lumberjack -> (x, y, since): where he has stood still
+        self.bad_wood: list[tuple] = []           # tree spots a lumberjack got stuck trying to reach
+        self._block: bytearray | None = None      # terrain pathing grid from the map data, built on first use
         self.built_at: dict[int, float] = {}     # structure unit_id -> construct_start time
         self.train_at: dict[int, float] = {}     # producer unit_id -> train_start time
         self.last_order: dict[int, float] = {}
@@ -97,6 +101,7 @@ class Commander:
                 self._advance(e)
         self._keep_gathering()
         self._balance_workers()
+        self._unstick_wood()
         commandable = {u["unit_id"] for u in obs["units"]}
         return [a for a in self.actions if a["unit_id"] in commandable]
 
@@ -251,13 +256,90 @@ class Commander:
             self.mine_of[u["unit_id"]] = where
         else:
             drop = self.drop_for("wood", u) or u
-            trees = [d for d in self.obs.get("destructables", []) if d.get("resource") == "lumber"]
-            if not trees:
+            tree = self.pick_tree(drop)
+            if not tree:
                 return False
-            tree = min(trees, key=lambda d: dist(d, drop))
             self.order(u["unit_id"], "harvest", target_id=tree["id"])
+            self.wood_tree[u["unit_id"]] = (tree["x"], tree["y"])
+            self.still.pop(u["unit_id"], None)
         self.roles[u["unit_id"]] = res
         return True
+
+    # ---- lumber ------------------------------------------------------------------------------------
+    TREE_HALF = 64      # a Lost Temple tree blocks 128 x 128 (4x4Default), trees stand on a 64 grid
+    STUCK = 25.0        # a lumberjack that has not moved for this long, away from any tree, is stuck
+    BAD_RADIUS = 320    # trees this close to a spot a lumberjack got stuck at are left alone
+
+    def _terrain_blocked(self, x, y) -> bool:
+        d = self.data
+        if self._block is None:
+            w, h = d["w"], d["h"]
+            grid = bytearray(w * h)
+            for gy, row in enumerate(d["block"]):
+                for a, b in row:
+                    grid[gy * w + a: gy * w + b] = b"\x01" * (b - a)
+            self._block = grid
+        gx, gy = int((x - d["origin"][0]) // d["cell"]), int((y - d["origin"][1]) // d["cell"])
+        return not (0 <= gx < d["w"] and 0 <= gy < d["h"]) or bool(self._block[gy * d["w"] + gx])
+
+    def tree_open(self, tree, living: set) -> bool:
+        """Does a peasant have somewhere to stand next to this tree? Inside a grove every side is
+        covered by the neighbours (trees overlap on the 64 grid), and Warcraft never reaches it."""
+        x, y, H = tree["x"], tree["y"], self.TREE_HALF
+        side = [-48, -16, 16, 48]
+        ring = [(x + sx * (H + 16), y + o) for sx in (-1, 1) for o in side] + [(x + o, y + sy * (H + 16)) for sy in (-1, 1) for o in side]
+        for px, py in ring:
+            if self._terrain_blocked(px, py):
+                continue
+            # trees covering this point stand on the 64 grid strictly within 64 of it on both axes
+            gxs = {math.floor(px / 64) * 64, math.ceil(px / 64) * 64}
+            gys = {math.floor(py / 64) * 64, math.ceil(py / 64) * 64}
+            if not any((gx, gy) in living and abs(px - gx) < H and abs(py - gy) < H for gx in gxs for gy in gys):
+                return True
+        return False
+
+    def pick_tree(self, drop):
+        trees = [d for d in self.obs.get("destructables", []) if d.get("resource") == "lumber"]
+        living = {(d["x"], d["y"]) for d in trees}
+        near = sorted((d for d in trees if dist(d, drop) < 2500), key=lambda d: dist(d, drop))
+        for d in near:
+            if any(math.hypot(d["x"] - bx, d["y"] - by) < self.BAD_RADIUS for bx, by in self.bad_wood):
+                continue
+            if self.tree_open(d, living):
+                return d
+        return near[0] if near else (min(trees, key=lambda d: dist(d, drop)) if trees else None)
+
+    def _unstick_wood(self) -> None:
+        """A lumberjack standing still for STUCK seconds away from every tree cannot reach his tree
+        (the wall or the mine corner shuts it off): mark that spot and send him to another one."""
+        trees = [d for d in self.obs.get("destructables", []) if d.get("resource") == "lumber"]
+        mines = set(self.mines)
+        for u in self.workers():
+            uid = u["unit_id"]
+            target = (u.get("order") or {}).get("target_id")
+            if self.roles.get(uid) == "wood" and target in mines:
+                # Warcraft dropped the lumber order at once (the tree cannot be reached) and the peasant
+                # went back to his old gold job: west's lumberjacks mined gold for four minutes this way.
+                spot = self.wood_tree.get(uid)
+                if spot and spot not in self.bad_wood:
+                    self.bad_wood.append(spot)
+                if not u.get("_inside") and uid not in self.ordered and self.t - self.last_order.get(uid, -99) >= 2:
+                    self.harvest(u, "wood")  # never order a unit inside the mine
+                continue
+            if self.roles.get(uid) != "wood" or u.get("_inside") or uid in self.ordered:
+                self.still.pop(uid, None)
+                continue
+            x, y, since = self.still.get(uid, (u["x"], u["y"], self.t))
+            if math.hypot(u["x"] - x, u["y"] - y) > 48:
+                self.still[uid] = (u["x"], u["y"], self.t)
+                continue
+            self.still.setdefault(uid, (x, y, since))
+            chopping = any(abs(d["x"] - u["x"]) < self.TREE_HALF + 48 and abs(d["y"] - u["y"]) < self.TREE_HALF + 48 for d in trees)
+            if self.t - since >= self.STUCK and not chopping:
+                spot = self.wood_tree.get(uid)
+                if spot and spot not in self.bad_wood:
+                    self.bad_wood.append(spot)
+                self.harvest(u, "wood")
 
     def cost(self, ut, job=None):
         c = self.eco[ut]
