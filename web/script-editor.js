@@ -28,7 +28,7 @@
 
   let api = null, root = null, M = null; // M: {header, positions: [{name, expr, note}], lanes: [{head, note, steps: [{raw}]}], reserves: [{raw, note}]}
   const S = {active: false, saved: true, loadedText: '', errors: {general: [], lane: {}, pos: {}, res: {}}, map: {}, sel: null, view: 'flow',
-    preview: null, busy: false, undo: [], drag: null, check: 0, showText: false, lastTick: 0, timingKey: '', timing: null};
+    preview: null, busy: false, undo: [], movedPos: new Set(), moved: new Set(), repreview: 0, drag: null, check: 0, showText: false, lastTick: 0, timingKey: '', timing: null};
 
   /* ---------- the script's pieces ---------- */
   function laneKind(head) { return /^农民/.test(head) ? 'peasant' : HEROES.includes(head) ? 'hero' : 'building'; }
@@ -105,20 +105,38 @@
     let j; try { j = await api_('PUT', '/api/script', {text}); } catch (_) { api.say('没保存：连不上本地服务', true); return; }
     if (!j.saved) { api.say('脚本有错，没有保存：' + (j.errors || [])[0], true); check(); return; }
     S.loadedText = j.text; S.saved = true; render();
-    api.say('已保存战术脚本（strategies/战术脚本-人族速矿二本.txt），下一局按它打');
+    preview(api.startIndex(), '已保存。');
   }
-  async function preview() {
-    if (S.busy) return;
-    const start = api.startIndex(), {text, map} = toText();
+  /* play the script (as edited, saved or not) on the fake world; the console opens the result like a
+   * replay, so the event timeline, the map and these cards all show it */
+  async function preview(start, lead = '') {
+    if (S.busy || !M) return;
+    if (api.live().on) { api.say('连着游戏时不能预演，先点「断开」', true); return; }
+    start = start == null ? api.startIndex() : start;
+    const {text, map} = toText();
     S.busy = true; render();
-    api.say(`正在用假游戏预演${api.startName(start)}（约 10 秒）…`);
+    api.say(lead + `正在按战术脚本预演${api.startName(start)}（假游戏跑 10 分钟，约 10 秒）…`);
     let j;
     try { j = await api_('POST', '/api/script/preview', {text, start}); } catch (_) { j = {ok: false, error: '连不上本地服务'}; }
     S.busy = false;
     if (!j.ok) { render(); api.say('预演没跑成：' + (j.error || (j.errors || [])[0] || '未知原因'), true); return; }
-    S.preview = {...j, start, text, map}; S.view = 'time'; S.timingKey = ''; render();
+    if (api.live().on) { render(); return; } // a game started meanwhile
+    S.previewMap = map; S.previewText = text; S.timingKey = ''; S.movedPos.clear(); S.moved.clear();
+    if (S.active) S.view = 'time';
+    api.openPreview(j);
+    render();
     const dead = (j.script.lanes || []).filter(l => l.dead).map(l => l.label);
-    api.say(`预演完成（${api.startName(start)}，到 ${api.fmt(j.t)}）：卡片按开始时间排在时间轴上。假游戏的采集和战斗数值是估计的，时间只作参考。` + (dead.length ? ` 阵亡：${dead.join('、')}` : ''));
+    api.say(lead + `按战术脚本预演了${api.startName(start)}（到 ${api.fmt(j.t)}）：事件时间轴按脚本每一行分组，地图和资源跟着时间走，拖时间轴或点「播放」看过程；` +
+      `「战术脚本」里的卡片排在各自开始的时刻。假游戏的采集和战斗数值是估计的，时间只作参考。` + (dead.length ? ` 阵亡：${dead.join('、')}` : ''));
+  }
+  /* the plan that plays this script on a start: that start's layout + the text */
+  async function planFor(start) {
+    if (!M) return null;
+    const name = '人族速矿二本 · ' + api.startName(start);
+    try {
+      const j = await api_('GET', '/api/strategies/' + encodeURIComponent(name));
+      return j && j.ok ? {...j.plan, start, script: toText().text, name} : null;
+    } catch (_) { return null; }
   }
 
   /* ---------- changes (with undo) ---------- */
@@ -157,14 +175,14 @@
   function source() {
     const L = api.live();
     if (L.on && L.state && L.state.script) return {kind: 'live', T: L.state.t, decisions: L.state.decisions || [], script: L.state.script, label: '实机'};
-    if (L.replay && L.replay.state && L.replay.state.script) return {kind: 'replay', T: L.replay.t, decisions: L.replay.state.decisions || [], script: L.replay.state.script, label: '回放'};
-    if (S.preview) return {kind: 'preview', T: S.preview.t, decisions: S.preview.decisions, script: S.preview.script, label: '预演 · ' + api.startName(S.preview.start)};
+    if (L.replay && L.replay.state && L.replay.state.script) return {kind: L.replay.preview ? 'preview' : 'replay', T: L.replay.t, decisions: L.replay.state.decisions || [],
+      script: L.replay.state.script, label: L.replay.preview ? '预演 · ' + api.startName(L.replay.state.start) : '回放', end: L.replay.end};
     return null;
   }
   function timing() {
     const src = source();
     if (!src) return null;
-    const key = src.kind + '|' + src.decisions.length + '|' + Math.floor(src.T) + '|' + S.undo.length + '|' + (S.preview ? S.preview.t : '');
+    const key = src.kind + '|' + src.decisions.length + '|' + Math.floor(src.T) + '|' + S.undo.length + '|' + (src.end || '');
     if (key === S.timingKey) return S.timing;
     const byLabel = {};
     for (const d of src.decisions) {
@@ -179,7 +197,7 @@
       if (dm && km) (byLabel[dm[1]] || (byLabel[dm[1]] = {starts: []})).dead = {k: +km[1] - 1, t: d.t};
     }
     const runLanes = src.script.lanes || [];
-    const lines = {}; for (const [n, ref] of Object.entries((src.kind === 'preview' && S.preview.map) || {})) if (ref.type === 'lane') lines[ref.i] = +n;
+    const lines = {}; for (const [n, ref] of Object.entries((src.kind === 'preview' && S.previewMap) || {})) if (ref.type === 'lane') lines[ref.i] = +n;
     const lanes = M.lanes.map((ln, i) => {
       const kind = laneKind(ln.head), cids = laneCids(ln.head);
       const match = runLanes.filter(x => x.kind === kind && (kind === 'peasant' ? cids.includes(+x.label.replace('农民', ''))
@@ -257,14 +275,120 @@
   function markers() {
     if (!M) return [];
     const src = source(), start = api.startIndex();
-    const fromGame = src && src.script.positions && (src.kind !== 'preview' || S.preview.start === start) ? src.script.positions : null;
+    const fromGame = src && src.script.positions && (src.kind === 'live' || api.live().replay.state.start === start) ? src.script.positions : null;
     const approx = approxPositions();
     return M.positions.map(p => {
       const g = fromGame && fromGame[p.name], a = approx[p.name];
-      const at = /^坐标/.test(p.expr.trim()) ? a : g ? {x: g[0], y: g[1], exact: true} : a;
+      const at = /^坐标/.test(p.expr.trim()) || S.movedPos.has(p.name) ? a : g ? {x: g[0], y: g[1], exact: true} : a;
       return at && {name: p.name, x: at.x, y: at.y, exact: !!at.exact || !!g, editable: /^坐标/.test(p.expr.trim()), sel: S.selPos === p.name};
     }).filter(Boolean);
   }
+  /* ---------- build sites on the sandbox: every 建造 card has one ---------- */
+  function runEvents() { // the game the cards follow: its events by "lane label|step"
+    const L = api.live(), st = L.on && L.state ? L.state : L.replay ? L.replay.state : null;
+    if (!st || !st.script) return null;
+    const map = {};
+    for (const d of st.arbEvents || []) if (d.phase != null && d.step != null) map[d.phase + '|' + d.step] = {d, rt: (st.events || {})[d.id] || {}};
+    return {map, T: L.on ? L.state.t : L.replay.t};
+  }
+  function sites() {
+    if (!M) return [];
+    const run = runEvents(), mk = Object.fromEntries(markers().map(m => [m.name, m])), out = [];
+    M.lanes.forEach((ln, l) => {
+      const labels = laneKind(ln.head) === 'peasant' ? laneCids(ln.head).map(c => '农民' + c) : [];
+      ln.steps.forEach((st, s) => {
+        const o = splitStep(st.raw), what = o.body.split(' ')[1] || '', btype = o.act === '建造' && BT[what];
+        if (!btype) return;
+        let x = null, y = null, exact = false, state = 'plan';
+        const r = run && !S.moved.has(l + '|' + s) && labels.map(lb => run.map[lb + '|' + s]).find(Boolean);
+        if (r) {
+          if (r.rt.bStart != null && r.rt.bStart <= run.T) return; // standing on the map already
+          const p = r.rt.builtAt || (o.pos === '自动' ? null : r.d.at || r.d.site); // @自动: the game picks the spot, known once built
+          if (p && !(o.pos && S.movedPos.has(o.pos))) { x = p[0]; y = p[1]; exact = !!r.d.at; state = r.d.start <= run.T ? 'ordered' : 'plan'; }
+        }
+        if (x == null) { const m = o.pos && mk[o.pos]; if (!m) return; x = m.x; y = m.y; exact = m.exact; }
+        out.push({l, s, btype, x, y, exact, state, pos: o.pos, label: (labels[0] || ln.head) + (labels.length > 1 ? '…' : '') + ' · ' + what + (o.pos && o.pos !== '自动' ? ' @' + o.pos : ''),
+          sel: !!(S.sel && S.sel.l === l && S.sel.s === s)});
+      });
+    });
+    return out;
+  }
+  /* a card or lane picked in the script: show it on the sandbox */
+  function focusFor(l, s) {
+    const ln = M.lanes[l], kind = laneKind(ln.head), v = api.view();
+    if (s != null) {
+      const site = sites().find(x => x.l === l && x.s === s);
+      if (site) { api.focus(site.x, site.y); return; }
+      const o = splitStep(ln.steps[s].raw), mk = o.pos && markers().find(m => m.name === o.pos);
+      if (mk && !/^(采金|伐木)$/.test(o.act)) { S.selPos = mk.name; api.focus(mk.x, mk.y); return; }
+    }
+    if (kind === 'peasant') {
+      const cids = laneCids(ln.head), u = v.units.find(x => cids.includes(x.id) && !x.hidden) || v.units.find(x => cids.includes(x.id));
+      if (u) { api.pickUnit(u.id); return; }
+      api.say(`${ln.head} 这时${v.t > 0 ? '不在地图上（还没出生、在金矿里或已阵亡）' : '还没出生'}`);
+      return;
+    }
+    if (kind === 'hero') { const u = v.units.find(x => x.type === {大法师: 'Hamg', 山丘之王: 'Hmkg'}[ln.head]); if (u) api.pickUnit(u.id); else api.say(`${ln.head} 这时还没出生`); return; }
+    const tag = ln.head.startsWith('#') ? ln.head.slice(1) : null;
+    if (tag) { // the building that step named
+      for (const [i, x] of M.lanes.entries()) for (const [k, st] of x.steps.entries()) if (splitStep(st.raw).tag === tag) {
+        const site = sites().find(q => q.l === i && q.s === k); if (site) { api.focus(site.x, site.y); return; }
+      }
+    }
+    const types = tag ? [] : BT[ln.head] === 'htow' ? ['htow', 'hkee', 'hcas'] : [BT[ln.head]];
+    const b = v.buildings.find(x => types.includes(x.type));
+    if (b) api.pickBuilding(b.id); else if (!tag) api.say(`${ln.head} 这时还没建好`);
+  }
+  function selectStep(l, s) {
+    if (!S.active) api.showScript();
+    S.sel = s == null ? {l} : {l, s}; render();
+    const el = root.querySelector(s == null ? `.se-lab[data-l="${l}"]` : `.sc[data-l="${l}"][data-s="${s}"]`);
+    if (el) el.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  }
+  function selectUnit(u) { // a unit clicked on the sandbox: its lane in the script
+    if (!M || !u) return;
+    const hero = {Hamg: '大法师', Hmkg: '山丘之王'}[u.type];
+    const l = M.lanes.findIndex(ln => (hero ? ln.head === hero : laneCids(ln.head).includes(u.id)));
+    if (l < 0) return;
+    S.sel = {l}; if (S.active) { render(); const el = root.querySelector(`.se-lab[data-l="${l}"]`); if (el) el.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }
+  }
+  /* a build site dragged on the sandbox: the layout (布局./分矿. places, this start only), the
+   * place's coordinates (坐标), or else a new 坐标 place for that card */
+  async function moveSite(l, s, p) {
+    const st = M.lanes[l].steps[s], o = splitStep(st.raw), what = o.body.split(' ')[1], btype = BT[what];
+    const q = o.pos && M.positions.find(x => x.name === o.pos), expr = q ? q.expr.replace(/\s+/g, '') : '';
+    const lay = /^布局\.(\D+?)(\d*)$/.exec(expr), nat = /^分矿\.(\D+)$/.exec(expr);
+    const [x, y] = p.map(Math.round);
+    if (lay || nat) {
+      const key = lay ? BT[lay[1]] : 'natural:' + BT[nat[1]], idx = lay ? (+lay[2] || 1) - 1 : 0;
+      const start = api.startIndex(), name = '人族速矿二本 · ' + api.startName(start);
+      let j; try { j = await api_('GET', '/api/strategies/' + encodeURIComponent(name)); } catch (_) { j = null; }
+      if (!j || !j.ok) { api.say('读不到布局「' + name + '」，没改', true); return; }
+      const builds = j.plan.groups.flatMap(g => g.children).filter(e => e.kind === 'build' && (e.near === 'natural' ? 'natural:' : '') + e.btype === key)
+        .sort((a, b) => a.start - b.start || (a.seq || 0) - (b.seq || 0));
+      const e = builds[idx];
+      if (!e) { api.say(`布局「${name}」里没有第 ${idx + 1} 个${what}`, true); return; }
+      e.at = [x, y]; e.site = [x, y];
+      let r; try { r = await api_('PUT', '/api/strategies/' + encodeURIComponent(name), j.plan); } catch (_) { r = null; }
+      if (!r || !r.ok) { api.say('布局没保存：' + ((r && r.error) || '连不上本地服务'), true); return; }
+      layouts[start] = j.plan.groups; S.movedPos.add(o.pos); S.timingKey = '';
+      api.say(`「${o.pos}」（${q.expr}）移到 ${x},${y}：已存进布局「${name}」，只影响${api.startName(start)}，四个方向的脚本还是同一份。`);
+    } else if (q && /^坐标/.test(expr)) {
+      change(() => { q.expr = `坐标 ${x},${y}`; S.movedPos.add(q.name); }, `「${q.name}」移到 ${x},${y}`);
+    } else {
+      let n = 1; while (M.positions.some(z => z.name === what + n)) n++;
+      const nm = what + n;
+      change(() => {
+        M.positions.push({name: nm, expr: `坐标 ${x},${y}`, note: '在沙盘上放的，只对' + api.startName(api.startIndex()) + '准确'});
+        o.pos = nm; st.raw = joinStep(o); S.moved.add(l + '|' + s); S.sel = {l, s};
+      }, `${M.lanes[l].head} 的${what}放在 ${x},${y}，新建位置「${nm}」（坐标写死，只对${api.startName(api.startIndex())}准确）`);
+    }
+    S.moved.add(l + '|' + s);
+    const lead = document.getElementById('msg') ? document.getElementById('msg').textContent + ' ' : '';
+    clearTimeout(S.repreview); S.repreview = setTimeout(() => preview(api.startIndex(), lead), 1500); // then see the game play it
+  }
+  function onMap() { const L = api.live(); return !!M && (S.active || (L.replay && L.replay.preview) || (L.on && L.state && L.state.script)); }
+
   function markerAt(wx, wy, r) {
     let best = null, bd = r;
     for (const m of markers()) { const d = Math.hypot(m.x - wx, m.y - wy); if (d < bd) { bd = d; best = m; } }
@@ -457,8 +581,8 @@
       addFromPalette(S.sel.l, M.lanes[S.sel.l].steps.length, t.dataset.raw, t.dataset.kind);
       return;
     }
-    if (t.classList.contains('sc')) { S.sel = {l: +t.dataset.l, s: +t.dataset.s}; render(); return; }
-    if (t.classList.contains('se-lab')) { S.sel = {l: +t.dataset.l}; render(); return; }
+    if (t.classList.contains('sc')) { S.sel = {l: +t.dataset.l, s: +t.dataset.s}; render(); focusFor(S.sel.l, S.sel.s); return; }
+    if (t.classList.contains('se-lab')) { S.sel = {l: +t.dataset.l}; render(); focusFor(S.sel.l); return; }
     if (t.classList.contains('se-add')) {
       const l = +t.dataset.l, kind = laneKind(M.lanes[l].head), raw = kind === 'building' ? '步兵 ×1' : kind === 'hero' ? '待命 @分矿' : '伐木 主矿';
       change(() => { M.lanes[l].steps.push({raw}); S.sel = {l, s: M.lanes[l].steps.length - 1}; });
@@ -466,7 +590,7 @@
     }
     const sel = S.sel, ln = sel && M.lanes[sel.l];
     switch (act) {
-      case 'preview': preview(); break;
+      case 'preview': preview(api.startIndex()); break;
       case 'save': save(); break;
       case 'undo': undo(); break;
       case 'text': S.showText = !S.showText; render(); break;
@@ -660,14 +784,18 @@
     root.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKey);
     scheduleCheck();
+    try { // the event timeline shows the script from the start: preview it unless a game is on
+      const h = await api_('GET', '/api/health');
+      if (!h.running && !h.waiting && !api.live().on && !api.live().replay) preview(api.startIndex());
+    } catch (_) { /* no preview */ }
   }
   function tick(now) { // from app.js's frame loop: keep the cards in step with a live or replayed game
     if (!S.active || now - S.lastTick < 500 || S.drag) return;
     S.lastTick = now;
     const src = source();
-    if (src && src.kind !== 'preview') refresh();
+    if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, markers, markerAt, moveMarker, selectPos, active: () => S.active,
+  window.ScriptEditor = {init, tick, preview, planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, markerAt, moveMarker, selectPos, active: () => S.active,
     _test: {splitStep, joinStep, laneKind, laneCids, toText: () => toText(), model: () => M}};
 })();

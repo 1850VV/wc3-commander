@@ -465,7 +465,7 @@ class Arbiter(Commander):
             confirm = {"build": "bStart", "train": "trainStart", "upgrade": "trainStart"}.get(e["kind"])
             r["unexecuted"] = bool(confirm and r.get("ordered") is not None and r.get(confirm) is None
                                    and r.get("status") != "done" and self.t - r["ordered"] > 15)
-        s["arbEvents"] = [{k: e.get(k) for k in ("id", "rule", "name", "kind", "start", "why", "prio", "phase", "row", "btype", "utype", "to")}
+        s["arbEvents"] = [{k: e.get(k) for k in ("id", "rule", "name", "kind", "start", "why", "prio", "phase", "row", "step", "btype", "utype", "to", "site", "at")}
                           for e in self.events]
         clean = lambda x: {k: v for k, v in x.items() if k != "_action"}
         log = self.order_log

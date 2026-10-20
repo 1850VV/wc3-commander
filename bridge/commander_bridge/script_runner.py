@@ -100,7 +100,7 @@ class ScriptRunner(Arbiter):
     # ---- events --------------------------------------------------------------------------------
     def _emit(self, L, step, kind, name, **fields) -> dict:
         e = self._add("L%d" % L["line"], kind, name, f"第 {L['line']} 行 {L['label']}：{step['raw']}", **fields)
-        e.update(prio=L["prio"], phase=L["label"], row=L["line"])
+        e.update(prio=L["prio"], phase=L["label"], row=L["line"], step=L["i"])  # the console finds the card by lane + step
         step.setdefault("_events", []).append(e["id"])
         if step.get("tag") and kind in ("build", "upgrade"):
             self.tags[step["tag"]] = e["id"]

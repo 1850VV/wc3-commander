@@ -108,15 +108,24 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
     return GameSession(config)
 
 
+def frame_of(s: dict) -> dict:
+    """One second of a game for the console's replay: resources, units and buildings."""
+    return {"t": s["t"], "gold": s["gold"], "wood": s["wood"], "foodUsed": s["foodUsed"], "foodCap": s["foodCap"],
+            "units": [{k: (round(v) if k in ("x", "y") else v) for k, v in u.items() if k in ("id", "type", "x", "y", "hidden", "task", "role")} for u in s["units"]],
+            "buildings": [{k: (round(v, 2) if k == "progress" else round(v) if k in ("x", "y") else v) for k, v in b.items() if k in ("id", "type", "x", "y", "done", "progress")} for b in s["buildings"]]}
+
+
 # A troll camp at each start's natural for the preview: the fake world has no creeps of its own.
 PREVIEW_CAMP = ((0, 0, "nftr"), (-60, 70, "nfsp"), (60, -50, "nftr"))
 _preview_lock = threading.Lock()
 
 
 def preview_script(data: dict, text: str, start: int, seconds: float = 600.0) -> dict:
-    """Play a tactic script on the fake Lost Temple world (fast, no game) and return when each step
-    began: the console lays the cards out on the timeline from this. The fake world's numbers
-    (mining, building, fighting) are rough, so these times are a preview, not a promise."""
+    """Play a tactic script on the fake Lost Temple world (fast, no game) and return it as a recorded
+    game: one frame per second and the final state (events with their times, decisions, the script's
+    lanes). The console opens it like a replay, so the event timeline, the map and the script's cards
+    all show this script. The fake world's numbers (mining, building, fighting) are rough, so these
+    times are a preview, not a promise."""
     model, errors = tactic_script.parse(text)
     if errors:
         return {"ok": False, "errors": errors}
@@ -131,8 +140,12 @@ def preview_script(data: dict, text: str, start: int, seconds: float = 600.0) ->
         session = make_session("fake", data, start, "none", creeps=camp)
         try:
             obs = session.reset()[0]
+            frames, next_frame = [], 0.0
             while obs["game_time_seconds"] < seconds:
                 actions = c.tick(obs)
+                if c.t >= next_frame:
+                    frames.append(frame_of(c.snapshot()))
+                    next_frame = int(c.t) + 1
                 observations, done, info = session.step({0: actions}, ms=250)
                 c.feedback(actions, info["placements"][0], info["rejected"][0])
                 obs = observations[0]
@@ -140,8 +153,11 @@ def preview_script(data: dict, text: str, start: int, seconds: float = 600.0) ->
         finally:
             session.close()
     snap = c.snapshot()
+    frames.append(frame_of(snap))
+    state = dict(snap, consistency=c.consistency())
     return {"ok": True, "errors": [], "layout": name, "t": snap["t"], "decisions": c.decisions, "script": snap["script"],
-            "gold": snap["gold"], "wood": snap["wood"], "foodUsed": snap["foodUsed"], "foodCap": snap["foodCap"]}
+            "gold": snap["gold"], "wood": snap["wood"], "foodUsed": snap["foodUsed"], "foodCap": snap["foodCap"],
+            "meta": {"name": "预演 · " + data["starts"][start]["name"], "start": start, "preview": True}, "state": state, "frames": frames}
 
 
 class Runner:
@@ -199,9 +215,7 @@ class Runner:
         s = self.state
         if s["t"] >= self._next_frame:
             self._next_frame = int(s["t"]) + 1
-            frame = {"t": s["t"], "gold": s["gold"], "wood": s["wood"], "foodUsed": s["foodUsed"], "foodCap": s["foodCap"],
-                     "units": [{k: (round(v) if k in ("x", "y") else v) for k, v in u.items() if k in ("id", "type", "x", "y", "hidden", "task", "role")} for u in s["units"]],
-                     "buildings": [{k: (round(v, 2) if k == "progress" else round(v) if k in ("x", "y") else v) for k, v in b.items() if k in ("id", "type", "x", "y", "done", "progress")} for b in s["buildings"]]}
+            frame = frame_of(s)
             try:
                 with (self.run_dir / "frames.jsonl").open("a", encoding="utf-8") as f:
                     f.write(json.dumps(frame, ensure_ascii=False) + "\n")

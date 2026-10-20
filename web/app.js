@@ -127,6 +127,7 @@
   function home() { const s = W.starts[startIndex], m = W.nearestMine(s.x, s.y); cam.x = (s.x * 2 + m.x) / 3; cam.y = (s.y * 2 + m.y) / 3; cam.s = Math.max(0.08, Math.min(1.2, CW / 3800)); }
   const toScreen = (x, y) => [CW / 2 + (x - cam.x) * cam.s, CH / 2 + (cam.y - y) * cam.s];
   const toWorld = (sx, sy) => [cam.x + (sx - CW / 2) / cam.s, cam.y - (sy - CH / 2) / cam.s];
+  function lookAt(x, y) { cam.x = x; cam.y = y; cam.s = Math.max(cam.s, Math.min(1.2, CW / 3000)); clampCam(); }
   function clampCam() { const B = W.bounds; cam.x = Math.max(B[0], Math.min(B[1], cam.x)); cam.y = Math.max(B[2], Math.min(B[3], cam.y)); cam.s = Math.max(Math.min(CW, CH) / 16500, Math.min(1.4, cam.s)); }
   function zoomAt(f, sx, sy) { const [wx, wy] = toWorld(sx, sy); cam.s *= f; clampCam(); const [nx, ny] = toWorld(sx, sy); cam.x += wx - nx; cam.y += wy - ny; clampCam(); }
 
@@ -147,7 +148,7 @@
   const siteRect = e => W.rectOf(e.site[0], e.site[1], W.buildingTex(e.btype));
   const siteBody = e => W.bodyRect(e.site[0], e.site[1], W.buildingTex(e.btype));
   const inRect = (r, x, y) => x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
-  function movable(e) { const rt = e.rt || {}; return e.kind === 'build' && !e.resume && !!e.site && !rt.bid && rt.status !== 'done'; }
+  function movable(e) { const rt = e.rt || {}; return !live.arbMode && e.kind === 'build' && !e.resume && !!e.site && !rt.bid && rt.status !== 'done'; }
   function siteAt(wx, wy) { return allEvents().find(e => movable(e) && inRect(siteRect(e), wx, wy)); }
   function upcomingSites(t) { return allEvents().filter(e => movable(e) && e.start <= t + UPCOMING).sort((a, b) => a.start - b.start || a.seq - b.seq); }
   function siteGhost(btype, wx, wy, exceptId) {
@@ -237,7 +238,7 @@
     // the dotted ring around it is the unbuildable part of the pathing texture (units can still walk there)
     const soon = new Set(upcomingSites(v.t).map(e => e.id)), dragging = drag && drag.site;
     for (const e of allEvents()) {
-      if (e.kind !== 'build' || !e.site || (e.rt && e.rt.bid)) continue;
+      if (e.kind !== 'build' || !e.site || (e.rt && e.rt.bid) || live.arbMode) continue;
       const [fx, fy, fw, fh] = rectScreen(siteRect(e)), [x, y, w, h] = rectScreen(siteBody(e));
       const picked = sel && sel.type === 'event' && sel.id === e.id, due = soon.has(e.id);
       ctx.globalAlpha = dragging === e && drag.ghost ? 0.35 : 1;
@@ -267,6 +268,7 @@
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       label('最窄 ' + wr.K + ' 格', x, y - r - 9, ls * .9, col);
     }
+    if (window.ScriptEditor && ScriptEditor.onMap()) drawScriptSites(ls);
     if (window.ScriptEditor && ScriptEditor.active()) drawScriptMarkers(ls);
     const ghost = placing && placing.pos ? placing : dragging && drag.ghost;
     if (ghost) {
@@ -293,8 +295,44 @@
   }
   /* the tactic script's named places: a diamond each (solid = where this game put it, hollow = estimated
    * from the layout); only 「坐标 x,y」 places can be dragged, layout sites move with their build box */
+  /* every 建造 card of the tactic script: its site (purple; white when its card is picked). Dashed =
+   * where the script will build it, solid = ordered in the game shown and not started yet */
+  function drawScriptSites(ls) {
+    const now = performance.now();
+    for (const st of ScriptEditor.sites()) {
+      const moving = drag && drag.ss && drag.ss.l === st.l && drag.ss.s === st.s && drag.ghost;
+      const at = moving ? drag.ghost.pos : [st.x, st.y], tex = W.buildingTex(st.btype);
+      const [x, y, w, h] = rectScreen(W.bodyRect(at[0], at[1], tex));
+      const ok = !moving || drag.ghost.ok, col = !ok ? '#d0584a' : st.sel ? '#ffffff' : '#c58bf0';
+      ctx.fillStyle = !ok ? 'rgba(208,88,74,.3)' : st.sel ? 'rgba(197,139,240,.35)' : 'rgba(197,139,240,.13)'; ctx.fillRect(x, y, w, h);
+      if (st.state !== 'ordered') ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = col; ctx.lineWidth = st.sel ? 2.5 : 1.5; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+      if (st.sel) { // a pulse so the eye finds it
+        const k = (now / 600) % 1; ctx.globalAlpha = 1 - k; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.strokeRect(x - 6 * k - 2, y - 6 * k - 2, w + 12 * k + 4, h + 12 * k + 4); ctx.globalAlpha = 1;
+      }
+      if (w > 22 || st.sel) label(st.label, x + w / 2, y + h / 2, ls * .85, st.sel ? '#fff' : '#dcc0f5');
+    }
+  }
+  /* can the script's building stand here? Checked on the bare map of this start, against the
+   * buildings of the game shown and the script's other sites (the offline plan has nothing to do with it) */
+  let bareKey = -1, bare = null;
+  function scriptGhost(ss, wx, wy) {
+    if (bareKey !== startIndex) { bareKey = startIndex; bare = new Sim.Game(W, {start: startIndex, events: []}); }
+    const pos = W.snap(ss.btype, wx, wy);
+    const others = ScriptEditor.sites().filter(x => x.l !== ss.l || x.s !== ss.s).map(x => ({type: x.btype, x: x.x, y: x.y}))
+      .concat(V().buildings.filter(b => !/^(htow|hkee|hcas)$/.test(b.type) || Math.hypot(b.x - bare.hall.x, b.y - bare.hall.y) > 50).map(b => ({type: b.type, x: b.x, y: b.y})));
+    const chk = bare.canPlace(ss.btype, pos[0], pos[1], others, 0);
+    return {btype: ss.btype, pos, ok: chk.ok, why: chk.why};
+  }
+  function scriptSiteAt(wx, wy) {
+    if (!window.ScriptEditor || !ScriptEditor.onMap()) return null;
+    return ScriptEditor.sites().find(st => inRect(W.rectOf(st.x, st.y, W.buildingTex(st.btype)), wx, wy)) || null;
+  }
   function drawScriptMarkers(ls) {
+    const onSites = new Set(ScriptEditor.sites().map(st => st.pos));
     for (const m of ScriptEditor.markers()) {
+      if (onSites.has(m.name) && !(drag && drag.mk && drag.mk.name === m.name)) continue;
       const moving = drag && drag.mk && drag.mk.name === m.name && drag.mkPos, [x, y] = toScreen(...(moving ? drag.mkPos : [m.x, m.y])), r = 7;
       ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
       ctx.fillStyle = m.exact ? (m.sel ? '#fff' : '#c58bf0') : 'rgba(197,139,240,.18)'; ctx.fill();
@@ -320,17 +358,20 @@
     const r = cv.getBoundingClientRect(), [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
     drag = {x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false};
     const site = !placing && siteAt(wx, wy); // grabbing a planned site moves it instead of the map
+    const ss = !placing && !site && !live.on && scriptSiteAt(wx, wy); // or a tactic-script build site
     if (site) Object.assign(drag, {site, off: [wx - site.site[0], wy - site.site[1]], ghost: null});
+    else if (ss) Object.assign(drag, {ss, off: [wx - ss.x, wy - ss.y], ghost: null});
     else if (!placing && window.ScriptEditor && ScriptEditor.active()) { const mk = ScriptEditor.markerAt(wx, wy, 12 / cam.s); if (mk) drag.mk = mk; }
   });
   cv.addEventListener('pointermove', e => {
     const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
     if (placing) updateGhost(...toWorld(sx, sy));
-    if (!drag) { if (!placing) cv.style.cursor = siteAt(...toWorld(sx, sy)) ? 'move' : ''; return; }
+    if (!drag) { if (!placing) cv.style.cursor = siteAt(...toWorld(sx, sy)) || (!live.on && scriptSiteAt(...toWorld(sx, sy))) ? 'move' : ''; return; }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.hypot(dx, dy) > 4) drag.moved = true;
     if (!drag.moved || placing) return;
     if (drag.site) { const [wx, wy] = toWorld(sx, sy); drag.ghost = siteGhost(drag.site.btype, wx - drag.off[0], wy - drag.off[1], drag.site.id); cv.style.cursor = 'move'; }
+    else if (drag.ss) { const [wx, wy] = toWorld(sx, sy); drag.ghost = scriptGhost(drag.ss, wx - drag.off[0], wy - drag.off[1]); cv.style.cursor = 'move'; }
     else if (drag.mk && drag.mk.editable) { drag.mkPos = toWorld(sx, sy); cv.style.cursor = 'move'; }
     else if (drag.mk) return; // a layout place: its build box is what moves
     else { cam.x = drag.cx - dx / cam.s; cam.y = drag.cy + dy / cam.s; clampCam(); cv.style.cursor = 'grabbing'; }
@@ -344,6 +385,11 @@
       else if (!g.ok) say('这里不能放' + name(e2.btype) + '：' + g.why, true);
       else if (g.pos[0] !== e2.site[0] || g.pos[1] !== e2.site[1]) { pinSite(e2, g.pos); focusEvent(e2); }
       return;
+    }
+    if (d && d.ss) {
+      if (!d.moved) { ScriptEditor.selectStep(d.ss.l, d.ss.s); return; } // a click: its card
+      if (!d.ghost || !d.ghost.ok) { say('这里不能放' + name(d.ss.btype) + (d.ghost ? '：' + d.ghost.why : ''), true); return; }
+      ScriptEditor.moveSite(d.ss.l, d.ss.s, d.ghost.pos); return;
     }
     if (d && d.mk) { if (d.moved && d.mkPos) ScriptEditor.moveMarker(d.mk.name, ...d.mkPos); else ScriptEditor.selectPos(d.mk.name); return; }
     if (!click) return;
@@ -361,7 +407,7 @@
   function pick(wx, wy) {
     const v = V(); let best = null, bd = Math.max(26, 10 / cam.s);
     for (const u of v.units) { if (u.hidden) continue; const d = Math.hypot(u.x - wx, u.y - wy); if (d < bd) { bd = d; best = u; } }
-    if (best) sel = {type: 'unit', id: best.id};
+    if (best) { sel = {type: 'unit', id: best.id}; if (window.ScriptEditor) ScriptEditor.selectUnit(best); }
     else {
       const b = v.buildings.find(b => { const r = W.rectOf(b.x, b.y, b.tex); return wx >= r[0] && wx <= r[2] && wy >= r[1] && wy <= r[3]; });
       const e = !b && allEvents().find(e => e.kind === 'build' && e.site && !(e.rt && e.rt.bid) && (r => wx >= r[0] && wx <= r[2] && wy >= r[1] && wy <= r[3])(W.rectOf(e.site[0], e.site[1], W.buildingTex(e.btype))));
@@ -732,15 +778,21 @@
       let j;
       try { j = await (await fetch('/api/runs/' + encodeURIComponent(id))).json(); } catch (_) { say('读不到这一局的记录', true); return; }
       if (!j.ok || !j.frames.length) { say('这一局没有可以回放的记录' + (j.error ? '：' + j.error : ''), true); return; }
-      const st = j.state;
-      live.replay = {id, meta: j.meta, frames: j.frames, t: 0, end: j.frames[j.frames.length - 1].t, consistency: st.consistency || null, fi: 0, state: st};
+      this.open(j, id);
+      say(`回放：${j.meta.name || id}，共 ${fmt(live.replay.end)}。点「播放」或拖动时间轴；点一条事件看依据、命令和游戏回报，并可以打分。` + (j.replay ? '魔兽录像在游戏的 Replay\\commander 文件夹。' : ''));
+    },
+    /* a recorded game, or the tactic script's preview on the fake world (meta.preview): the timeline
+     * shows its events grouped by the script's lines, the map and resources follow the time */
+    open(j, id) {
+      const st = j.state, preview = !!(j.meta && j.meta.preview);
+      live.replay = {id, preview, meta: j.meta, frames: j.frames, t: 0, end: j.frames[j.frames.length - 1].t, consistency: st.consistency || null, fi: 0, state: st};
       live.arbMode = false; live.arbN = -1;
       if (st.start != null) { startIndex = st.start; startSel.value = String(st.start); }
       Live.syncArbiter(st); live.feedback = j.feedback || [];
       playing = false; bPlay.textContent = '▶ 播放'; ['bPlay', 'speeds', 'bReset'].forEach(x => $(x).hidden = false);
-      live.replayExit.hidden = false; $('modeTag').textContent = '回放 · ' + (j.meta.name || id); $('modeTag').classList.add('live');
-      sel = null; home(); this.seek(0); renderCmd();
-      say(`回放：${j.meta.name || id}，共 ${fmt(live.replay.end)}。点「播放」或拖动时间轴；点一条事件看依据、命令和游戏回报，并可以打分。` + (j.replay ? '魔兽录像在游戏的 Replay\\commander 文件夹。' : ''));
+      live.replayExit.hidden = false; live.replayExit.textContent = preview ? '退出预演' : '退出回放';
+      $('modeTag').textContent = (preview ? '战术脚本' : '回放') + ' · ' + (j.meta.name || id); $('modeTag').classList.add('live');
+      sel = null; home(); this.seek(preview ? live.replay.end : 0); renderCmd();
     },
     seek(t, keepPlaying) {
       const r = live.replay; if (!r) return;
@@ -763,10 +815,11 @@
       }
       return Object.assign(r.view, {t: r.t});
     },
-    exit() {
+    exit(quiet) {
+      const was = live.replay && live.replay.preview;
       live.replay = null; live.arbMode = false; live.arb = null; live.replayExit.hidden = true; playing = false;
       groups = Sim.defaultPlan(); checkpoints = []; buildTimeline();
-      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0); sel = null; renderCmd(); say('已退出回放');
+      $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0); sel = null; renderCmd(); if (!quiet) say(was ? '已退出预演：时间轴回到模拟器的默认计划' : '已退出回放');
     },
   };
 
@@ -805,6 +858,7 @@
     },
     async load(nm) {
       if (live.on) { say('游戏连接中不能载入，先点「断开」', true); return; }
+      if (live.replay) Replay.exit(true);
       try {
         const j = await (await fetch('/api/strategies/' + encodeURIComponent(nm))).json();
         if (!j.ok) { say('载入失败：' + j.error, true); return; }
@@ -843,11 +897,16 @@
       return this.put(nm.trim());
     },
     async connect(btn) {
+      if (live.replay) Replay.exit(true); // a preview or replay gives way to the game
       let h = {};
       try { h = await (await fetch('/api/health')).json(); } catch (_) { say('连不上本地服务', true); return; }
       if (h.running || h.waiting) { // a game is already going (or awaited): join it with its plan instead of starting anew
         try { const j = await (await fetch('/api/plan')).json(); this.adopt(j.plan, j.name); } catch (_) { say('读不到正在运行的计划', true); return; }
-      } else if (h.launch) this.pushPlan(); // test switch / fake server: send this plan and launch a game
+      } else if (h.launch) { // test switch / fake server: send the plan and launch a game
+        const sp = window.ScriptEditor && await ScriptEditor.planFor(startIndex); // the tactic script, when the console has one
+        if (sp) fetch('/api/plan', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(sp)});
+        else this.pushPlan();
+      }
       // otherwise the bridge waits for the game you start and picks the strategy for your start itself
       live.es = new EventSource('/api/stream');
       live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'plan') this.adopt(msg.plan, msg.name); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
@@ -901,9 +960,11 @@
       const open = new Map(groups.map(g => [g.id, g.open]));
       const toEv = d => ({...d, name: (d.row ? '第' + d.row + '行 ' : d.rule + ' ') + d.name, rt: (s.events || {})[d.id] || null});
       if (defs.some(d => d.phase)) { // an orchestration: the player's own phases, in the order its rows use them
-        const order = (s.orchestration && s.orchestration.rows || []).map(r => r.phase).concat(defs.map(d => d.phase || '其他'));
+        // a tactic script: one group per line, in the script's order (buildings and heroes after the peasants)
+        const lanes = (s.script && s.script.lanes || []).slice().sort((a, b) => a.line - b.line).map(l => l.label);
+        const order = lanes.concat((s.orchestration && s.orchestration.rows || []).map(r => r.phase), defs.map(d => d.phase || '其他'));
         const phases = [...new Set(order)].filter(ph => defs.some(d => (d.phase || '其他') === ph));
-        groups = phases.map((ph, i) => ({id: 'g_ph' + i, name: ph, src: '编排', open: open.get('g_ph' + i) ?? true,
+        groups = phases.map((ph, i) => ({id: 'g_ph' + i, name: ph, src: s.script ? '战术脚本' : '编排', open: open.get('g_ph' + i) ?? true,
           children: defs.filter(d => (d.phase || '其他') === ph).map(toEv)}));
       } else {
         groups = PH.map(([id, nm, f]) => ({id, name: nm, src: '仲裁器', open: open.get(id) ?? true,
@@ -916,6 +977,7 @@
       try { const j = await (await fetch('/api/feedback')).json(); live.feedback = j.feedback || []; lastStatus = ''; } catch (_) { /* keep */ }
     },
     async rate(e, f) {
+      if (live.replay && live.replay.preview) { say('这是假游戏里的预演，不是真实对局，不用打分', true); return; }
       try {
         const r = await fetch('/api/feedback', {method: 'POST', headers: {'content-type': 'application/json'},
           body: JSON.stringify({event: e.id, rule: e.rule, action: e.name, t: e.start, ...f, ...(live.replay ? {run: live.replay.id} : {})})});
@@ -951,7 +1013,9 @@
   $('bReset').onclick = () => { if (live.on) return; if (live.replay) { Replay.seek(0); return; } resim(0); sel = null; renderCmd(); };
   const startSel = $('startSel');
   W.starts.forEach((s, i) => { const o = document.createElement('option'); o.value = i; o.textContent = s.name; startSel.appendChild(o); });
-  startSel.onchange = () => { startIndex = +startSel.value; sel = null; markDirty(); if (live.on) Live.pushPlan(); else resim(G.t); home(); renderCmd(); };
+  startSel.onchange = () => {
+    if (live.replay && live.replay.preview && !live.on) { ScriptEditor.preview(+startSel.value); return; } // the script on that start
+    startIndex = +startSel.value; sel = null; markDirty(); if (live.on) Live.pushPlan(); else resim(G.t); home(); renderCmd(); };
   $('foot').textContent = `地图与数值：失落神庙通行网格 ${W.W}×${W.H}、${W.trees.length} 棵树、${W.mines.length} 座金矿，单位造价与工期取自 1.27a 数据（来自 warcraft-commander 提取）。` +
     `模拟假设：每趟采金/伐木 ${Sim.TUNING.carry}，金矿每次进一个农民、矿内 ${Sim.TUNING.mineSeconds} 秒（未校准），伐木每下 ${Sim.TUNING.chopSeconds} 秒，每棵树 ${Sim.TUNING.treeWood} 木；不模拟单位碰撞和战斗。`;
 
@@ -971,7 +1035,11 @@
     $('rGold').textContent = Math.floor(v.gold); $('rWood').textContent = Math.floor(v.wood); $('rFood').textContent = v.foodUsed + '/' + v.foodCap; $('clock').textContent = fmt(v.t);
   }
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
-  if (window.ScriptEditor) ScriptEditor.init({live: () => live, groups: () => groups, startIndex: () => startIndex, startName: i => W.starts[i].name,
+  if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: j => { // a new preview keeps the moment being looked at
+      const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null); if (keep != null) Replay.seek(keep); }, view: () => V(),
+    pickUnit: id => { const u = V().units.find(x => x.id === id); sel = {type: 'unit', id}; if (u) lookAt(u.x, u.y); renderCmd(); markSel(); },
+    pickBuilding: id => { const b = V().buildings.find(x => x.id === id); sel = {type: 'building', id}; if (b) lookAt(b.x, b.y); renderCmd(); markSel(); },
+    showScript: () => { const b = document.querySelector('.se-tab[data-tab="script"]'); if (b) b.click(); }, groups: () => groups, startIndex: () => startIndex, startName: i => W.starts[i].name,
     hall: () => ({x: W.starts[startIndex].x, y: W.starts[startIndex].y}), natural: naturalMine, say, fmt, name, tl: document.querySelector('.tl'),
-    focus: (x, y) => { cam.x = x; cam.y = y; clampCam(); }});
+    focus: lookAt});
 })();
