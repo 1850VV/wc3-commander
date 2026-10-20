@@ -37,6 +37,7 @@ from urllib.parse import unquote
 from . import attach, strategies
 from .data import load_data
 from .arbiter import Arbiter
+from .orchestrator import Orchestrator
 from .engine import Commander
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -135,7 +136,7 @@ class Runner:
     def new_commander(self):
         """The rule-driven arbiter (docs/规则表-人族速矿二本.md) for a plan marked "arbiter", else the timeline.
         Each arbiter game gets its own folder under bridge/runs for its record and the player's feedback."""
-        arbiter = bool(self.plan.get("arbiter"))
+        arbiter = bool(self.plan.get("arbiter") or self.plan.get("orchestration"))
         start = self.plan.get("start")
         side = ("south", "west", "north", "east")[start] if isinstance(start, int) and 0 <= start < 4 else "plan"
         self.run_dir = RUNS / (time.strftime("%Y%m%d-%H%M%S") + "-" + side) if arbiter else None  # ASCII: Warcraft writes the replay here
@@ -145,7 +146,7 @@ class Runner:
             meta = {"name": self.plan_name, "start": start, "began": time.strftime("%Y-%m-%dT%H:%M:%S"), "backend": self.backend,
                     "speed": self.speed_factor if self.launch else 1.0, "launch": self.launch}
             (self.run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-        return (Arbiter if arbiter else Commander)(self.data)
+        return (Orchestrator if self.plan.get("orchestration") else Arbiter if arbiter else Commander)(self.data)
 
     def record(self) -> None:
         """Each tick of an arbiter game: one frame per game second for the console's replay, and the state now and then."""
@@ -273,6 +274,12 @@ class Runner:
                 self.commander = self.new_commander()
                 self.commander.set_plan(self.plan)
                 self.commander.enabled = self.tactic = True  # every new game starts with the tactic on
+        errors = getattr(self.commander, "errors", None)
+        if errors:  # an orchestration with mistakes: say where, play nothing
+            for e in errors:
+                self.log("编排有错：" + e, "error")
+            self.log("编排文件有错，这局不开打。改好后再点「连接」", "error")
+            return
         self.thread = threading.Thread(target=self._attach if attached else self._run, args=() if attached else (start,), daemon=True)
         self.thread.start()
 
@@ -470,6 +477,9 @@ class Runner:
                 plan = strategies.load(name)["plan"]
                 plan["start"] = start  # the detected direction wins over a stale start saved in the layout
                 plan["arbiter"] = True  # played by the rule table (arbiter.py), recorded for replay in bridge/runs
+                orch = strategies.STORE / "编排-人族速矿二本.md"
+                if orch.is_file():  # the player's own orchestration wins over the built-in rules
+                    plan["orchestration"] = orch.read_text(encoding="utf-8")
             except (FileNotFoundError, ValueError):
                 why = f"找不到策略「{name}」"
         with self.lock:
@@ -478,6 +488,10 @@ class Runner:
                 self.plan_name = name
             self.commander = self.new_commander()
             self.commander.set_plan(self.plan)
+            errors = getattr(self.commander, "errors", None)
+            if errors and why is None:
+                why = "编排文件有错（" + "；".join(errors[:3]) + "）"
+                plan = None
             self.commander.enabled = self.tactic = why is None
             self.state = self.commander.snapshot()
         if plan is not None:

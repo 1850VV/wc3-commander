@@ -419,10 +419,10 @@ class Arbiter(Commander):
         queued = len([e for e in self._open("A5") if not (self.jobs.get(e["id"]) or {}).get("producer")])
         # Who is short: each mine of its five, lumber of its target counting only peasants actually
         # cutting (militia, the clear crew and builders are away) plus those already in training for it.
-        main_short = max(0, GOLD_PER_MINE - self._gold_heads("main"))
-        nat_short = max(0, GOLD_PER_MINE - self._gold_heads("natural")) if self.natural_ready() else 0
+        main_short = max(0, self.gold_cap["main"] - self._gold_heads("main"))
+        nat_short = max(0, self.gold_cap["natural"] - self._gold_heads("natural")) if self.natural_ready() else 0
         boost = self.waiting_on_wood()
-        wood_target = WOOD_TARGET  # A3: lumberjacks plus builders from lumber, eight in all (the player)
+        wood_target = self.wood_cap  # A3: lumberjacks plus builders from lumber, eight in all (the player)
         cutting = sum(1 for u in self.workers() if self.roles.get(u["unit_id"]) == "wood") + self._builders_from_wood()
         incoming = sum(1 for e in self._open("A5") if e.get("then") == "wood")
         wood_short = max(0, wood_target - cutting - incoming)
@@ -448,9 +448,13 @@ class Arbiter(Commander):
             role = "wood" if res == "wood" else ("natural" if self.mine_of.get(uid) == "natural" else "gold")
             if self._last_role.get(uid) != role:
                 self._last_role[uid] = role
-                rule, why = {"gold": ("A1", "主矿采金 5 人"), "natural": ("A2", "分矿采金 5 人"), "wood": ("A3", "其余伐木")}[role]
+                rule, why = self.worker_rule(role)
                 self.note(rule, f"农民{self.cid.get(uid, '?')} → {'伐木' if role == 'wood' else '分矿采金' if role == 'natural' else '采金'}", why)
         return ok
+
+    def worker_rule(self, role):
+        """The rule a worker's new job is credited to in the decision record."""
+        return {"gold": ("A1", "主矿采金 5 人"), "natural": ("A2", "分矿采金 5 人"), "wood": ("A3", "其余伐木")}[role]
 
     def snapshot(self) -> dict:
         s = super().snapshot()
@@ -461,7 +465,8 @@ class Arbiter(Commander):
             confirm = {"build": "bStart", "train": "trainStart", "upgrade": "trainStart"}.get(e["kind"])
             r["unexecuted"] = bool(confirm and r.get("ordered") is not None and r.get(confirm) is None
                                    and r.get("status") != "done" and self.t - r["ordered"] > 15)
-        s["arbEvents"] = [{k: e.get(k) for k in ("id", "rule", "name", "kind", "start", "why", "prio")} for e in self.events]
+        s["arbEvents"] = [{k: e.get(k) for k in ("id", "rule", "name", "kind", "start", "why", "prio", "phase", "row", "btype", "utype", "to")}
+                          for e in self.events]
         clean = lambda x: {k: v for k, v in x.items() if k != "_action"}
         log = self.order_log
         s["orders"] = {

@@ -70,6 +70,8 @@ class Commander:
         self.enabled = True  # tactic switch: off = watch and report only, no orders
         # Every order is attributed: ctx is (rule, event id) while that rule/event is being handled.
         # An order given with no ctx is an unexplained ("多余") action; order_log keeps them all.
+        self.gold_cap = {"main": GOLD_PER_MINE, "natural": GOLD_PER_MINE}  # miners per mine; an orchestration sets them
+        self.wood_cap = WOOD_TARGET                                          # lumberjacks
         self.ctx: tuple | None = None
         self.order_log: list[dict] = []
         self._sent: list[dict] = []          # order_log entries of the actions tick() returned, in order
@@ -994,20 +996,20 @@ class Commander:
         for uid, role in list(self.roles.items()):
             if role == "gold":
                 by_mine.setdefault(self.mine_of.get(uid, "main"), []).append(uid)
-        for uids in by_mine.values():
+        for where, uids in by_mine.items():
             uids.sort(key=lambda u: self.cid.get(u, 0))
-            for uid in uids[GOLD_PER_MINE:]:  # more than five: into lumber if it wants them
+            for uid in uids[self.gold_cap.get(where, GOLD_PER_MINE):]:  # more than five: into lumber if it wants them
                 u = next((x for x in self.units() if x["unit_id"] == uid), None)
                 if not u or uid in self.ordered:
                     continue
-                if self.natural_ready() and len(by_mine.get("natural", [])) < GOLD_PER_MINE and self.mine_of.get(uid) != "natural":
+                if self.natural_ready() and len(by_mine.get("natural", [])) < self.gold_cap["natural"] and self.mine_of.get(uid) != "natural":
                     self.harvest(u, "gold", "natural")
                     by_mine.setdefault("natural", []).append(uid)
                 else:
                     self.harvest(u, "wood")
         wood = [u for u in self.workers() if self.roles.get(u["unit_id"]) == "wood" and u["unit_id"] not in self.ordered]
-        for u in wood[WOOD_TARGET:]:  # past eight lumberjacks: a mine short of five takes him, else he keeps cutting
-            short = next((m for m in ("main", "natural") if (m == "main" or self.natural_ready()) and len(by_mine.get(m, [])) < GOLD_PER_MINE), None)
+        for u in wood[self.wood_cap:]:  # past eight lumberjacks: a mine short of five takes him, else he keeps cutting
+            short = next((m for m in ("main", "natural") if (m == "main" or self.natural_ready()) and len(by_mine.get(m, [])) < self.gold_cap[m]), None)
             if short:
                 self.harvest(u, "gold", short)
                 by_mine.setdefault(short, []).append(u["unit_id"])
@@ -1023,7 +1025,7 @@ class Commander:
                     and self.t - self.last_order.get(uid, -99) >= 3 and self.t > 5:
                 self.harvest(u, "wood")
         main = by_mine.get("main", [])
-        if len(main) < GOLD_PER_MINE:
+        if len(main) < self.gold_cap["main"]:
             # the five are topped up at once, from a new/idle peasant first, then a lumberjack
             pool = [u for u in self.workers() if self.roles.get(u["unit_id"]) in (None, "wood")
                     and u["unit_id"] not in self.ordered and u["unit_id"] not in self.reserved()]

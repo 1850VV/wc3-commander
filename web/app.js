@@ -461,7 +461,7 @@
     const conf = rt.bStart ?? rt.trainStart ?? (['learn', 'gather', 'militia', 'clear'].includes(e.kind) ? rt.aStart : null);
     const flags = [rt.unexecuted && '游戏接受了命令，但 15 秒内没有执行', rt.rejected && '被游戏拒绝：' + rt.rejected, rt.failed && '失败'].filter(Boolean);
     return `<div class="title">${esc(e.name)}</div><div class="kv">
-      <span>规则</span><span>${e.rule} · 优先级 ${e.prio}</span><span>依据</span><span>${esc(e.why)}</span>
+      <span>规则</span><span>${e.row ? '编排第 ' + e.row + ' 行' : e.rule} · 优先级 ${e.prio}</span><span>依据</span><span>${esc(e.why)}</span>
       <span>决定</span><span class="num">${fmt(e.start)}</span><span>下令</span><span class="num">${rt.ordered != null ? fmt(rt.ordered) : '—'}</span>
       <span>游戏确认</span><span class="num">${conf != null ? fmt(conf) : '—'}</span><span>完成</span><span class="num">${rt.status === 'done' && rt.aEnd != null ? fmt(rt.aEnd) : '—'}</span>
       <span>状态</span><span>${esc(rt.note || '还没开始')}</span></div>`
@@ -863,8 +863,16 @@
         ['g_b3', '分矿', r => isB(r) && num(r) >= 19 && num(r) <= 23], ['g_b4', '二本', r => isB(r) && num(r) >= 24 && num(r) <= 26],
         ['g_b5', '二本后', r => isB(r) && num(r) >= 27], ['g_a', '常驻规则（农民、农场、步兵）', r => !isB(r)]];
       const open = new Map(groups.map(g => [g.id, g.open]));
-      groups = PH.map(([id, nm, f]) => ({id, name: nm, src: '仲裁器', open: open.get(id) ?? true,
-        children: defs.filter(d => f(d.rule)).map(d => ({...d, name: d.rule + ' ' + d.name, rt: (s.events || {})[d.id] || null}))}));
+      const toEv = d => ({...d, name: (d.row ? '第' + d.row + '行 ' : d.rule + ' ') + d.name, rt: (s.events || {})[d.id] || null});
+      if (defs.some(d => d.phase)) { // an orchestration: the player's own phases, in the order its rows use them
+        const order = (s.orchestration && s.orchestration.rows || []).map(r => r.phase).concat(defs.map(d => d.phase || '其他'));
+        const phases = [...new Set(order)].filter(ph => defs.some(d => (d.phase || '其他') === ph));
+        groups = phases.map((ph, i) => ({id: 'g_ph' + i, name: ph, src: '编排', open: open.get('g_ph' + i) ?? true,
+          children: defs.filter(d => (d.phase || '其他') === ph).map(toEv)}));
+      } else {
+        groups = PH.map(([id, nm, f]) => ({id, name: nm, src: '仲裁器', open: open.get(id) ?? true,
+          children: defs.filter(d => f(d.rule)).map(toEv)}));
+      }
       checkpoints = [];
       buildTimeline();
     },
