@@ -360,6 +360,8 @@ class LostTempleWorld:
                 if u["hero"] and not any(a["ability_id"] == args.get("ability_id") for a in u["_abilities"]):
                     u["_abilities"].append({"ability_id": args["ability_id"], "level": 1, "mana_cost": WATER["mana"], "cooldown_seconds": WATER["cooldown"], "cooldown_remaining": 0.0})
                     self.events.append({"kind": "hero_learn", "unit_id": u["unit_id"], "ability_id": args["ability_id"]})
+            elif cmd == "cast" and args.get("order") == "setrally" and u["structure"]:
+                u["_rally"] = (args.get("x"), args.get("y"))  # trained units are not placed by it here
             elif cmd == "cast" and args.get("order") == MILITIA_ORDER and u["type_id"] == "hpea":
                 u["_job"] = {"kind": "tohall"}  # walks to the town hall and changes there (native probe)
             elif cmd == "cast" and args.get("order") == WATER["order"]:
