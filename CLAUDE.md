@@ -4,6 +4,7 @@
 
 ## 结构
 
+- `web/index.html` + `web/console/`：新控制台（2026-10-21，按原型 v8）。`console/shell.js` 管页面状态、顶栏和菜单、脚本版本（撤销/重做）、保存；编排时把 `GET /api/script` 的脚本和出生点布局交给 `budget.js`，结果转成时间轴数据交给 `TL.load`；时间轴和沙盘的每次修改触发 `script-edited`，`lanesToText` 把各条轨道写回脚本文本（保留原脚本的顺序、注释和位置；同一行的农民步骤相同就合写，不同就拆开；沙盘上点出的地点写成「位置 点N = 坐标 x,y」），再重算重载。`console/timeline.js` 是时间轴（原型 app，`TL` 接口），`console/sandbox.js` 是沙盘（生命周期路线、Shift 接在最后、步骤条件、队伍、编队、时间条、小地图），`data/sandbox-map.js` 由 `tools/bake_sandbox_map.js` 生成（整张地图、建筑占地、金矿），不要手改。实战和回放还没接到新页面，暂时用 `old.html`（旧控制台，下面说的 `app.js`、`script-editor.js`、`timeline.js`）。
 - `web/`：浏览器控制台。`sim.js` 是模拟核心（失落神庙网格、A* 寻路、选址、经济、事件执行），浏览器和 Node 共用；`app.js` 是界面；`data/lost-temple.js` 由 `tools/build_data.py` 生成，不要手改。
 - `bridge/commander_bridge/`：本地服务。`engine.py` 把时间轴事件翻译成 wc3env 命令，并按观测和事件（construct_start/finish、train_start/finish）更新状态；`server.py` 是 HTTP + 服务器推送 + 游戏会话线程；`testworld.py` 是给 wc3env FakeServer 用的失落神庙经济世界。
 - 依赖仓库：`1850VV/wc3env-127a`（游戏接口；在非 Windows 上需要 `cross-platform-import` 分支）。参考仓库：`1850VV/warcraft-commander`（旧实现，地图与数值数据的来源，AMAI 研究文档在 `docs/amai.md`）。

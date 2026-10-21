@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>魔兽指挥官控制台</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><h1>指挥官控制台</h1><span id="modeTag" class="mode">离线预演</span></div>
+    <label class="pick">出生点
+      <select id="startSel"></select>
+    </label>
+    <span class="plan-name" id="planName" hidden></span>
+    <div class="res">
+      <span><i class="dot" style="background:var(--gold)"></i>金 <b id="rGold">500</b></span>
+      <span><i class="dot" style="background:var(--wood)"></i>木 <b id="rWood">150</b></span>
+      <span><i class="dot" style="background:var(--team-2)"></i>人口 <b id="rFood">5/12</b></span>
+    </div>
+    <div class="ctrl">
+      <button class="btn" id="bPlay" type="button">❚❚ 暂停</button>
+      <span class="speeds" id="speeds"></span>
+      <button class="btn" id="bReset" type="button">重置</button>
+      <span class="clock" id="clock">0:00</span>
+    </div>
+  </header>
+
+  <section class="view" id="view">
+    <canvas id="cv"></canvas>
+    <div class="tag" id="viewTag">失落神庙 · 二维网格（每格 32 单位）· 实心=建筑，虚框=不能建造（能走）</div>
+    <div class="zoom"><button class="btn" id="zIn" type="button" aria-label="放大">＋</button><button class="btn" id="zOut" type="button" aria-label="缩小">－</button><button class="btn" id="zHome" type="button">回基地</button></div>
+    <div class="place" id="placeTip" hidden></div>
+  </section>
+
+  <section class="hud">
+    <div class="box mini"><h3>小地图</h3><canvas id="mm" width="320" height="320"></canvas></div>
+    <div class="box status" id="status"></div>
+    <div class="box cmdbox"><h3>命令面板</h3><div class="cmd" id="cmd"></div></div>
+  </section>
+
+  <section class="tl">
+    <div class="tl-head">
+      <h2>事件时间轴</h2>
+      <div class="legend">
+        <span><i class="lg pending"></i>计划中</span>
+        <span><i class="lg waiting"></i>等待资源</span>
+        <span><i class="lg running"></i>执行中</span>
+        <span><i class="lg active"></i>持续采集</span>
+        <span><i class="lg done"></i>已完成</span>
+      </div>
+      <span class="hint push">拖动事件条改开始时间，整局立刻重算；点刻度跳到那个时间</span>
+      <span class="zoomctl" id="tlZoom" title="时间轴缩放：也可以在时间轴上按住 Ctrl（Mac 用 ⌘）滚动滚轮"><button class="btn" type="button" data-z="-" aria-label="缩小时间轴">－</button><b>100%</b><button class="btn" type="button" data-z="+" aria-label="放大时间轴">＋</button><button class="btn" type="button" data-z="0">适应</button></span>
+    </div>
+    <div class="tl-scroll"><div class="tl-body" id="tlBody"></div></div>
+    <div class="cli">
+      <input id="cliIn" placeholder="输入指令：造农民 → 伐木 ／ 伐木 2 ／ @90 建造 兵营 ／ 训练 步兵" autocomplete="off">
+      <button class="btn on" id="cliGo" type="button">加入时间轴</button>
+      <div class="ex" id="ex"></div>
+    </div>
+    <div class="msg" id="msg" role="status"></div>
+    <div class="ai">
+      <button class="btn" id="aiAsk" type="button">AI 建议</button>
+      <div class="sug" id="aiSug">规则引擎占位：看人口、空闲农民和资源，给出下一条指令。之后换成大模型。</div>
+      <button class="btn" id="aiTake" type="button" hidden>采纳</button>
+    </div>
+  </section>
+  <footer class="foot" id="foot"></footer>
+</div>
+<script src="data/lost-temple.js"></script>
+<script src="sim.js"></script>
+<script src="budget.js"></script>
+<script src="script-editor.js"></script>
+<script src="timeline.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

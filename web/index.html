@@ -7,75 +7,129 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="console/style.css">
 </head>
 <body>
 <div class="app">
+
   <header class="top">
-    <div class="brand"><h1>指挥官控制台</h1><span id="modeTag" class="mode">离线预演</span></div>
-    <label class="pick">出生点
-      <select id="startSel"></select>
-    </label>
-    <span class="plan-name" id="planName" hidden></span>
-    <div class="res">
-      <span><i class="dot" style="background:var(--gold)"></i>金 <b id="rGold">500</b></span>
-      <span><i class="dot" style="background:var(--wood)"></i>木 <b id="rWood">150</b></span>
-      <span><i class="dot" style="background:var(--team-2)"></i>人口 <b id="rFood">5/12</b></span>
-    </div>
-    <div class="ctrl">
-      <button class="btn" id="bPlay" type="button">❚❚ 暂停</button>
-      <span class="speeds" id="speeds"></span>
-      <button class="btn" id="bReset" type="button">重置</button>
+    <h1>魔兽指挥官</h1>
+    <div class="status" id="status" aria-live="polite">
+      <span class="st-dot" aria-hidden="true"></span>
+      <span class="st-name" id="stName">编排</span>
       <span class="clock" id="clock">0:00</span>
+      <span class="st-sub" id="stSub">时间按预算估算</span>
+      <button class="st-back" id="backNow" type="button" hidden>回到现在</button>
     </div>
+    <label class="start" data-in="plan">出生点 <select id="startSel"></select></label>
+    <span class="spacer"></span>
+
+    <span class="group" data-in="plan replay"><button class="btn" id="play" type="button">▶ 播放</button>
+      <span class="seg sm"><button type="button" data-speed="4">4×</button><button type="button" data-speed="16" class="on">16×</button><button type="button" data-speed="32">32×</button></span></span>
+    <button class="switch on-green" id="tactic" type="button" role="switch" aria-checked="true" data-in="live" title="开：指挥官按脚本下命令；关：只看，你自己操作"><i></i>战术执行</button>
+    <button class="btn primary" id="orderBtn" type="button" data-in="plan live">下令</button>
+    <button class="btn primary" id="connect" type="button" data-in="plan">连接游戏</button>
+    <button class="btn" id="backPlan" type="button" data-in="replay">回到编排</button>
+    <button class="btn save" id="saveBtn" type="button" data-in="plan live" title="战术脚本和这个出生点的工地一起保存">保存<i class="dirty" hidden></i></button>
+    <button class="btn" id="disconnect" type="button" data-in="live">断开</button>
+    <span class="more" data-in="plan replay"><button class="btn" id="moreBtn" type="button" aria-haspopup="true" aria-expanded="false">更多 ▾</button>
+      <div class="menu" id="moreMenu" hidden role="menu">
+        <button type="button" data-m="saveas" role="menuitem">另存为一套新布局…</button>
+        <button type="button" data-m="load" role="menuitem">载入别的布局…</button>
+        <button type="button" data-m="replay" role="menuitem">回放以前的一局…</button>
+        <hr>
+        <button type="button" data-m="full" role="menuitem">完整跑一遍（假游戏，核对预算）</button>
+        <button type="button" data-m="text" role="menuitem">用文本编辑脚本</button>
+        <button type="button" data-m="revert" role="menuitem">回到上次保存的脚本</button>
+        <hr>
+        <button type="button" data-m="old" role="menuitem">旧控制台（实战、回放）</button>
+      </div></span>
   </header>
 
-  <section class="view" id="view">
-    <canvas id="cv"></canvas>
-    <div class="tag" id="viewTag">失落神庙 · 二维网格（每格 32 单位）· 实心=建筑，虚框=不能建造（能走）</div>
-    <div class="zoom"><button class="btn" id="zIn" type="button" aria-label="放大">＋</button><button class="btn" id="zOut" type="button" aria-label="缩小">－</button><button class="btn" id="zHome" type="button">回基地</button></div>
-    <div class="place" id="placeTip" hidden></div>
+  <div class="errs" id="errs" hidden role="status"></div>
+  <section class="stage">
+    <div class="mapbox"><canvas id="map" aria-label="沙盘"></canvas>
+      <div class="maptag"><b id="mapT">0:00</b><span id="mapWhat">沙盘 · 红线这一刻</span></div>
+      <div class="mapundo"><button class="btn" id="undoBtn" type="button" aria-label="撤销" disabled>↶ 撤销</button><button class="btn" id="redoBtn" type="button" aria-label="重做" disabled>↷ 重做</button></div>
+      <div class="mapctl"><button class="btn" id="zoomOut" type="button" aria-label="缩小">－</button><button class="btn" id="zoomIn" type="button" aria-label="放大">＋</button><button class="btn" id="panBtn" type="button" title="拖动镜头；也可以按住 Alt 或中键拖、触控板两指滑、点右下角小地图">✋ 拖动</button><button class="btn" id="allRoutes" type="button" title="所有农民和英雄的路线（淡）">全部路线</button><button class="btn" id="mapFit" type="button">看全局</button></div>
+      <div class="mapscrub"><button class="btn" id="scrubPlay" type="button" aria-label="播放 / 暂停">▶</button>
+        <div class="scrub-track"><div class="scrub-marks" id="scrubMarks" aria-hidden="true"></div><input type="range" id="scrub" min="0" max="600" step="1" value="0" aria-label="沙盘时间"></div>
+        <span class="scrub-t" id="scrubT">0:00</span></div></div>
+    <aside class="box card" id="card"></aside>
   </section>
 
-  <section class="hud">
-    <div class="box mini"><h3>小地图</h3><canvas id="mm" width="320" height="320"></canvas></div>
-    <div class="box status" id="status"></div>
-    <div class="box cmdbox"><h3>命令面板</h3><div class="cmd" id="cmd"></div></div>
-  </section>
+  <section class="lower">
+    <div class="lowerhead">
+      <span class="seg big" id="bottomTabs"><button type="button" data-b="tl" class="on">时间轴</button><button type="button" data-b="cards">卡片</button></span>
+      <span class="lh-note" id="lhNote">同一份脚本的两种看法：时间轴看「什么时候」，卡片看「谁按什么顺序做」。</span>
+    </div>
 
-  <section class="tl">
-    <div class="tl-head">
-      <h2>事件时间轴</h2>
-      <div class="legend">
-        <span><i class="lg pending"></i>计划中</span>
-        <span><i class="lg waiting"></i>等待资源</span>
-        <span><i class="lg running"></i>执行中</span>
-        <span><i class="lg active"></i>持续采集</span>
-        <span><i class="lg done"></i>已完成</span>
+    <div id="tlView">
+      <div class="bar2">
+        <span class="seg" id="view"><button type="button" data-v="unit" class="on">按单位</button><button type="button" data-v="bld">按建筑</button></span>
+        <span class="more"><button class="btn" id="showBtn" type="button" aria-expanded="false">显示 ▾</button>
+          <div class="menu wide" id="showMenu" hidden>
+            <button class="switch" id="prio" type="button" role="switch" aria-checked="false"><i></i>按优先级排序</button>
+            <div class="goal"><button class="switch" id="crit" type="button" role="switch" aria-checked="false"><i></i>关键路径</button>
+              <select id="goal" aria-label="目标"></select><span class="gt" id="goalT"></span></div>
+          </div></span>
+        <span class="group" title="缩放时间轴；也可以按住 Ctrl（Mac 用 ⌘）滚动滚轮"><button class="btn" id="zout" type="button" aria-label="缩小">－</button><button class="btn" id="zin" type="button" aria-label="放大">＋</button><button class="btn" id="zfit" type="button">适应</button></span>
+        <span class="spacer"></span>
+        <span class="more"><button class="btn" id="helpBtn" type="button" aria-expanded="false">? 图例和操作</button>
+          <div class="menu wide right" id="helpMenu" hidden>
+            <div class="legend">
+              <span><i class="c-gold"></i>采金</span><span><i class="c-wood"></i>伐木</span><span><i class="c-build"></i>建造</span><span><i class="c-assist"></i>协助</span>
+              <span><i class="c-bell"></i>敲钟/集合</span><span><i class="c-fight"></i>清野/攻击</span><span><i class="c-train"></i>训练</span><span><i class="c-upgrade"></i>升级</span>
+              <span><i class="h"></i>走过去/等资源</span><span><i class="f"></i>还没开始</span></div>
+            <p class="note">拖红线换时刻（← → 一秒，Shift 十秒）· 点轨道名选中单位，Ctrl/Shift 多选 · 双击轨道在那一刻下令 · 拖色块改时间或改派 · ⏸ 让这条线暂停执行 · 沙盘上左键框选、右键下令</p>
+          </div></span>
       </div>
-      <span class="hint push">拖动事件条改开始时间，整局立刻重算；点刻度跳到那个时间</span>
-      <span class="zoomctl" id="tlZoom" title="时间轴缩放：也可以在时间轴上按住 Ctrl（Mac 用 ⌘）滚动滚轮"><button class="btn" type="button" data-z="-" aria-label="缩小时间轴">－</button><b>100%</b><button class="btn" type="button" data-z="+" aria-label="放大时间轴">＋</button><button class="btn" type="button" data-z="0">适应</button></span>
+      <div class="hud" id="hud"></div>
+      <div class="filters" id="filters"></div>
+      <div class="main">
+        <section class="board" aria-label="时间轴">
+          <div class="scroll" id="scroll"><div class="canvas" id="canvas">
+            <div class="ruler" id="ruler"><div class="corner">轨道 ／ 时间</div></div>
+            <div class="res" id="res"><div class="corner"><span>— 金</span><span>— 木</span><span>累计采集</span></div></div>
+            <div class="food" id="foodStrip"><div class="corner">人口<small>虚线：51 / 81 维持费</small></div></div>
+            <div class="rows" id="rows"></div>
+            <svg class="arrows" id="arrows"></svg>
+            <div class="past-shade" id="shade"></div>
+            <div class="proj" id="proj" hidden><span>之后是推算 · 按实测采集速度</span></div>
+            <div class="nowline" id="nowline" data-t="0:00" title="拖动红线换时刻"><span class="grip"></span></div>
+          </div></div>
+        </section>
+        <aside class="side">
+          <div class="box livebox" id="liveBox" hidden></div>
+          <div class="box" id="critBox" hidden></div>
+          <div class="box order" id="orderBox" hidden></div>
+          <div class="box"><h2>此刻 · 正在做</h2><div class="list" id="nowList"></div></div>
+          <div class="box"><h2>接下来 · 30 秒内开始</h2><div class="list" id="nextList"></div></div>
+        </aside>
+      </div>
     </div>
-    <div class="tl-scroll"><div class="tl-body" id="tlBody"></div></div>
-    <div class="cli">
-      <input id="cliIn" placeholder="输入指令：造农民 → 伐木 ／ 伐木 2 ／ @90 建造 兵营 ／ 训练 步兵" autocomplete="off">
-      <button class="btn on" id="cliGo" type="button">加入时间轴</button>
-      <div class="ex" id="ex"></div>
-    </div>
-    <div class="msg" id="msg" role="status"></div>
-    <div class="ai">
-      <button class="btn" id="aiAsk" type="button">AI 建议</button>
-      <div class="sug" id="aiSug">规则引擎占位：看人口、空闲农民和资源，给出下一条指令。之后换成大模型。</div>
-      <button class="btn" id="aiTake" type="button" hidden>采纳</button>
+
+    <div id="cardView" hidden>
+      <div class="cv-bar">
+        <span class="cv-pal" aria-label="可以拖进来的步骤"><em>拖进一行：</em><span class="chip k-gold">采金 主矿</span><span class="chip k-wood">伐木 主矿</span><span class="chip k-build">建造 农场 @自动</span><span class="chip k-assist">协助 #分基地</span><span class="chip k-bell">敲钟</span><span class="chip k-fight">清野 @分矿</span><span class="chip k-train">农民（新编号）</span><span class="chip k-train">步兵 ×1</span></span>
+      </div>
+      <div class="cv-rows" id="cvRows"></div>
+      <p class="note">每行一个农民、建筑或英雄，卡片从左到右是它的步骤，下面的小字是预计开始时间。点卡片把红线移到那一步；拖动排序、拖到别的农民那一行改派（原型里只演示样子）。</p>
     </div>
   </section>
-  <footer class="foot" id="foot"></footer>
 </div>
+<div class="pop" id="pop" hidden></div>
+<div class="dlg" id="textDlg" hidden role="dialog" aria-label="用文本编辑战术脚本"><div class="dlg-box">
+  <h2>战术脚本（文本）</h2>
+  <textarea id="textArea" spellcheck="false" aria-label="战术脚本"></textarea>
+  <div class="dlg-b"><button class="btn on" id="textApply" type="button">应用</button><button class="btn" id="textCancel" type="button">取消</button><span class="err" id="textErr"></span><span class="note">写法见 docs/战术脚本-草稿.md；应用后可以撤销，还要点「保存」才写进文件。</span></div>
+</div></div>
+<div class="toast" id="toast" hidden></div>
 <script src="data/lost-temple.js"></script>
-<script src="sim.js"></script>
+<script src="data/sandbox-map.js"></script>
 <script src="budget.js"></script>
-<script src="script-editor.js"></script>
-<script src="timeline.js"></script>
-<script src="app.js"></script>
+<script src="console/timeline.js"></script>
+<script src="console/sandbox.js"></script>
+<script src="console/shell.js"></script>
 </body>
 </html>
