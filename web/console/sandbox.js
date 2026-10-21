@@ -27,7 +27,34 @@
   function home() { resize(); cam.s = Math.max(0.05, CW / 6600); cam.x = (D.hall[0] * 2 + D.natural[0]) / 3; cam.y = (D.hall[1] * 2 + D.natural[1]) / 3; clampCam(); } // the base and its natural
 
   /* ---------- what stands where at time t ---------- */
+  // 实战 up to now and 回放: what the game itself showed that second (D.real); the estimate only beyond
+  const BNAME = {...Object.fromEntries(Object.entries(BT).map(([n, ty]) => [ty, n])), hkee: '主城', hcas: '城堡', hatw: '奥术塔', hgtw: '防御塔', hctw: '炮塔', hgra: '狮鹫笼', hars: '神秘圣所'};
+  function realAt(t) {
+    const R = D.real; if (!R || !R.frames.length || t > R.upTo + 1.5) return null;
+    const ls = window.CONSOLE && CONSOLE.liveState && CONSOLE.liveState();
+    if (ls && t >= ls.t - 1) return ls; // the red line: the game as it is this quarter second
+    return R.frames[Math.max(0, Math.min(R.frames.length - 1, Math.floor(t)))];
+  }
+  function realBuildings(f, t) {
+    const steps = []; // the script's build steps, to name who builds what and to click through to them
+    TL.lanes.forEach(L => L.steps.forEach((st, k) => { if (!/^建造/.test(st.body)) return; const what = st.body.split(' ')[1], at = st.at || D.places[st.pos]; if (BT[what]) steps.push({L, k, s: st, what, type: BT[what], at}); }));
+    const used = new Set(), out = [];
+    for (const g of f.buildings) {
+      const hall = Math.hypot(g.x - D.hall[0], g.y - D.hall[1]) < 200;
+      const b = {type: g.type, x: g.x, y: g.y, name: hall && g.type === 'htow' ? '城镇大厅' : BNAME[g.type] || g.type, state: g.done ? 'up' : 'building', p: g.done ? 1 : Math.max(0.02, g.progress || 0), real: true};
+      let best = null, bd = 900;
+      for (const m of steps) if (!used.has(m) && m.type === g.type && m.s.work != null && m.s.work <= t + 2) { const d = m.at ? Math.hypot(m.at[0] - g.x, m.at[1] - g.y) : 800; if (d < bd) { bd = d; best = m; } }
+      if (best) { used.add(best); Object.assign(b, {who: best.L.label, L: best.L, k: best.k, s: best.s}); }
+      out.push(b);
+    }
+    for (const m of steps) { // planned and not begun in the game yet: the dashed site
+      if (used.has(m) || !m.at || (m.s.work != null && t >= m.s.work)) continue;
+      out.push({type: m.type, x: m.at[0], y: m.at[1], name: m.what, who: m.L.label, L: m.L, k: m.k, s: m.s, state: m.s.start != null && t >= m.s.start ? 'ordered' : 'plan'});
+    }
+    return out;
+  }
   function buildingsAt(t) {
+    const f = realAt(t); if (f) return realBuildings(f, t);
     const out = [{type: 'htow', x: D.hall[0], y: D.hall[1], name: '城镇大厅', p: 1, state: 'up'}];
     const keep = TL.lanes.find(L => L.label === '城镇大厅'), ks = keep && keep.steps.find(s => /^升级 主城/.test(s.body));
     if (ks && ks.done != null && t >= ks.done) { out[0].type = 'hkee'; out[0].name = '主城'; }
@@ -45,6 +72,8 @@
   const rectOf = (b, which) => { const r = (M.body[b.type] || M.body.hhou)[which]; return [b.x + r[0], b.y + r[1], b.x + r[2], b.y + r[3]]; };
   function creepsUp(t) { const h = TL.lanes.find(L => L.label === '大法师'), s = h && h.steps.find(x => /^清野/.test(x.body)); return !(s && s.start != null && t >= (s.done ?? TL.stepEnd(s) ?? 1e9)); }
   function units(t) {
+    const f = realAt(t);
+    if (f) return f.units.filter(u => !u.hidden).map(u => ({cid: u.id, type: u.type, x: u.x, y: u.y, L: TL.laneOfCid(u.id), real: true})); // summons and militia as the game has them
     const out = Object.keys(D.pos).map(Number).map(cid => {
       const p = TL.basePos(cid, t); if (!p) return null; // the budget follows every edit: no stand-in walks
       const type = TL.unitType(cid), L = TL.laneOfCid(cid);
@@ -79,7 +108,16 @@
     }
     return out;
   }
+  const CREEP_HP = {}; // the most each creep type was seen with: its full health, near enough
   function creepsAt(t) {
+    const f = realAt(t);
+    if (f && f.creeps) { // what the game shows: the creeps in sight; camps never seen stay as sketched
+      const R = D.real, nat = D.natural;
+      if (R.natSeen == null) R.natSeen = R.frames.findIndex(x => (x.creeps || []).some(c => Math.hypot(c.x - nat[0], c.y - nat[1]) < 1500));
+      const seen = f.creeps.map(c => { CREEP_HP[c.type] = Math.max(CREEP_HP[c.type] || 0, c.hp || 0); return {n: c.type, lv: '', x: c.x, y: c.y, hpLeft: Math.max(0.05, (c.hp || 1) / (CREEP_HP[c.type] || c.hp || 1)), camp: '', real: true}; });
+      const sketch = CAMPS.filter(c => !(c.main && R.natSeen >= 0 && R.natSeen <= t) && !seen.some(u => Math.hypot(u.x - c.units[0].at[0], u.y - c.units[0].at[1]) < 900));
+      return seen.concat(...sketch.map(c => c.units.map(u => ({...u, x: u.at[0], y: u.at[1], hpLeft: 1, camp: c.name}))));
+    }
     const cl = clearSpan(), out = [];
     CAMPS.forEach(c => c.units.forEach((u, i) => {
       let hp = 1;
@@ -487,8 +525,10 @@
       const r = Math.max(3.5, 20 * cam.s), x = sx(c.x), y = sy(c.y);
       ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = '#c0453a'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#2a0c08'; ctx.stroke();
       hpBar(x, y - r - 5, r * 2.2, c.hpLeft);
-      if (r >= 7) label(String(c.lv), x, y, '#ffe1dc', Math.round(r));
+      if (r >= 7 && c.lv) label(String(c.lv), x, y, '#ffe1dc', Math.round(r));
     }
+    const rf = realAt(t);
+    if (rf && rf.enemies) for (const e of rf.enemies) { const r = Math.max(3, 16 * cam.s), x = sx(e.x), y = sy(e.y); ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fillStyle = '#b05ad6'; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#1d0c26'; ctx.stroke(); }
     for (const c of CAMPS) { const alive = creepsAt(t).filter(u => u.camp === c.name && Math.hypot(u.x - c.units[0].at[0], u.y - c.units[0].at[1]) < 400); if (alive.length && cam.s > 0.09) label(c.main ? `${c.name} · ${alive.length} 只` : c.name, sx(c.units[0].at[0]), sy(c.units[0].at[1]) + Math.max(14, 50 * cam.s), '#ffb3a8', 10); }
     const blds = buildingsAt(t), late = [];
     for (const b of blds) {

@@ -305,7 +305,7 @@
     if (h.frames.length && s.t < h.frames[h.frames.length - 1].t + 1) return;
     h.frames.push({t: s.t, gold: s.gold, wood: s.wood, foodUsed: s.foodUsed, foodCap: s.foodCap, got: s.got || [0, 0],
       units: s.units.map(u => ({id: u.id, type: u.type, x: u.x, y: u.y, hidden: u.hidden, role: u.role === 'gold' || u.role === 'wood' ? u.role : u.type === 'hpea' && u.task === '空闲' ? 'idle' : 'build'})),
-      buildings: s.buildings.map(b => ({id: b.id, type: b.type, x: b.x, y: b.y, done: b.done, progress: b.progress}))});
+      buildings: s.buildings.map(b => ({id: b.id, type: b.type, x: b.x, y: b.y, done: b.done, progress: b.progress})), creeps: s.creeps || [], enemies: s.enemies || []});
     if (!s.got) return;
     const nat = Budget.NATURALS[S.start], near = u => Math.hypot(u.x - nat[0], u.y - nat[1]) < 1500, home = DATA.starts[S.start];
     const ps = s.units.filter(u => u.type === 'hpea');
@@ -325,6 +325,7 @@
     const F = perSecond(h.frames.filter(f => f.t < j.now).concat(j.frames));
     const nowSec = Math.ceil(s.t); if (F[nowSec] && j.frames[0]) F[nowSec] = {...j.frames[0], t: nowSec}; // the red line: the game as it is
     const D = toData(j.timeline, F);
+    D.real = {frames: perSecond(h.frames), upTo: s.t}; // the sandbox draws what the game shows up to now, not the estimate
     D.baseline = new Map(); for (const L of ideal.timeline.lanes) L.steps.forEach((x, k) => { if (x.start != null) D.baseline.set(L.label + '|' + k + '|' + x.raw, {start: x.start, done: x.done}); });
     S.busy = true; try { show(D); } finally { S.busy = false; }
     liveBox();
@@ -394,6 +395,7 @@
     })}));
     const T = {lanes, places: st.script.positions || {}, hall: [hall.x, hall.y], mine: mineOf([hall.x, hall.y]), natural: Budget.NATURALS[S.start], units: {}};
     RP = {id, meta: j.meta || {}, data: toData(T, perSecond(j.frames))};
+    RP.data.real = {frames: perSecond(j.frames), upTo: RP.data.end};
     setState('replay'); TL.stop(); TL.t = 0;
     S.busy = true; try { show(RP.data); } finally { S.busy = false; }
     TL.toast(`回放：${RP.meta.name || id}。拖时间条或点「播放」看过程；回放不能改，点「回到编排」改脚本。`);
@@ -462,7 +464,7 @@
   $('cvRows').onclick = e => { const c = e.target.closest('.cv-card'); if (!c) return; if (c.dataset.t === '') { TL.toast('这一步不会开始：它的条件一直没满足。'); return; } if (S.state === 'live') userMoved(); TL.t = +c.dataset.t; renderCards(true); };
 
   /* ---------- start ---------- */
-  window.CONSOLE = {lanesToText, get text() { return S.text; }, get errors() { return S.errors; }, get state() { return S.state; }}; // for checks from the browser
+  window.CONSOLE = {lanesToText, liveState: () => S.state === 'live' ? LV.state : null, get text() { return S.text; }, get errors() { return S.errors; }, get state() { return S.state; }}; // for checks from the browser
   (async function init() {
     setState('plan');
     if (location.protocol === 'file:') { $('errs').hidden = false; $('errs').innerHTML = '<b>这个页面要从本地服务打开</b>：运行 <code>python -m commander_bridge</code> 后打开 http://127.0.0.1:8790/'; return; }
