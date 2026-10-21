@@ -12,12 +12,13 @@
 #   tools/pc.sh log [n]   last n lines (default 40) of bridge\run.log on the PC
 #
 # Needs: an SSH host alias (PC_HOST, default "pc") whose shell is PowerShell; the repository on the
-# PC at PC_REPO (relative to the PC user's home, default Documents\ChatGPT\wc3-commander); and, for
-# "start", the scheduled task from "tools\windows\bridge.ps1 install" run once on the PC.
+# PC at PC_REPO (relative to the PC user's home, default Documents\ChatGPT\wc3-commander-main: a git
+# worktree on main, so the PC's main checkout can stay on another branch); and, for "start", the
+# scheduled task from "tools\windows\bridge.ps1 install" run once on the PC from that same folder.
 set -euo pipefail
 
 HOST_ALIAS=${PC_HOST:-pc}
-REPO=${PC_REPO:-'Documents\ChatGPT\wc3-commander'}
+REPO=${PC_REPO:-'Documents\ChatGPT\wc3-commander-main'}
 PORT=8790
 TASK=wc3-commander-bridge
 
