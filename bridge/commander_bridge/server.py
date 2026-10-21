@@ -115,8 +115,8 @@ def make_session(backend: str, data: dict, start: int, opponent: str, window: st
 
 
 def frame_of(s: dict) -> dict:
-    """One second of a game for the console's replay: resources, units and buildings."""
-    return {"t": s["t"], "gold": s["gold"], "wood": s["wood"], "foodUsed": s["foodUsed"], "foodCap": s["foodCap"],
+    """One second of a game for the console's replay: resources (and what was gathered so far), units and buildings."""
+    return {"t": s["t"], "gold": s["gold"], "wood": s["wood"], "foodUsed": s["foodUsed"], "foodCap": s["foodCap"], **({"got": s["got"]} if "got" in s else {}),
             "units": [{k: (round(v) if k in ("x", "y") else v) for k, v in u.items() if k in ("id", "type", "x", "y", "hidden", "task", "role")} for u in s["units"]],
             "buildings": [{k: (round(v, 2) if k == "progress" else round(v) if k in ("x", "y") else v) for k, v in b.items() if k in ("id", "type", "x", "y", "done", "progress")} for b in s["buildings"]]}
 

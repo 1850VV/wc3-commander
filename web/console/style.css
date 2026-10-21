@@ -427,3 +427,9 @@ kbd{font-family:var(--f-mono);font-size:10.5px;border:1px solid var(--line);bord
 .dlg-box textarea{flex:1;min-height:50vh;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:10px;font-family:var(--f-mono);font-size:12.5px;line-height:1.55;resize:vertical}
 .dlg-b{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .dlg-b .err{color:#ffb3a8;font-size:12.5px}
+.runs{display:flex;flex-direction:column;gap:4px;max-height:60vh;overflow:auto}
+.runs .run{text-align:left;background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;color:var(--fg)}
+.runs .run:hover,.runs .run:focus-visible{border-color:var(--accent)}
+.runs .run b{font-family:var(--f-mono);font-weight:500;margin-right:6px}
+/* 回放: a finished game is only watched */
+body[data-state="replay"] #card .cmdcard,body[data-state="replay"] #card .sqrow,body[data-state="replay"] #card .sq-add,body[data-state="replay"] .lsteps .lx,body[data-state="replay"] .mapundo{display:none}

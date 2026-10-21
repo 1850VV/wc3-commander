@@ -39,7 +39,7 @@
     const lines = [...new Set(D.lanes.map(l => l.line))].sort((a, b) => a - b);
     lanes.length = 0;
     D.lanes.forEach(L => lanes.push({...L, id: 'L:' + L.label, prio: lines.indexOf(L.line) + 1, steps: L.steps.map((s, k) => {
-      const x = {...s, ...split(s.raw)}, b = before.get(L.label + '|' + k + '|' + s.raw);
+      const key = L.label + '|' + k + '|' + s.raw, b = (D.baseline && D.baseline.get(key)) || before.get(key), x = {...s, ...split(s.raw)}; // connected: the plan from 0:00
       x.orig = b && b.start != null ? b : {start: s.start, done: s.done}; // the last plan: for the before/after shadow
       return x;
     })}));
