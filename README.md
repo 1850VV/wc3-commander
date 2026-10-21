@@ -159,7 +159,7 @@ WC3ENV_SRC=../wc3env-127a/src python3 -m unittest discover -s bridge/tests -t br
 
 ## 许可证与来源
 
-本项目原创代码采用 **[MIT 许可证](LICENSE)**，Copyright © 2026 1850VV。允许修改、分发和商用，并须保留版权与许可声明。
+本项目原创代码采用 **[MIT 许可证](LICENSE)**，Copyright © 2026 Mars。允许修改、分发和商用，并须保留版权与许可声明。
 
 MIT 授权仅覆盖有权授权的原创部分。魔兽争霸的地图派生数据、游戏数值、截图中的第三方元素、字体及外部依赖仍遵循各自权利和条款，详见 [第三方说明](THIRD_PARTY_NOTICES.md)。这份许可证不授予游戏资产或商标的使用权。
 
