@@ -175,7 +175,7 @@
   /* ---------- states and the top bar ---------- */
   const STATE = {
     plan: {name: '编排', sub: () => `${START_NAMES[S.start]} · 时间按预算估算 · 改了马上重算`},
-    live: {name: '实战', sub: () => LV.waiting ? `等你打开魔兽争霸三${LV.waitLeft != null ? ` · 还剩 ${LV.waitLeft} 秒` : ''}` : `${START_NAMES[S.start]} · ${LV.backend === 'fake' ? '假游戏' : '魔兽争霸三'} · ${$('tactic').getAttribute('aria-checked') === 'true' ? '指挥官在执行脚本' : '战术已关，只看不下令'}`},
+    live: {name: '实战', sub: () => LV.waiting ? (LV.waitLeft != null ? `等你打开魔兽争霸三 · 还剩 ${LV.waitLeft} 秒` : LV.found ? '已接入魔兽，等你开始一局' : '等你打开魔兽争霸三') : `${START_NAMES[S.start]} · ${LV.backend === 'fake' ? '假游戏' : '魔兽争霸三'} · ${$('tactic').getAttribute('aria-checked') === 'true' ? '指挥官在执行脚本' : '战术已关，只看不下令'}`},
     replay: {name: '回放', sub: () => RP ? `${(RP.meta.name || RP.id)}` : ''},
   };
   function setState(s) {
@@ -258,7 +258,7 @@
   function join(h, opts) { // follow the game: opts given = start one first
     LV.backend = h.backend;
     LV.hist = null; LV.state = null; LV.adopted = false; LV.hold = 0; LV.lastProj = 0; LV.rates = null; LV.waitLeft = null;
-    LV.waiting = !!(opts && opts.mode === 'attach') || (!opts && h.waiting); // the stream repeats the last game's state until then
+    LV.waiting = !!(opts && opts.mode === 'attach') || (!opts && h.waiting && !h.running); // the stream repeats the last game's state until then
     LV.es = new EventSource('/api/stream');
     LV.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') onState(msg.state); else if (msg.type === 'log') TL.toast(msg.text); };
     LV.es.onerror = () => TL.toast('与本地服务的连接中断，正在重试…');
@@ -274,9 +274,9 @@
   async function watchWait() { // taking over: count down until Warcraft shows up, or give up
     while (S.state === 'live' && LV.es) {
       let h; try { h = await api('GET', '/api/health'); } catch (_) { h = null; }
-      if (h && h.running && !h.waiting) { LV.waiting = false; LV.waitLeft = null; syncTop(); return; } // found it: the game's frames take over
+      if (h && h.running) { LV.waiting = false; /* taking over keeps 'waiting' on for the whole session */ LV.waitLeft = null; syncTop(); return; } // found it: the game's frames take over
       if (h && !h.waiting && !h.running) { LV.waiting = false; LV.waitLeft = null; disconnect(false); TL.toast('没等到魔兽争霸三：打开游戏后再点「连接游戏」。'); return; }
-      LV.waitLeft = h ? h.waitLeft : null; syncTop();
+      LV.waitLeft = h ? h.waitLeft : null; LV.found = !!(h && h.waiting && h.waitLeft == null); syncTop();
       await new Promise(r => setTimeout(r, 1000));
     }
   }
