@@ -433,3 +433,11 @@ kbd{font-family:var(--f-mono);font-size:10.5px;border:1px solid var(--line);bord
 .runs .run b{font-family:var(--f-mono);font-weight:500;margin-right:6px}
 /* 回放: a finished game is only watched */
 body[data-state="replay"] #card .cmdcard,body[data-state="replay"] #card .sqrow,body[data-state="replay"] #card .sq-add,body[data-state="replay"] .lsteps .lx,body[data-state="replay"] .mapundo{display:none}
+.dlg-box.narrow{width:min(620px,100%)}
+.cf{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.cf-row{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.cf-row label{display:inline-flex;align-items:center;gap:6px}
+.cf-l{min-width:72px;color:var(--muted)}
+.cf select,.cf input[type=number]{background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:3px 7px;color:var(--fg);font-size:13px;width:auto}
+.cf input[type=number]{width:72px}
+.cf .note{margin:0;font-size:12px}

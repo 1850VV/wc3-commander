@@ -175,7 +175,7 @@
   /* ---------- states and the top bar ---------- */
   const STATE = {
     plan: {name: '编排', sub: () => `${START_NAMES[S.start]} · 时间按预算估算 · 改了马上重算`},
-    live: {name: '实战', sub: () => `${START_NAMES[S.start]} · ${LV.backend === 'fake' ? '假游戏' : '魔兽争霸三'} · ${$('tactic').getAttribute('aria-checked') === 'true' ? '指挥官在执行脚本' : '战术已关，只看不下令'}`},
+    live: {name: '实战', sub: () => LV.waiting ? `等你打开魔兽争霸三${LV.waitLeft != null ? ` · 还剩 ${LV.waitLeft} 秒` : ''}` : `${START_NAMES[S.start]} · ${LV.backend === 'fake' ? '假游戏' : '魔兽争霸三'} · ${$('tactic').getAttribute('aria-checked') === 'true' ? '指挥官在执行脚本' : '战术已关，只看不下令'}`},
     replay: {name: '回放', sub: () => RP ? `${(RP.meta.name || RP.id)}` : ''},
   };
   function setState(s) {
@@ -211,21 +211,74 @@
     api('POST', '/api/control', {action: 'tactic', on}).catch(() => TL.toast('开关没送到本地服务'));
     TL.toast(on ? '战术执行：开。指挥官按脚本下命令。' : '战术执行：关。指挥官只看不下令，你自己操作；时间轴照样跟着游戏走。');
   };
+  /* 连接设置: how the game starts (wc3env launches Warcraft, or the commander takes over one the
+     player opens), its speed, whether Warcraft draws its window; remembered in this browser */
+  const CF_KEY = 'wc3c.connect';
+  function cfLoad() { try { return JSON.parse(localStorage.getItem(CF_KEY) || '{}') || {}; } catch (_) { return {}; } }
+  function cfSave(o) { try { localStorage.setItem(CF_KEY, JSON.stringify(o)); } catch (_) { /* private window */ } }
+  let CF = null; // {h, mode, speed}: the dialog open
+  function cfSync() {
+    const fake = CF.h.backend === 'fake', attach = !fake && $('cfAttach').checked;
+    $('cfModeRow').hidden = fake;
+    document.querySelectorAll('[data-cf]').forEach(el => {
+      const k = el.dataset.cf; el.hidden = k === 'attach' ? !attach : k === 'launch' ? attach : attach || fake;
+    });
+    $('cfStart').disabled = attach; $('cfStartNote').textContent = attach ? '接管时由你开的那局决定' : '';
+    $('cfSaveNote').hidden = !(attach && S.text !== S.saved);
+    $('cfGo').textContent = attach ? '开始等待' : fake ? '开一局假游戏' : '启动魔兽';
+  }
   async function connect() {
     let h; try { h = await api('GET', '/api/health'); } catch (_) { TL.toast('连不上本地服务'); return; }
-    LV.backend = h.backend;
-    if (!h.running && !h.waiting && h.launch) { // the test switch or the fake game: this console starts it with its script
+    if (h.running || h.waiting) { join(h, null); return; } // a game, or a wait, already going: just follow it
+    const o = cfLoad();
+    CF = {h, speed: o.speed || (h.backend === 'fake' ? 16 : (h.speed > 1 ? h.speed : 1))};
+    $('cfStart').innerHTML = START_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join(''); $('cfStart').value = S.start;
+    $((o.mode || (h.launch ? 'launch' : 'attach')) === 'attach' ? 'cfAttach' : 'cfLaunch').checked = true;
+    $('cfRender').checked = o.render != null ? o.render : h.render !== false;
+    $('cfWait').value = o.attachWait || 60;
+    document.querySelectorAll('#cfSpeed [data-v]').forEach(b => b.classList.toggle('on', +b.dataset.v === CF.speed));
+    cfSync(); $('connDlg').hidden = false; $('cfGo').focus();
+  }
+  $('cfLaunch').onchange = $('cfAttach').onchange = () => cfSync();
+  $('cfSpeed').onclick = e => { const b = e.target.closest('[data-v]'); if (!b) return; CF.speed = +b.dataset.v; document.querySelectorAll('#cfSpeed [data-v]').forEach(x => x.classList.toggle('on', x === b)); };
+  $('cfCancel').onclick = () => { $('connDlg').hidden = true; CF = null; };
+  $('cfGo').onclick = async () => {
+    const h = CF.h, fake = h.backend === 'fake', mode = !fake && $('cfAttach').checked ? 'attach' : 'launch';
+    const opts = {mode, speed: CF.speed, render: $('cfRender').checked, slot: +$('cfStart').value,
+      attachWait: Math.max(10, Math.min(600, +$('cfWait').value || 60))};
+    cfSave({mode, speed: opts.speed, render: opts.render, attachWait: opts.attachWait});
+    $('connDlg').hidden = true; CF = null;
+    if (opts.slot !== S.start && mode === 'launch') { S.start = opts.slot; $('startSel').value = S.start; await layoutOf(S.start); }
+    if (mode === 'launch') { // this console starts the game with its script and this start's layout
       let plan = {}; try { const j = await api('GET', '/api/strategies/' + encodeURIComponent('人族速矿二本 · ' + START_NAMES[S.start])); if (j.ok) plan = j.plan; } catch (_) { /* no layout */ }
-      await api('POST', '/api/plan', {...plan, start: S.start, script: S.text, name: '人族速矿二本 · ' + START_NAMES[S.start]});
+      try { await api('POST', '/api/plan', {...plan, start: S.start, script: S.text, name: '人族速矿二本 · ' + START_NAMES[S.start]}); } catch (_) { TL.toast('连不上本地服务'); return; }
     }
-    LV.hist = null; LV.state = null; LV.adopted = false; LV.hold = 0; LV.lastProj = 0;
+    join(h, opts);
+  };
+  function join(h, opts) { // follow the game: opts given = start one first
+    LV.backend = h.backend;
+    LV.hist = null; LV.state = null; LV.adopted = false; LV.hold = 0; LV.lastProj = 0; LV.rates = null; LV.waitLeft = null;
+    LV.waiting = !!(opts && opts.mode === 'attach') || (!opts && h.waiting); // the stream repeats the last game's state until then
     LV.es = new EventSource('/api/stream');
     LV.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') onState(msg.state); else if (msg.type === 'log') TL.toast(msg.text); };
     LV.es.onerror = () => TL.toast('与本地服务的连接中断，正在重试…');
     $('tactic').setAttribute('aria-checked', h.running ? String(h.tactic !== false) : 'true');
     setState('live'); TL.stop();
-    if (!h.running && !h.waiting) api('POST', '/api/control', {action: 'start', start: S.start});
-    TL.toast(h.running ? '已加入正在进行的游戏：红线是现在，之前是真实发生的，之后按实测速度推算。' : h.waiting ? '正在等你开游戏…' : '正在开一局' + (h.backend === 'fake' ? '假游戏' : '游戏') + '…');
+    if (opts) api('POST', '/api/control', {action: 'start', start: S.start, opts}).then(() => { if (opts.mode === 'attach') watchWait(); });
+    else if (h.waiting) watchWait();
+    const sp = opts && opts.speed > 1 ? `（${opts.speed} 倍速${opts.render === false && h.backend !== 'fake' ? '，不画游戏窗口' : ''}）` : '';
+    TL.toast(h.running ? '已加入正在进行的游戏：红线是现在，之前是真实发生的，之后按实测速度推算。'
+      : opts && opts.mode === 'attach' ? `正在等你在 PC 上打开魔兽（最多 ${opts.attachWait} 秒）：开一局失落神庙，指挥官会自动接管。`
+      : h.waiting ? '正在等你开游戏…' : '正在开一局' + (h.backend === 'fake' ? '假游戏' : '魔兽') + sp + '…');
+  }
+  async function watchWait() { // taking over: count down until Warcraft shows up, or give up
+    while (S.state === 'live' && LV.es) {
+      let h; try { h = await api('GET', '/api/health'); } catch (_) { h = null; }
+      if (h && h.running && !h.waiting) { LV.waiting = false; LV.waitLeft = null; syncTop(); return; } // found it: the game's frames take over
+      if (h && !h.waiting && !h.running) { LV.waiting = false; LV.waitLeft = null; disconnect(false); TL.toast('没等到魔兽争霸三：打开游戏后再点「连接游戏」。'); return; }
+      LV.waitLeft = h ? h.waitLeft : null; syncTop();
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
   function disconnect(stop) {
     if (LV.es) LV.es.close(); LV.es = null; LV.state = null;
@@ -233,6 +286,7 @@
     setState('plan'); recompute(); TL.toast('已断开，回到编排。');
   }
   function onState(s) {
+    if (LV.waiting) return;
     if (LV.state && s.t < LV.state.t - 1) { LV.hist = null; LV.adopted = false; } // a new game
     LV.state = s;
     if (s.start != null && s.start !== S.start) { S.start = s.start; layoutOf(S.start).then(() => { LV.lastProj = 0; }); TL.toast('游戏分配的出生点是' + START_NAMES[s.start]); }
@@ -351,7 +405,7 @@
   function closeMenus(except) { for (const [b, m] of MENUS) if (m !== except) { $(m).hidden = true; $(b).setAttribute('aria-expanded', 'false'); } }
   for (const [b, m] of MENUS) $(b).onclick = e => { e.stopPropagation(); const open = $(m).hidden; closeMenus(m); $(m).hidden = !open; $(b).setAttribute('aria-expanded', open); };
   document.addEventListener('click', e => { if (!e.target.closest('.menu')) closeMenus(); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenus(); $('textDlg').hidden = true; $('runDlg').hidden = true; } });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenus(); $('textDlg').hidden = true; $('runDlg').hidden = true; $('connDlg').hidden = true; } });
   $('moreMenu').onclick = e => {
     const b = e.target.closest('[data-m]'); if (!b) return; closeMenus();
     const m = b.dataset.m;

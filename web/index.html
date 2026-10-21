@@ -25,7 +25,7 @@
     <span class="spacer"></span>
 
     <span class="group" data-in="plan replay"><button class="btn" id="play" type="button">▶ 播放</button>
-      <span class="seg sm"><button type="button" data-speed="4">4×</button><button type="button" data-speed="16" class="on">16×</button><button type="button" data-speed="32">32×</button></span></span>
+      <span class="seg sm" title="播放速度（1× = 正常速度）"><button type="button" data-speed="1">1×</button><button type="button" data-speed="2">2×</button><button type="button" data-speed="4">4×</button><button type="button" data-speed="16" class="on">16×</button><button type="button" data-speed="32">32×</button></span></span>
     <button class="switch on-green" id="tactic" type="button" role="switch" aria-checked="true" data-in="live" title="开：指挥官按脚本下命令；关：只看，你自己操作"><i></i>战术执行</button>
     <button class="btn primary" id="orderBtn" type="button" data-in="plan live">下令</button>
     <button class="btn primary" id="connect" type="button" data-in="plan">连接游戏</button>
@@ -119,6 +119,20 @@
   </section>
 </div>
 <div class="pop" id="pop" hidden></div>
+<div class="dlg" id="connDlg" hidden role="dialog" aria-label="连接设置"><div class="dlg-box narrow">
+  <h2>连接设置</h2>
+  <div class="cf">
+    <div class="cf-row" id="cfModeRow"><span class="cf-l">怎么开始</span>
+      <label><input type="radio" name="cfMode" id="cfLaunch" value="launch"> 由指挥官启动魔兽（wc3env 开一局）</label>
+      <label><input type="radio" name="cfMode" id="cfAttach" value="attach"> 接管已经打开的魔兽（你在 PC 上自己开）</label></div>
+    <div class="cf-row"><span class="cf-l">出生点</span><select id="cfStart" aria-label="出生点"></select><span class="note" id="cfStartNote"></span></div>
+    <div class="cf-row" data-cf="launch"><span class="cf-l">游戏速度</span><span class="seg sm" id="cfSpeed"><button type="button" data-v="1">1×（正常）</button><button type="button" data-v="2">2×</button><button type="button" data-v="4">4×</button><button type="button" data-v="16">16×</button></span></div>
+    <div class="cf-row" data-cf="launch-wc3"><span class="cf-l">游戏画面</span><label><input type="checkbox" id="cfRender"> 画出魔兽的游戏窗口</label><span class="note">不画更快；不画时就看这里的沙盘</span></div>
+    <div class="cf-row" data-cf="attach"><span class="cf-l">等待时间</span><label>最多等 <input type="number" id="cfWait" min="10" max="600" step="10" value="60" aria-label="等待秒数"> 秒</label><span class="note">点「连接」后去 PC 上打开魔兽、开一局失落神庙；这段时间内找到就自动接管</span></div>
+    <p class="note" id="cfSaveNote" hidden>接管时游戏用的是<b>保存过的</b>战术脚本；现在有没保存的改动，先点「保存」。</p>
+  </div>
+  <div class="dlg-b"><button class="btn on" id="cfGo" type="button">连接</button><button class="btn" id="cfCancel" type="button">取消</button></div>
+</div></div>
 <div class="dlg" id="runDlg" hidden role="dialog" aria-label="回放以前的一局"><div class="dlg-box">
   <h2>回放以前的一局</h2>
   <div class="runs" id="runList"></div>

@@ -275,6 +275,8 @@ class Runner:
         # way, for unattended checks). Off, it waits for a game the player starts (attach.py). The fake
         # backend always launches.
         self.launch = launch
+        self.wait_until: float | None = None
+        self.attach_wait = 0.0  # taking over: give up after this many seconds without a Warcraft (0: wait as long as it takes)
         self.waiting = False
         self.attached: int | None = None  # War3 pid whose current game the commander is playing
         self.data = load_data()
@@ -445,9 +447,32 @@ class Runner:
             self.state = self.commander.snapshot()
         self.log("战术已开启：按时间轴执行" if on else "战术已关闭：只观察，不下命令")
 
-    def start(self, start: int) -> None:
+    def configure(self, opts: dict) -> None:
+        """How the next game starts, as chosen in the console: mode "launch" (wc3env starts Warcraft) or
+        "attach" (take over one the player opens, waiting attachWait seconds), speed (1 = normal), render
+        (Warcraft draws its window or not), slot (the start). The fake backend always launches."""
+        if not opts:
+            return
+        if opts.get("mode") in ("launch", "attach"):
+            self.launch = opts["mode"] == "launch"
+        if isinstance(opts.get("speed"), (int, float)) and opts["speed"] > 0:
+            v = float(opts["speed"])
+            if self.backend == "fake":
+                self.speed = v  # game seconds per real second
+            else:
+                self.speed_factor = v if v > 1 else 0.0
+        if isinstance(opts.get("render"), bool):
+            self.render = opts["render"]
+        if isinstance(opts.get("slot"), int) and 0 <= opts["slot"] < 4:
+            self.human_slot = opts["slot"]
+        if isinstance(opts.get("attachWait"), (int, float)) and opts["attachWait"] >= 0:
+            self.attach_wait = float(opts["attachWait"])
+        self.stepping = self.backend == "wc3env" and self.speed_factor > 1 and self.window != "interactive"
+
+    def start(self, start: int, opts: dict | None = None) -> None:
         self.stop()
         self.stop_flag.clear()
+        self.configure(opts or {})
         attached = self.backend == "wc3env" and not self.launch
         if not (attached and self.attached):  # reconnecting to the game we were playing keeps its progress
             with self.lock:
@@ -534,17 +559,26 @@ class Runner:
 
     # ---- a game the player started (attach.py) ---------------------------------------------------
     def _attach(self) -> None:
-        """Wait, as long as it takes, for any Warcraft, then for a game in it; survive pauses and drops."""
+        """Wait for any Warcraft (attach_wait seconds at most when set), then for a game in it; survive
+        pauses and drops."""
         self.waiting = True
-        self.log("正在等待魔兽争霸三：打开游戏后会自动接入，开局后自动接管；中途切屏、暂停都没关系")
+        limit = self.attach_wait
+        self.wait_until = time.monotonic() + limit if limit else None
+        self.log("正在等待魔兽争霸三：打开游戏后会自动接入，开局后自动接管；中途切屏、暂停都没关系"
+                 + (f"（{limit:.0f} 秒内没有找到魔兽就停止等待）" if limit else ""))
         seen: dict[int, float] = {}  # War3 pid -> when first seen without a hook
         told: set[int] = set()  # pids whose problem was already explained once
+        found = False
         try:
             while not self.stop_flag.is_set():
                 game = self._find_game(seen, told)
                 if game is None:
+                    if not found and self.wait_until and time.monotonic() > self.wait_until:
+                        self.log(f"{limit:.0f} 秒内没有找到魔兽争霸三，停止等待。打开游戏后再点「连接游戏」", "error")
+                        return
                     self.stop_flag.wait(2)
                     continue
+                found, self.wait_until = True, None
                 try:
                     self._play_attached(game)
                 except TimeoutError:
@@ -561,6 +595,7 @@ class Runner:
                 self.stop_flag.wait(1)
         finally:
             self.waiting = False
+            self.wait_until = None
 
     def _find_game(self, seen: dict[int, float], told: set[int]):
         hooked = attach.hooked_pids()
@@ -717,7 +752,9 @@ class Handler(SimpleHTTPRequestHandler):
             r = self.runner
             return self._json(200, {"ok": True, "backend": r.backend, "running": r.running, "tactic": r.tactic,
                                     "launch": r.launch or r.backend == "fake", "waiting": r.waiting,
-                                    "speed": r.speed_factor, "render": r.render})
+                                    "waitLeft": max(0, round(r.wait_until - time.monotonic())) if r.wait_until else None,
+                                    "speed": r.speed if r.backend == "fake" else (r.speed_factor or 1.0), "render": r.render, "slot": r.human_slot,
+                                    "attachWait": r.attach_wait})
         if self.path == "/api/stream":
             return self._stream()
         if self.path == "/api/plan":
@@ -815,7 +852,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/control":
             action = body.get("action")
             if action == "start":
-                self.runner.start(int(body.get("start") or 0))
+                self.runner.start(int(body.get("start") or 0), body.get("opts") if isinstance(body.get("opts"), dict) else None)
             elif action == "stop":
                 threading.Thread(target=self.runner.stop, daemon=True).start()
             elif action == "tactic":
