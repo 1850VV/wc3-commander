@@ -58,6 +58,12 @@
     const units = {...(T.units || {})}; for (const f of F) for (const u of f.units) if (!(u.id in units)) units[u.id] = u.type === 'hmil' ? 'hpea' : u.type;
     return {lanes: T.lanes, eco, pos, units, places: {...places, 分矿: natural, 主矿: T.mine}, hall: T.hall, mine: T.mine, natural, mineGold: T.mineGold || 12500, end: F.length ? F[F.length - 1].t : 600};
   }
+  /* one frame a second, by index (the timeline reads rows by second; a fast game records one every few) */
+  function perSecond(src) {
+    const F = []; if (!src.length) return F;
+    for (let sec = 0, i = 0; sec <= Math.floor(src[src.length - 1].t); sec++) { while (i + 1 < src.length && src[i + 1].t <= sec) i++; F.push({...src[i], t: sec}); }
+    return F;
+  }
   function show(D) {
     TL.load(D);
     TL.muted.clear(); TL.lanes.forEach(L => { if (L.muted) TL.muted.add(L.id); });
@@ -262,8 +268,7 @@
     LV.lastProj = performance.now();
     let j, ideal;
     try { j = budget(S.text, S.start, {live: s, rates: LV.rates, end: Math.max(600, Math.ceil(s.t) + 300)}); ideal = budget(S.text, S.start); } catch (e) { return; }
-    const src = h.frames.filter(f => f.t < j.now).concat(j.frames), F = []; // one frame a second, by index
-    for (let sec = 0, i = 0; sec <= Math.floor(src[src.length - 1].t); sec++) { while (i + 1 < src.length && src[i + 1].t <= sec) i++; F.push({...src[i], t: sec}); }
+    const F = perSecond(h.frames.filter(f => f.t < j.now).concat(j.frames));
     const nowSec = Math.ceil(s.t); if (F[nowSec] && j.frames[0]) F[nowSec] = {...j.frames[0], t: nowSec}; // the red line: the game as it is
     const D = toData(j.timeline, F);
     D.baseline = new Map(); for (const L of ideal.timeline.lanes) L.steps.forEach((x, k) => { if (x.start != null) D.baseline.set(L.label + '|' + k + '|' + x.raw, {start: x.start, done: x.done}); });
@@ -334,7 +339,7 @@
       return {raw, start: a.start ?? null, work: a.work ?? null, done: a.done ?? null, end: next ?? a.done ?? null, at: a.at || null};
     })}));
     const T = {lanes, places: st.script.positions || {}, hall: [hall.x, hall.y], mine: mineOf([hall.x, hall.y]), natural: Budget.NATURALS[S.start], units: {}};
-    RP = {id, meta: j.meta || {}, data: toData(T, j.frames)};
+    RP = {id, meta: j.meta || {}, data: toData(T, perSecond(j.frames))};
     setState('replay'); TL.stop(); TL.t = 0;
     S.busy = true; try { show(RP.data); } finally { S.busy = false; }
     TL.toast(`回放：${RP.meta.name || id}。拖时间条或点「播放」看过程；回放不能改，点「回到编排」改脚本。`);
