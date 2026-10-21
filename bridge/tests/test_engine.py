@@ -281,7 +281,7 @@ class ClearUnitTest(unittest.TestCase):
         self.assertNotIn(3, [o[0] for o in cmd.orders])
         army[2].update(hp=20, order=None)  # out of the pause and badly hurt: stays and fights (the player's rule)
         cmd.orders.clear()
-        cl.tick(cmd, self.obs(army, creeps), 9.0)
+        cl.tick(cmd, self.obs(army, creeps), 11.5)  # MANUAL_PAUSE after he last steered it (at 3.0)
         self.assertNotIn((3, "move", {"x": 2000, "y": 0}), cmd.orders)
         self.assertIn((3, "attack", {"target_id": 91}), cmd.orders)
 

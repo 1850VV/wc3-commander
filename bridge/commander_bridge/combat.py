@@ -6,8 +6,8 @@ One Clear runs per "clear" event. Every tick it reads the observation and gives 
           (militia never walk home: they stay to build the expansion), retreat everyone if the hero drops below
           HERO_RETREAT (the event fails)
   done    no living creep seen near the camp for CLEAR_QUIET seconds
-A unit the player is steering by hand (its order is not the last one we gave it) is left alone
-for MANUAL_PAUSE seconds. Accepted orders prove nothing; the fight is judged from what is seen.
+A unit the player is steering by hand (its order is not one we gave it: a right-click, stop, hold,
+another target, a move elsewhere, a spell) is left alone until MANUAL_PAUSE seconds after he last steered it. Accepted orders prove nothing; the fight is judged from what is seen.
 
 Order names and ability ids still to be confirmed in the real game sit in ORDERS.
 """
@@ -25,7 +25,8 @@ MILITIA_RETREAT = 0.0       # militia below this share of hit points walk home: 
 HERO_RETREAT = 0.30         # hero below this: everyone home, event failed
 CLEAR_QUIET = 3.0           # seconds without a visible camp creep after the fight = cleared
 TIMEOUT = 240.0             # seconds from the start of the march (the west camp takes ~2.5 min)
-MANUAL_PAUSE = 5.0
+MANUAL_PAUSE = 8.0          # the player's micro (pulling a hurt militia, picking a target) wins this long
+OURS = {"attack", "move", ORDERS["water"]}  # the orders this controller gives; any other one is the player's
 REORDER = 1.5               # do not repeat the same order to a unit more often than this
 # Lost Temple natural camps are forest trolls: healers and trappers die first, then the weakest.
 PRIORITY = ("nfsp", "nftk", "nfsh", "nftt", "nftb", "nftr")
@@ -70,24 +71,28 @@ class Clear:
         cmd.order(unit["unit_id"], command, **arguments)
         self.given[unit["unit_id"]] = (key, t)
 
-    def _by_hand(self, unit, t) -> bool:
-        """Is the player steering this unit? We told it to attack and it is moving (being pulled
-        back), or we told it to move and it attacks or heads elsewhere. An attack-move that picks
-        its own creep is ours. Such a unit is left alone for MANUAL_PAUSE seconds."""
+    def _by_hand(self, unit, t, alive=()) -> bool:
+        """Is the player steering this unit? Its order is one we never give (a right-click on the
+        ground or a creep reads "smart"; stop, hold, patrol, a spell), or we told it to attack and it moves,
+        or to move and it attacks or heads elsewhere, or to hit one creep and it hits another one
+        that is still alive. An attack-move that picks its own creep is ours. Such a unit is left
+        alone until MANUAL_PAUSE seconds after we last saw him steer it, then it is ours again."""
         uid = unit["unit_id"]
-        if t < self.manual.get(uid, -1):
-            return True
         last, order = self.given.get(uid), unit.get("order") or {}
-        if not last or not order or t - last[1] < 1.0:
-            return False
-        command, args = last[0][0], dict(last[0][1])
         name = order.get("name")
-        moved_off = name == "move" and (command != "move" or "x" in args and order.get("x") is not None
-                                        and math.hypot(order["x"] - args["x"], order["y"] - args["y"]) > 200)
-        if (command == "attack" and moved_off) or (command == "move" and (name == "attack" or moved_off)):
+        hand = False
+        if name and name not in OURS:
+            hand = True
+        elif last and order and t - last[1] >= 1.0:
+            command, args = last[0][0], dict(last[0][1])
+            moved_off = name == "move" and (command != "move" or "x" in args and order.get("x") is not None
+                                            and math.hypot(order["x"] - args["x"], order["y"] - args["y"]) > 200)
+            other = (command == "attack" and "target_id" in args and name == "attack" and order.get("target_id") is not None
+                     and order["target_id"] != args["target_id"] and args["target_id"] in alive)
+            hand = (command == "attack" and moved_off) or (command == "move" and (name == "attack" or moved_off)) or other
+        if hand:
             self.manual[uid] = t + MANUAL_PAUSE
-            return True
-        return False
+        return t < self.manual.get(uid, -1)
 
     # ---- one tick ------------------------------------------------------------------------------
     def tick(self, cmd, obs, t) -> None:
@@ -146,8 +151,9 @@ class Clear:
         target = min(creeps, key=lambda c: (rank.get(c["type_id"], len(PRIORITY)), c["hp"] / max(1, c["max_hp"]), dist(c, self.camp)))
         self.focus = target["unit_id"]
         self.note = f"清野中：集火 {target['type_id']}（剩 {len(creeps)} 个）"
+        alive = {c["unit_id"] for c in creeps}
         for u in army:
-            if self._by_hand(u, t):
+            if self._by_hand(u, t, alive):
                 continue
             if u["type_id"] == "hmil" and u["hp"] < MILITIA_RETREAT * u["max_hp"]:
                 self._order(cmd, u, t, "move", x=self.home["x"], y=self.home["y"])
