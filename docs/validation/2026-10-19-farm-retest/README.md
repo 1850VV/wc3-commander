@@ -26,6 +26,8 @@
 
 ## 文件
 
+公开版本已用占位符替换日志中的局域网和虚拟网卡地址；游戏事件、时间和结果保留。
+
 - `evidence/bridge-stream.tsv`：完整的状态推送记录（每行：本机时间 ⇥ JSON）。
 - `evidence/key-events.txt`：提炼出的事件变化、新建筑、人口上限变化。
 - `evidence/console-3m24.jpg`：3:24 时的控制台，地图上只有 2 座农场。
