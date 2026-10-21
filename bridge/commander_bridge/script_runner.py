@@ -11,6 +11,11 @@ tree is gone or out of reach gets another nearby (T2); a builder who stops is se
 Peasants are numbered as the script numbers them (农民1-5 at the start, the rest as the script trains
 them); other units get 101 and up, so a hero never takes a peasant's number. The decision record
 uses rule "L<line>" and the timeline groups events by lane (农民8, 城镇大厅, ...).
+
+A squad (「队伍 名字：…」) gives its steps to every unit whose own step is 「加入 名字」 at the time; its first
+step waits until every member has joined, and 「解散」 ends the members' 「加入」 so they go on with their own
+steps. A time [9:30] is when the step is under way (the unit leaves early by its walk); [9:30 出发] is when
+it sets off.
 """
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ QUEUE_LEAD = 1.0  # the next unit in a building's lane is ordered this long befo
 ARRIVED, ARMY_LIMIT = 350, 90.0  # an attack-move is over once everyone is this close, or after this long
 ARRIVED_ONE = 200  # a 移动 is over once the unit is this close
 PEASANT_SPEED, MILITIA_SPEED, CALL_TO_ARMS = 190.0, 270.0, 2.0
+HERO_SPEED = 320.0
 ONGOING = ("采金", "伐木", "集合", "待命")
 
 
@@ -69,6 +75,8 @@ class ScriptRunner(Arbiter):
                 lanes.append(dict(base, kind="hero", hero=ln["hero"], label=self.eco[ln["hero"]]["name"], steps=steps()))
             elif ln["kind"] == "army":
                 lanes.append(dict(base, kind="army", unit=ln.get("unit", "hfoo"), label="步兵", steps=steps()))
+            elif ln["kind"] == "squad":
+                lanes.append(dict(base, kind="squad", name=ln["name"], label="队伍·" + ln["name"], steps=steps()))
             else:
                 label = "#" + ln["tag"] if ln.get("tag") else self.eco[ln["btype"]]["name"]
                 lanes.append(dict(base, kind="building", btype=ln.get("btype"), tag=ln.get("tag"), label=label, made=0, steps=steps()))
@@ -260,12 +268,48 @@ class ScriptRunner(Arbiter):
         gather = gather or next(iter(self._have("halt")), None) or self.hall
         return max(dist(u, self.hall) for u in callers) / PEASANT_SPEED + CALL_TO_ARMS + dist(self.hall, gather) / MILITIA_SPEED
 
-    def holds(self, conds) -> bool:
+    def _walk(self, L, st) -> float:
+        """Seconds for the lane's unit to reach where the step takes place (0 when unknown or no unit)."""
+        if not L or L["kind"] not in ("peasant", "hero"):
+            return 0.0
+        u, to = self._unit(L), self._step_target(L, st)
+        if not u or not to:
+            return 0.0
+        speed = HERO_SPEED if L["kind"] == "hero" else MILITIA_SPEED if u["type_id"] == "hmil" else PEASANT_SPEED
+        return dist(u, to) / speed
+
+    def _step_target(self, L, st):
+        a = st["act"]
+        if a == "采金":
+            return self.natural() if st.get("mine") == "natural" else self.mine
+        if a == "建造":
+            return self.pos(st["pos"]) if st.get("pos") and st["pos"] != "自动" else None
+        if a == "协助":
+            return self._tag_building(st["tag"])
+        if a == "敲钟":
+            return self.hall
+        if a == "加入":
+            Q = self._squad_lane(st["squad"])
+            first = next((x for x in (Q["steps"] if Q else []) if x.get("pos")), None)
+            return self.pos(first["pos"]) if first else None
+        if st.get("pos"):
+            return self.pos(st["pos"])
+        return None
+
+    def holds(self, conds, L=None, st=None) -> bool:
         p = self.obs["player"]
         for c in conds:
             k = c["kind"]
-            if k == "time" and self.t < c["t"]:
+            if k == "time" and self.t < c["t"] - (self._walk(L, st) if c.get("arrive") else 0.0):
                 return False
+            if k == "after_prev":  # the step before finished at done_at (checked before moving on) or prev_done (after)
+                at = None if L is None else L.get("done_at", L.get("prev_done"))
+                if at is None or self.t < at + c["s"]:
+                    return False
+            if k == "hero_before":
+                eta = self._hero_eta()
+                if eta is None or self.t < eta - c["s"]:
+                    return False
             if k == "gold" and self.budget[0] < c["n"]:
                 return False
             if k == "wood" and self.budget[1] < c["n"]:
@@ -302,7 +346,7 @@ class ScriptRunner(Arbiter):
         for L in self.lanes:
             if L["done"] or L["dead"]:
                 continue
-            self._in(("L%d" % L["line"], None), {"peasant": self._peasant, "hero": self._hero, "building": self._building, "army": self._army}[L["kind"]], L)
+            self._in(("L%d" % L["line"], None), {"peasant": self._peasant, "hero": self._hero, "building": self._building, "army": self._army, "squad": self._squad}[L["kind"]], L)
         if self.clear and not self.clear.get("result"):
             self._in(("L%d" % self.clear["line"], self.clear["event"]), self._tick_clear)
 
@@ -322,15 +366,17 @@ class ScriptRunner(Arbiter):
         """Step i is under way; move to step i+1 once i is finished and i+1's condition holds."""
         if not done_now:
             return False
+        L.setdefault("done_at", self.t)
         if L["i"] + 1 >= len(L["steps"]):
             if L["steps"][L["i"]]["act"] not in ONGOING:
                 L["done"] = True
             return False
         nxt = L["steps"][L["i"] + 1]
-        if not self.holds(nxt["cond"]):
+        if not self.holds(nxt["cond"], L, nxt):
             return False
         L["i"] += 1
         L["on"] = False
+        L["prev_done"] = L.pop("done_at", self.t)
         return True
 
     # ---- peasants --------------------------------------------------------------------------------
@@ -345,7 +391,7 @@ class ScriptRunner(Arbiter):
         for _ in range(3):  # a few instant steps may chain in one tick
             st = L["steps"][L["i"]]
             if not L["on"]:
-                if not self.holds(st["cond"]) or not self._p_start(L, st, u):
+                if not self.holds(st["cond"], L, st) or not self._p_start(L, st, u):
                     return
                 L["on"] = True
                 self.note("L%d" % L["line"], f"{L['label']}：{st['raw']}", f"第 {L['line']} 行第 {L['i'] + 1} 步" + self._eta_note(st))
@@ -399,6 +445,8 @@ class ScriptRunner(Arbiter):
                 return False  # the hero has not set off yet: keep standing where we are
             if uid not in self.clear["job"].members:
                 self.clear["job"].members.append(uid)
+        elif a == "加入":
+            self.roles[uid] = "script"  # the squad's steps move him from here
         return True
 
     def _p_done(self, L, st, u) -> bool:
@@ -412,6 +460,9 @@ class ScriptRunner(Arbiter):
             return self._tag_rt(st["tag"]).get("status") == "done"
         if a == "敲钟":
             return u["type_id"] == "hmil"
+        if a == "加入":
+            Q = self._squad_lane(st["squad"])
+            return not Q or Q["done"]
         if a == "清野":
             return bool(self.clear and self.clear.get("result") == "done")
         if a == "移动":
@@ -467,7 +518,7 @@ class ScriptRunner(Arbiter):
         for _ in range(3):
             st = L["steps"][L["i"]]
             if not L["on"]:
-                if not self.holds(st["cond"]):
+                if not self.holds(st["cond"], L, st):
                     return
                 a = st["act"]
                 if a == "学":
@@ -484,10 +535,11 @@ class ScriptRunner(Arbiter):
                     if not p:
                         return
                     self.order(u["unit_id"], "attack", x=p["x"], y=p["y"])
-                L["on"] = True
+                L["on"] = True  # 加入: the squad moves him from here
                 self.note("L%d" % L["line"], f"{L['label']}：{st['raw']}", f"第 {L['line']} 行第 {L['i'] + 1} 步")
             a = st["act"]
-            done = (a in ONGOING) or (a == "学" and self._evs(st) and self._evs(st)[-1].get("status") == "done") \
+            done = (a in ONGOING) or (a == "加入" and (lambda Q: not Q or Q["done"])(self._squad_lane(st["squad"]))) \
+                or (a == "学" and self._evs(st) and self._evs(st)[-1].get("status") == "done") \
                 or (a == "清野" and self.clear and self.clear.get("result")) \
                 or (a == "攻击移动" and (dist(u, self.pos(st["pos"]) or u) < ARRIVED)) \
                 or (a == "移动" and (dist(u, self.pos(st["pos"]) or u) < ARRIVED_ONE))
@@ -507,7 +559,7 @@ class ScriptRunner(Arbiter):
             if not p:
                 return
             if not L["on"]:
-                if not self.holds(st["cond"]):
+                if not self.holds(st["cond"], L, st):
                     return
                 for u in army:
                     self.order(u["unit_id"], "attack" if st["act"] == "攻击移动" else "move", x=p["x"], y=p["y"])  # 移动 too
@@ -521,8 +573,71 @@ class ScriptRunner(Arbiter):
             if not self._next_step(L, bool(done)):
                 return
 
+    # ---- squads ------------------------------------------------------------------------------------
+    def _squad_lane(self, name):
+        return next((Q for Q in self.lanes if Q["kind"] == "squad" and Q["name"] == name), None)
+
+    def _members(self, Q):
+        """(every member lane still alive, those whose 加入 step is under way now)."""
+        lanes = [M for M in self.lanes if M["kind"] in ("peasant", "hero") and not M["dead"]
+                 and any(x["act"] == "加入" and x.get("squad") == Q["name"] for x in M["steps"])]
+        joined = [M for M in lanes if not M["done"] and M["on"] and M["steps"][M["i"]]["act"] == "加入" and M["steps"][M["i"]].get("squad") == Q["name"]]
+        return lanes, joined
+
+    def _squad(self, Q):
+        lanes, joined = self._members(Q)
+        units = [u for u in (self._unit(M) for M in joined) if u]
+        for _ in range(3):
+            st = Q["steps"][Q["i"]]
+            a = st["act"]
+            if not Q["on"]:
+                waiting = [M for M in lanes if M not in joined and not any(  # members still to come: the first step waits for them
+                    j < M["i"] for j, x in enumerate(M["steps"]) if x["act"] == "加入" and x.get("squad") == Q["name"])]
+                if Q["i"] == 0 and (waiting or not joined):
+                    return
+                if not self.holds(st["cond"], Q, st):
+                    return
+                Q["on"], Q["since"], Q["given"] = True, self.t, set()
+                self.note("L%d" % Q["line"], f"{Q['label']}：{st['raw']}", f"第 {Q['line']} 行第 {Q['i'] + 1} 步：{len(units)} 人")
+                if a == "解散":
+                    Q["done"] = True
+                    return
+            p = self.pos(st["pos"]) if st.get("pos") else None
+            for u in units:  # whoever is in the squad now gets its step (late joiners too)
+                if u["unit_id"] in Q["given"]:
+                    continue
+                if a in ("集合", "待命", "移动") and p:
+                    self.order(u["unit_id"], "move", x=p["x"], y=p["y"])
+                elif a == "攻击移动" and p:
+                    self.order(u["unit_id"], "attack", x=p["x"], y=p["y"])
+                elif a == "清野":
+                    if not self.clear:
+                        hero = next((v for v in units if v["type_id"] in ("Hamg", "Hmkg")), None)
+                        if not hero:
+                            break  # the hero's own lane starts the clear; members join it then
+                        self._start_clear(Q, st, hero)
+                    if self.clear.get("result"):
+                        continue
+                    if u["unit_id"] not in self.clear["job"].members:
+                        self.clear["job"].members.append(u["unit_id"])
+                Q["given"].add(u["unit_id"])
+            if a in ("集合", "待命") and p:  # standing there: keep them there
+                for u in units:
+                    if dist(u, p) > 300 and (u.get("order") or {}).get("name") is None and u["unit_id"] not in self.ordered:
+                        self.order(u["unit_id"], "move", x=p["x"], y=p["y"])
+            done = a in ONGOING or (a == "清野" and bool(self.clear and self.clear.get("result"))) \
+                or (a in ("移动", "攻击移动") and p and (all(dist(u, p) < ARRIVED for u in units) or self.t - Q.get("since", self.t) > ARMY_LIMIT))
+            if not self._next_step(Q, bool(done)):
+                return
+
     def _start_clear(self, L, st, hero):
         members = [hero["unit_id"]] + [u["unit_id"] for u in self.units() if u["type_id"] in ("hfoo", "hmil")]
+        for Q in self.lanes:  # squads clearing now: their members come along
+            if Q["kind"] == "squad" and not Q["done"] and Q["steps"][Q["i"]]["act"] == "清野":
+                for M in self._members(Q)[1]:
+                    u = self._unit(M)
+                    if u and u["unit_id"] not in members:
+                        members.append(u["unit_id"])
         for P in self.lanes:  # peasants whose step now is the clear
             if P["kind"] == "peasant" and not P["done"] and P["steps"][P["i"]]["act"] == "清野":
                 u = self._unit(P)
@@ -559,7 +674,7 @@ class ScriptRunner(Arbiter):
             st = L["steps"][L["i"]]
             a = st["act"]
             if not L["on"]:
-                if not self.holds(st["cond"]):
+                if not self.holds(st["cond"], L, st):
                     return
                 if a == "集结点":
                     target = None

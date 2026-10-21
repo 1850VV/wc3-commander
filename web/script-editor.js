@@ -293,7 +293,7 @@
   function addOrder({cids, t, cmd, xy, what, assist, queue, when, place: named}) {
     if (!M) return;
     const UT = window.UnifiedTimeline, T = Math.round(t), nat = UT && UT.natural(), w = when || {kind: 'now'};
-    const cond = w.kind === 'started' || w.kind === 'done' ? `[#${w.tag} ${w.kind === 'started' ? '开工' : '完成'}] ` : w.kind === 'money' ? `[金≥${w.gold || 0}${w.wood ? ' 木≥' + w.wood : ''}] ` : queue ? '' : `[${api.fmt(T)}] `;
+    const cond = w.kind === 'started' || w.kind === 'done' ? `[#${w.tag} ${w.kind === 'started' ? '开工' : '完成'}] ` : w.kind === 'money' ? `[金≥${w.gold || 0}${w.wood ? ' 木≥' + w.wood : ''}] ` : queue ? '' : `[${api.fmt(T)} 出发] `; // an order at the red line: he sets off then
     const done = [], notes = [];
     change(() => {
       const place = named && M.positions.some(p => p.name === named) ? named : xy && ['move', 'hold', 'attack', 'build'].includes(cmd) ? newPlace(cmd === 'build' ? what : '点', xy) : null;
@@ -335,17 +335,17 @@
       if (!steps || !steps[op.k] || steps[op.k].raw.trim() !== op.raw.trim()) { ok = false; return; }
       if (op.op === 'delete') steps.splice(op.k, 1);
       else if (op.op === 'raw') steps[op.k].raw = op.to;
-      else if (op.op === 'time') { const o = splitStep(steps[op.k].raw), terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}$/.test(x.trim())) : []; o.cond = [api.fmt(op.at), ...terms].join(' 且 '); steps[op.k].raw = joinStep(o); }
+      else if (op.op === 'time') { const o = splitStep(steps[op.k].raw), terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}(\s*出发)?$/.test(x.trim())) : []; o.cond = [api.fmt(op.at) + ' 出发', ...terms].join(' 且 '); steps[op.k].raw = joinStep(o); }
       else if (op.op === 'move') {
         const ti = laneIndexOf(op.to, true); if (ti < 0) { ok = false; return; }
         const [st] = M.lanes[laneIndexOf(op.label, false)].steps.splice(op.k, 1), o = splitStep(st.raw);
-        const terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}$/.test(x.trim())) : []; o.cond = [api.fmt(op.at), ...terms].join(' 且 ');
+        const terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}(\s*出发)?$/.test(x.trim())) : []; o.cond = [api.fmt(op.at) + ' 出发', ...terms].join(' 且 ');
         const tsteps = M.lanes[ti].steps; let idx = window.UnifiedTimeline.stepIndexAt(op.to, op.at) + 1; if (idx <= 0) idx = tsteps.length;
         tsteps.splice(Math.min(idx, tsteps.length), 0, {raw: joinStep(o)});
       }
     });
     if (!ok) { S.undo.pop(); api.say('脚本和时间轴对不上了（可能刚改过），稍等一下再改', true); return; }
-    const what = {delete: '删掉了', raw: '改了', time: `改成最早 ${api.fmt(op.at || 0)} 开始：`, move: `改派给 ${op.to}：`}[op.op];
+    const what = {delete: '删掉了', raw: '改了', time: `改成 ${api.fmt(op.at || 0)} 出发：`, move: `改派给 ${op.to}：`}[op.op];
     commit(`${op.label} 的「${op.raw}」${what}（未保存）。`, Math.max(0, Math.floor(op.t || 0)));
   }
   function toggleMute(label) {
@@ -397,10 +397,10 @@
   }
   function setTime(l, s, t) {
     const o = splitStep(M.lanes[l].steps[s].raw), mm = Math.floor(t / 60) + ':' + String(Math.round(t % 60)).padStart(2, '0');
-    const terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}$/.test(x.trim())) : [];
-    o.cond = [mm, ...terms].join(' 且 ');
+    const terms = o.cond ? o.cond.split(/\s*且\s*/).filter(x => !/^\d+:\d{2}(\s*出发)?$/.test(x.trim())) : [];
+    o.cond = [mm + ' 出发', ...terms].join(' 且 '); // dragging a card moves when he sets off
     change(() => { M.lanes[l].steps[s].raw = joinStep(o); S.sel = {l, s}; },
-      `「${o.body}」改成最早 ${mm} 开始（还要等上一步做完、其他条件满足）`);
+      `「${o.body}」改成 ${mm} 出发（还要等上一步做完、其他条件满足）`);
   }
 
   /* ---------- timing from a game: live, replay or preview ---------- */
@@ -907,7 +907,7 @@
     else if (ct === 'clear') term = '清野 完成';
     else if (ct === 'food') term = '人口剩 ≤ ' + (+v('food') || 0);
     const f = stepFields(ln.steps[s].raw, kind), terms = condTerms(f.cond).filter(x => x !== term);
-    if (ct === 'time') terms.splice(0, terms.length, ...terms.filter(x => !/^\d+:\d{2}$/.test(x)));
+    if (ct === 'time') terms.splice(0, terms.length, ...terms.filter(x => !/^\d+:\d{2}(\s*出发)?$/.test(x)));
     f.cond = [...terms, term].join(' 且 ');
     change(() => { ln.steps[s].raw = composeStep(f); }, `加上条件「${term}」：几个条件都满足才开始`);
   }

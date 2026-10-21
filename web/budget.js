@@ -6,6 +6,8 @@
  * straight line, a clear takes CLEAR seconds after the army arrives. Every step's begin / work /
  * done time comes out, plus one frame a second (resources, where each unit roughly is, buildings)
  * for the sandbox. Estimates: connected to the game the rates are replaced by what it measures.
+ * A time [9:30] is when the step is under way (the unit leaves early by its walk), [9:30 出发] when it
+ * sets off; a squad (队伍 名字) moves whoever has joined it (加入 名字) until 解散.
  *
  * Runs in the browser (window.Budget) and in Node (module.exports) for the tests. */
 (function (root) {
@@ -30,7 +32,9 @@
       let m;
       const res = [...part.matchAll(/(金|木)(?:≥|>=)(\d+)/g)];
       if (res.length && /^(?:(?:金|木)(?:≥|>=)\d+)+$/.test(part)) res.forEach(r => out.push({kind: r[1] === '金' ? 'gold' : 'wood', n: +r[2]}));
-      else if ((m = /^(\d+):(\d{2})$/.exec(part))) out.push({kind: 'time', t: +m[1] * 60 + +m[2]});
+      else if ((m = /^(\d+)[:：](\d{2})(出发)?$/.exec(part))) out.push(m[3] ? {kind: 'time', t: +m[1] * 60 + +m[2]} : {kind: 'time', t: +m[1] * 60 + +m[2], arrive: true});
+      else if ((m = /^上一步完成后(\d+)秒$/.exec(part))) out.push({kind: 'after_prev', s: +m[1]});
+      else if ((m = /^大法师出生前(\d+)秒$/.exec(part))) out.push({kind: 'hero_before', s: +m[1]});
       else if ((m = /^#(.+?)(开工|完成)$/.exec(part))) out.push({kind: m[2] === '开工' ? 'started' : 'done', tag: m[1]});
       else if ((m = /^(大法师|山丘之王)出生$/.exec(part))) out.push({kind: 'born', hero: HEROES[m[1]]});
       else if (/^大法师剩余(≤|<=)集合用时$/.test(part)) out.push({kind: 'eta'});
@@ -51,6 +55,7 @@
     if (st.act === '采金' || st.act === '伐木') st.mine = w[1] === '分矿' ? 'natural' : 'main';
     else if (st.act === '建造') st.btype = NAMES[w[1]] || 'hhou';
     else if (st.act === '学') st.skill = w[1];
+    else if (st.act === '加入') st.squad = w[1];
     else if ((m = /^农民(\d+)$/.exec(st.act))) { st.act = '农民'; st.peasant = +m[1]; }
     else if (st.act === '升级') st.to = NAMES[w[1]];
     else if (st.act === '集结点') st.rallyHero = HEROES[w[1]] || null; // 集结点 大法师 waits for him
@@ -65,6 +70,7 @@
     if ((m = /^农民([\d、,，\s]+)$/.exec(head))) return {kind: 'peasant', cids: m[1].split(/[、,，\s]+/).filter(Boolean).map(Number)};
     if (HEROES[head]) return {kind: 'hero', hero: HEROES[head]};
     if (head === '步兵' || head === '部队') return {kind: 'army'};
+    if ((m = /^队伍\s*(\S+)$/.exec(head))) return {kind: 'squad', name: m[1]};
     if (head.startsWith('#')) return {kind: 'building', tag: head.slice(1)};
     return {kind: 'building', btype: NAMES[head]};
   }
@@ -172,6 +178,7 @@
       if (h.kind === 'peasant') h.cids.forEach(c => lanes.push({...base, cid: c, label: '农民' + c, steps: steps()}));
       else if (h.kind === 'hero') lanes.push({...base, hero: h.hero, label: ln.head, steps: steps()});
       else if (h.kind === 'army') lanes.push({...base, label: '步兵', steps: steps()});
+      else if (h.kind === 'squad') lanes.push({...base, name: h.name, label: '队伍·' + h.name, steps: steps()});
       else lanes.push({...base, tag: h.tag, btype: h.btype, label: h.tag ? '#' + h.tag : (eco[h.btype] || {}).name || ln.head, steps: steps()});
     });
     lanes.forEach(L => { L.rec = L.steps.map(() => ({start: null, work: null, done: null, at: null})); });
@@ -188,9 +195,11 @@
       return gold - (g ? hg : 0) >= g && wood - (w ? hw : 0) >= w;
     }
     function pay(g, w) { gold -= g; wood -= w; }
-    function holds(conds, L) {
+    function holds(conds, L, st) {
       for (const c of conds) {
-        if (c.kind === 'time' && t < c.t) return false;
+        if (c.kind === 'time' && t < c.t - (c.arrive ? walkOf(L, st) : 0)) return false;
+        if (c.kind === 'after_prev') { const at = L ? (L.doneAt ?? L.prevDone) : null; if (at == null || t < at + c.s) return false; }
+        if (c.kind === 'hero_before' && !heroOf('Hamg')) { const eta = heroTrain ? heroTrain.end : null; if (eta == null || t < eta - c.s) return false; }
         if (c.kind === 'gold' && gold < c.n) return false;
         if (c.kind === 'wood' && wood < c.n) return false;
         if (c.kind === 'started' && !(tags[c.tag] && tags[c.tag].work != null && tags[c.tag].work <= t)) return false;
@@ -206,6 +215,52 @@
         }
       }
       return true;
+    }
+    /* where a step takes place, and how long the lane's unit walks there */
+    function targetOf(L, st) {
+      const a = st.act;
+      if (a === '采金') return st.mine === 'natural' ? natural : mine;
+      if (a === '伐木') return treeSpot(st.mine);
+      if (a === '建造') return peekSite(st);
+      if (a === '协助') { const b = tags[st.tag]; return b ? [b.x, b.y] : null; }
+      if (a === '敲钟') return hall;
+      if (a === '清野') return natural;
+      if (a === '加入') return squadPlace(st.squad);
+      return places[st.pos] || null;
+    }
+    function walkOf(L, st) {
+      if (!L || !st || (L.kind !== 'peasant' && L.kind !== 'hero')) return 0;
+      const u = L.kind === 'peasant' ? units.get(L.cid) : heroOf(L.hero), to = u && targetOf(L, st);
+      return to ? dist([u.x, u.y], to) / speedOf(u) : 0;
+    }
+    const speedOf = u => (/^H/.test(u.type) ? R.hero : u.type === 'hmil' ? R.militia : u.type === 'hfoo' ? R.foot : R.peasant);
+    function peekSite(st) {
+      if (st.pos && st.pos !== '自动' && places[st.pos]) return places[st.pos];
+      for (const s of pools[st.btype] || []) if (!usedSites.has(s.join()) && !Object.values(places).some(p => p && p[0] === s[0] && p[1] === s[1])) return s;
+      return [hall[0] + 400, hall[1] - 400];
+    }
+    /* ---- squads: their steps move whoever has joined; the first waits for every member */
+    const squadLane = name => lanes.find(Q => Q.kind === 'squad' && Q.name === name);
+    function squadPlace(name) {
+      const Q = squadLane(name); if (!Q) return null;
+      const st = Q.on && !Q.done ? Q.steps[Q.i] : null;
+      if (st && (st.act === '清野' ? natural : places[st.pos])) return st.act === '清野' ? natural : places[st.pos];
+      const first = Q.steps.find(x => x.act === '清野' || places[x.pos]); return first ? (first.act === '清野' ? natural : places[first.pos]) : null;
+    }
+    function squadMembers(Q) {
+      const isJoin = x => x.act === '加入' && x.squad === Q.name;
+      const members = lanes.filter(M => (M.kind === 'peasant' || M.kind === 'hero') && !M.dead && M.steps.some(isJoin));
+      const joined = members.filter(M => !M.done && M.on && isJoin(M.steps[M.i]));
+      const waiting = members.filter(M => !M.done && !joined.includes(M) && M.steps.some((x, j) => isJoin(x) && j >= M.i));
+      return {members, joined, waiting};
+    }
+    function squadGive(Q, st) { // the step to everyone in the squad now (late joiners too)
+      const p = st.act === '清野' ? natural : places[st.pos]; if (!p) return;
+      for (const M of squadMembers(Q).joined) {
+        const u = M.kind === 'peasant' ? units.get(M.cid) : heroOf(M.hero); if (!u || Q.given.has(u.id)) continue;
+        Q.given.add(u.id); u.job = {kind: st.act === '清野' ? 'clear' : 'squad'};
+        Q.arrive = Math.max(Q.arrive || t, walkTo(u, p, speedOf(u)));
+      }
     }
     function nextPlace(L) { if (!L) return null; for (let k = L.i + 1; k < L.steps.length; k++) if (L.steps[k].pos && places[L.steps[k].pos]) return places[L.steps[k].pos]; return null; }
     function walkTo(u, to, speed) { const from = [u.x, u.y], d = dist(from, to); u.walk = {from, to, t0: t, t1: t + d / speed}; return u.walk.t1; }
@@ -228,11 +283,20 @@
         else if (a === '敲钟') { const arr = walkTo(u, hall, R.peasant); u.job = {kind: 'bell', at: arr + R.bell}; }
         else if (a === '集合' || a === '待命' || a === '移动') { const p = places[st.pos]; if (!p) return false; u.job = {kind: a === '移动' ? 'move' : 'hold', arrive: walkTo(u, p, u.type === 'hmil' ? R.militia : R.peasant)}; }
         else if (a === '清野') { if (!clear) return false; u.job = {kind: 'clear'}; walkTo(u, natural, u.type === 'hmil' ? R.militia : R.peasant); }
+        else if (a === '加入') { const p = squadPlace(st.squad); u.job = {kind: 'squad'}; if (p) walkTo(u, p, speedOf(u)); }
         return true;
+      }
+      if (L.kind === 'squad') {
+        const {joined, waiting} = squadMembers(L);
+        if (L.i === 0 && (waiting.length || !joined.length)) return false; // everyone first
+        if (a === '解散') { L.done = true; return true; }
+        if (a === '清野' && !clear) return false; // the hero's lane starts the clear
+        L.given = new Set(); L.arrive = t; squadGive(L, st); return true;
       }
       if (L.kind === 'hero') {
         if (!u) return false;
         if (a === '学') return true;
+        if (a === '加入') { const p = squadPlace(st.squad); u.job = {kind: 'squad'}; if (p) walkTo(u, p, R.hero); return true; }
         if (a === '清野') { const arr = walkTo(u, natural, R.hero); clear = {start: t, end: arr + R.clear}; u.job = {kind: 'clear'}; return true; }
         const p = places[st.pos]; if (!p) return false;
         u.job = {kind: a === '移动' || a === '攻击移动' ? 'move' : 'hold', arrive: walkTo(u, p, R.hero)}; return true;
@@ -273,6 +337,8 @@
     function finished(L, st, rec) {
       const a = st.act;
       if (ONGOING.includes(a)) return true;
+      if (a === '加入') { const Q = squadLane(st.squad); return !Q || Q.done; }
+      if (L.kind === 'squad') return a === '解散' || (a === '清野' ? !!(clear && clear.end <= t) : t >= (L.arrive || 0));
       if (L.kind === 'peasant') {
         const u = units.get(L.cid);
         if (a === '建造' || a === '协助') return rec.done != null;
@@ -349,6 +415,7 @@
           if (!begin(L, st, rec) && !ONGOING.includes(st.act)) L.on = false;
           continue;
         }
+        if (L.kind === 'squad') { if (st.act === '解散') L.done = true; else { L.given = new Set(); L.arrive = t; squadGive(L, st); } continue; }
         if (L.kind === 'hero' || L.kind === 'army') { if (st.act === '清野') { const u = heroOf(L.hero); if (u) { u.job = {kind: 'clear'}; walkTo(u, natural, R.hero); } } else if (!begin(L, st, rec) && !ONGOING.includes(st.act)) L.on = false; continue; }
         // a building's lane: its queue is already in the building
         if (st.act === '训练' || st.act === '农民') {
@@ -422,7 +489,7 @@
         for (let guard = 0; guard < 4; guard++) {
           const st = L.steps[L.i], rec = L.rec[L.i];
           if (!L.on) {
-            if (!holds(st.cond, L) || !begin(L, st, rec)) break;
+            if (!holds(st.cond, L, st) || !begin(L, st, rec)) break;
             L.on = true; rec.start = t;
           }
           // a build pays when its builder arrives (and the money is there), then the building stands
@@ -431,12 +498,14 @@
             if (t >= u.job.arrive) { const c = eco[st.btype] || {gold: 0, wood: 0}; if (afford(c.gold, c.wood, L.line)) { pay(c.gold, c.wood); const b = addBuilding(st.btype, u.job.site, st.tag || null, false); b.L = L; b.k = L.i; u.job.b = b; rec.work = t; } }
           }
           if ((st.act === '训练' || st.act === '农民') && L.on && L.queued < (st.count || 1)) trainOne(L, st, rec); // the rest of ×N; a queue the game had not started yet
+          if (L.kind === 'squad' && L.on && !L.done) squadGive(L, st);
           if (!finished(L, st, rec)) break;
+          if (L.doneAt == null) L.doneAt = t; // for 上一步完成后 N 秒
           if (rec.done == null && !ONGOING.includes(st.act) && st.act !== '训练' && st.act !== '农民' && st.act !== '升级') rec.done = t;
           if (L.i + 1 >= L.steps.length) { if (!ONGOING.includes(st.act)) L.done = true; break; }
-          if (!holds(L.steps[L.i + 1].cond, L)) break;
+          if (!holds(L.steps[L.i + 1].cond, L, L.steps[L.i + 1])) break;
           if (rec.end == null) rec.end = t;
-          L.i++; L.on = false;
+          L.i++; L.on = false; L.prevDone = L.doneAt; L.doneAt = null;
         }
       }
       // food in use: peasants 1, footmen 2, heroes 5 (training counted when it starts)
@@ -464,7 +533,7 @@
       return out;
     })}));
     for (const ln of (opts.lanes || []).filter(x => x.muted)) {
-      const h = laneHead(ln.head), labels = h.kind === 'peasant' ? h.cids.map(c => '农民' + c) : [ln.head];
+      const h = laneHead(ln.head), labels = h.kind === 'peasant' ? h.cids.map(c => '农民' + c) : h.kind === 'squad' ? ['队伍·' + h.name] : [ln.head];
       for (const label of labels) tl.push({label, kind: h.kind, line: ln.line != null ? ln.line : (opts.lanes || []).indexOf(ln) + 1, muted: true, dead: false, steps: ln.steps.map(s => ({raw: s.raw, start: null, end: null}))});
     }
     tl.sort((a, b) => a.line - b.line);

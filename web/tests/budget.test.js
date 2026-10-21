@@ -131,3 +131,38 @@ test('from a live game: a queue the game has not started yet (no money or food t
   const who = hallLane.steps[hallLane.i], r = project(state);
   assert.ok(lane(r, who).steps[0].start != null, `${who} is trained after all`);
 });
+
+// the script's timing words and squads (bridge/tests/test_script_syntax.py plays the same on the fake world)
+const CREW = '敲钟 → 集合 @前方空地 → 清野 @分矿';
+const SQUAD = SCRIPT.split(CREW).join('敲钟 → 加入 清野小队').trimEnd() + '\n队伍 清野小队：集合 @前方空地 → 清野 @分矿 → 解散\n';
+
+test('a time is when he is there; 出发 is when he sets off', () => {
+  const arrive = budget(SCRIPT.replace('农民7：采金 主矿', '农民7：采金 主矿 → [3:25] 移动 @前方空地 → 采金 主矿'));
+  const leave = budget(SCRIPT.replace('农民7：采金 主矿', '农民7：采金 主矿 → [3:25 出发] 移动 @前方空地 → 采金 主矿'));
+  assert.strictEqual(step(leave, '农民7', 1).start, 205);
+  const a = step(arrive, '农民7', 1);
+  assert.ok(a.start < 203, 'he sets off early: ' + a.start);
+  assert.ok(Math.abs(step(arrive, '农民7', 2).start - 205) <= 1.5, 'and is there at 3:25: ' + step(arrive, '农民7', 2).start);
+});
+
+test('上一步完成后 N 秒 and 大法师出生前 N 秒', () => {
+  const r = budget(SCRIPT.replace('农民11：伐木 主矿 → [1:30] 建造 农场 @农场3', '农民11：伐木 主矿 → [1:30 出发] 移动 @前方空地 → [上一步完成后 15 秒] 建造 农场 @农场3')
+    .replace('农民9、10、12：伐木 主矿 → [大法师剩余 ≤ 集合用时] 敲钟', '农民9、10、12：伐木 主矿 → [大法师出生前 12 秒] 敲钟'));
+  const there = step(r, '农民11', 1).done ?? step(r, '农民11', 2).start;
+  assert.ok(step(r, '农民11', 2).start >= step(r, '农民11', 1).start + 15, 'the farm waits after he got there');
+  assert.ok(there != null);
+  const born = step(r, '国王祭坛', 1).done;
+  assert.ok(Math.abs(step(r, '农民9', 1).start - (born - 12)) <= 1, `rings 12 s before the archmage (${step(r, '农民9', 1).start} vs ${born})`);
+});
+
+test('a squad gathers everyone, clears, breaks up; then each goes on', () => {
+  const r = budget(SQUAD), Q = lane(r, '队伍·清野小队');
+  assert.ok(Q, 'the squad has its lane');
+  assert.deepStrictEqual(Q.steps.map(s => s.raw), ['集合 @前方空地', '清野 @分矿', '解散']);
+  assert.ok(Q.steps.every(s => s.start != null), 'every squad step happens');
+  const joins = [8, 9, 10, 12, 13].map(c => step(r, '农民' + c, 2));
+  assert.ok(Math.max(...joins.map(s => s.start)) <= Q.steps[0].start, 'it gathers once all have joined');
+  for (const s of joins) assert.ok(Math.abs(s.done - Q.steps[2].start) <= 1, '加入 lasts until 解散');
+  assert.ok(step(r, '农民8', 3).start >= Q.steps[2].start, 'then 农民8 builds the lumber mill');
+  assert.ok(step(r, '农民8', 5).work != null, 'and the natural hall still goes up');
+});

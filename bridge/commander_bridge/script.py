@@ -5,7 +5,14 @@
     城镇大厅：农民6 → 农民7 → [#分基地 开工] 升级 主城 #主城
     大法师：学 水元素 → 集合 @前方空地 → 清野 @分矿
     步兵：[3:30] 攻击移动 @分矿 → 待命 @分矿
+    队伍 清野小队：集合 @前方空地 → 清野 @分矿 → 解散
+    农民8：伐木 主矿 → [大法师出生前 10 秒] 敲钟 → 加入 清野小队 → 建造 伐木场 @分矿木场
     留钱 金385 木205 给 #分基地 从 [清野 完成]
+
+A time is when the step is under way: [9:30] 建造 X means he is at the site and starts building at 9:30
+(he leaves early by his walk); [9:30 出发] means he sets off at 9:30. A squad does its steps together
+with whoever has joined (a member's 「加入 名字」 step lasts until the squad's 「解散」); the first step
+waits for every member to have joined.
 
 A lane written as「#⏸ 农民8：…」is paused: kept in the script (the console shows it greyed) but not
 played. parse(text) -> (model, errors); to_text(model) writes the same script back (the console edits the
@@ -18,8 +25,9 @@ import re
 
 from .orchestration import NAMES, SKILLS
 
-PEASANT_ACTS = ("采金", "伐木", "建造", "协助", "敲钟", "集合", "清野", "待命", "移动")
-HERO_ACTS = ("学", "集合", "清野", "待命", "攻击移动", "移动")
+PEASANT_ACTS = ("采金", "伐木", "建造", "协助", "敲钟", "集合", "清野", "待命", "移动", "加入")
+HERO_ACTS = ("学", "集合", "清野", "待命", "攻击移动", "移动", "加入")
+SQUAD_ACTS = ("集合", "移动", "攻击移动", "待命", "清野", "解散")
 ARMY_ACTS = ("集合", "攻击移动", "待命", "移动")  # 移动: walk there, the step is done on arrival (集合/待命 stay until the next step's condition)  # the 步兵 lane: every footman not busy clearing
 MINES = {"主矿": "main", "分矿": "natural"}
 HEROES = {"大法师": "Hamg", "山丘之王": "Hmkg"}
@@ -41,8 +49,15 @@ def parse_cond(text: str) -> list[dict]:
         res = re.findall(r"(金|木)(?:≥|>=)(\d+)", p)
         if res and re.fullmatch(r"(?:(?:金|木)(?:≥|>=)\d+)+", p):
             out += [{"kind": "gold" if k == "金" else "wood", "n": int(n)} for k, n in res]
-        elif m := re.fullmatch(r"(\d+):(\d{2})", p):
-            out.append({"kind": "time", "t": int(m[1]) * 60 + int(m[2])})
+        elif m := re.fullmatch(r"(\d+)[:：](\d{2})(出发)?", p):
+            c = {"kind": "time", "t": int(m[1]) * 60 + int(m[2])}
+            if not m[3]:
+                c["arrive"] = True  # under way at that time: leave early by the walk
+            out.append(c)
+        elif m := re.fullmatch(r"上一步完成后(\d+)秒", p):
+            out.append({"kind": "after_prev", "s": int(m[1])})
+        elif m := re.fullmatch(r"大法师出生前(\d+)秒", p):
+            out.append({"kind": "hero_before", "s": int(m[1])})
         elif m := re.fullmatch(r"#(.+?)(开工|完成)", p):
             out.append({"kind": "tag_started" if m[2] == "开工" else "tag_done", "tag": m[1]})
         elif m := re.fullmatch(r"(大法师|山丘之王)出生", p):
@@ -62,7 +77,8 @@ def cond_text(conds: list[dict]) -> str:
     out = []
     for c in conds:
         k = c["kind"]
-        out.append({"time": lambda: f"{c['t'] // 60}:{c['t'] % 60:02d}", "gold": lambda: f"金≥{c['n']}", "wood": lambda: f"木≥{c['n']}",
+        out.append({"time": lambda: f"{c['t'] // 60}:{c['t'] % 60:02d}" + ("" if c.get("arrive") else " 出发"),
+                    "after_prev": lambda: f"上一步完成后 {c['s']} 秒", "hero_before": lambda: f"大法师出生前 {c['s']} 秒", "gold": lambda: f"金≥{c['n']}", "wood": lambda: f"木≥{c['n']}",
                     "tag_started": lambda: f"#{c['tag']} 开工", "tag_done": lambda: f"#{c['tag']} 完成",
                     "hero_born": lambda: f"{next(n for n, t in HEROES.items() if t == c['hero'])} 出生",
                     "hero_eta": lambda: "大法师剩余 ≤ 集合用时", "clear_done": lambda: "清野 完成",
@@ -117,18 +133,31 @@ def parse_step(text: str, lane_kind: str) -> dict:
                 raise ScriptError("协助 后面写 #建筑名，例如 协助 #分基地")
         elif act in ("敲钟",):
             pass
+        elif act == "加入":
+            if not rest:
+                raise ScriptError("加入 后面写队伍名，例如 加入 清野小队")
+            step["squad"] = rest[0]
         elif act in ("集合", "清野", "待命", "移动"):
             if not pos:
                 raise ScriptError(f"{act} 后面写 @位置")
         else:
             raise ScriptError(f"农民不会「{act}」（可以写：{'、'.join(PEASANT_ACTS)}）")
+    elif lane_kind == "squad":
+        if act not in SQUAD_ACTS:
+            raise ScriptError(f"队伍不会「{act}」（可以写：{'、'.join(SQUAD_ACTS)}）")
+        if act != "解散" and not pos:
+            raise ScriptError(f"{act} 后面写 @位置")
     elif lane_kind == "army":
         if act not in ARMY_ACTS:
             raise ScriptError(f"步兵不会「{act}」（可以写：{'、'.join(ARMY_ACTS)}）")
         if not pos:
             raise ScriptError(f"{act} 后面写 @位置")
     elif lane_kind == "hero":
-        if act == "学":
+        if act == "加入":
+            if not rest:
+                raise ScriptError("加入 后面写队伍名，例如 加入 清野小队")
+            step["squad"] = rest[0]
+        elif act == "学":
             if not rest or rest[0] not in SKILLS:
                 raise ScriptError(f"学 后面写技能（{'、'.join(SKILLS)}）")
             step["ability"], step["abilityName"] = SKILLS[rest[0]], rest[0]
@@ -173,6 +202,8 @@ def step_text(step: dict) -> str:
         out += [a, next(n for n, t in NAMES.items() if t == step["to"])]
     elif a == "学":
         out += [a, step["abilityName"]]
+    elif a == "加入":
+        out += [a, step["squad"]]
     elif a == "集结点" and step.get("rallyUnit"):
         out += [a, next(n for n, t in NAMES.items() if t == step["rallyUnit"])]
     else:
@@ -194,11 +225,13 @@ def _lane_head(head: str) -> dict:
         return {"kind": "hero", "hero": HEROES[head]}
     if head in ("步兵", "部队"):
         return {"kind": "army", "unit": "hfoo"}
+    if m := re.fullmatch(r"队伍\s*(\S+)", head):
+        return {"kind": "squad", "name": m[1]}
     if head.startswith("#"):
         return {"kind": "building", "tag": head[1:]}
     if head in NAMES:
         return {"kind": "building", "btype": NAMES[head]}
-    raise ScriptError(f"不认识「{head}」（一行的开头写 农民N、建筑名、#建筑名、英雄名 或 步兵）")
+    raise ScriptError(f"不认识「{head}」（一行的开头写 农民N、建筑名、#建筑名、英雄名、步兵 或 队伍 名字）")
 
 
 def parse(text: str) -> tuple[dict, list[str]]:
@@ -263,6 +296,15 @@ def parse(text: str) -> tuple[dict, list[str]]:
                     errors.append(f"第 {ln['line']} 行：#{c['tag']} 没有哪一步建造它")
         if ln["kind"] == "building" and ln.get("tag") and ln["tag"] not in tags:
             errors.append(f"第 {ln['line']} 行：#{ln['tag']} 没有哪一步建造它")
+    squads = {ln["name"]: ln for ln in model["lanes"] if ln["kind"] == "squad"}
+    joins = {st["squad"] for ln in model["lanes"] for st in ln["steps"] if st["act"] == "加入"}
+    for ln in model["lanes"]:
+        for st in ln["steps"]:
+            if st["act"] == "加入" and st["squad"] not in squads:
+                errors.append(f"第 {ln['line']} 行：没有「队伍 {st['squad']}」这一行")
+    for name, ln in squads.items():
+        if name not in joins:
+            errors.append(f"第 {ln['line']} 行：队伍 {name} 还没有成员（在成员那一行写「加入 {name}」）")
     trained = [st["peasant"] for ln in model["lanes"] if ln["kind"] == "building" for st in ln["steps"] if st["act"] == "农民"]
     lives = {c for ln in model["lanes"] if ln["kind"] == "peasant" for c in ln["cids"]}
     for c in sorted(set(trained)):
@@ -285,9 +327,9 @@ def to_text(model: dict, header: str = "") -> str:
     out.append("# ---------- 位置 ----------")
     for p in model["positions"]:
         out += _note(p) + [f"位置 {p['name']} = {p['expr']}"]
-    for title, kind in (("农民", "peasant"), ("建筑生产顺序", "building"), ("英雄", "hero"), ("部队", "army")):
-        if kind == "army" and not any(x["kind"] == "army" for x in model["lanes"]):
-            continue  # no footmen lane: the script reads as it always did
+    for title, kind in (("农民", "peasant"), ("建筑生产顺序", "building"), ("英雄", "hero"), ("队伍", "squad"), ("部队", "army")):
+        if kind in ("army", "squad") and not any(x["kind"] == kind for x in model["lanes"]):
+            continue  # no such lane: the script reads as it always did
         out += ["", f"# ---------- {title} ----------"]
         for ln in (x for x in model["lanes"] if x["kind"] == kind):
             out += _note(ln)
@@ -297,6 +339,8 @@ def to_text(model: dict, header: str = "") -> str:
                 head = next(n for n, t in HEROES.items() if t == ln["hero"])
             elif kind == "army":
                 head = "步兵"
+            elif kind == "squad":
+                head = "队伍 " + ln["name"]
             else:
                 head = "#" + ln["tag"] if ln.get("tag") else next(n for n, t in NAMES.items() if t == ln["btype"])
             steps = [(st.get("raw") or step_text(st)).strip() for st in ln["steps"]]

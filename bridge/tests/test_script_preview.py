@@ -55,14 +55,14 @@ class ResumeTest(unittest.TestCase):
         self.assertEqual(len(again["frames"]), len(self.full["frames"]))
 
     def test_an_order_added_at_a_moment_runs_from_there(self):
-        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25] 集合 @前方空地 → [3:50] 采金 主矿")
+        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25 出发] 集合 @前方空地 → [3:50 出发] 采金 主矿")
         r = preview_script(self.data, changed, 0, seconds=260, resume_from=205)
         self.assertEqual(r["resumedFrom"], 200.0)
         lane = next(x for x in r["timeline"]["lanes"] if x["label"] == "农民7")
         self.assertEqual([s["start"] for s in lane["steps"]][1:], [205.0, 230.0])
 
     def test_a_move_ends_on_arrival_and_the_next_step_follows(self):
-        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25] 移动 @前方空地 → 采金 主矿")
+        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25 出发] 移动 @前方空地 → 采金 主矿")
         r = preview_script(self.data, changed, 0, seconds=260, resume_from=205)
         lane = next(x for x in r["timeline"]["lanes"] if x["label"] == "农民7")
         move, back = lane["steps"][1]["start"], lane["steps"][2]["start"]
