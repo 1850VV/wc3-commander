@@ -12,6 +12,7 @@ const D = window.LT_DATA;
 const Budget = require(path.join(ROOT, 'web', 'budget.js'));
 const SCRIPT = fs.readFileSync(path.join(ROOT, 'strategies', '战术脚本-人族速矿二本.txt'), 'utf8');
 const NAMES = ['南方', '西方', '北方', '东方'];
+const FAKE = {gold: 2.0, wood: 0.52}; // the fake game gathers faster than the real one (the budget's defaults are measured in a real game)
 
 function budget(text = SCRIPT, start = 0, rates) {
   const plan = JSON.parse(fs.readFileSync(path.join(ROOT, 'strategies', `人族速矿二本 · ${NAMES[start]}.json`), 'utf8'));
@@ -25,7 +26,7 @@ const lane = (r, label) => r.timeline.lanes.find(l => l.label === label);
 const step = (r, label, k) => lane(r, label).steps[k];
 
 test('the shipped script, south: the opening lands where the fake game put it', () => {
-  const t0 = Date.now(), r = budget();
+  const t0 = Date.now(), r = budget(SCRIPT, 0, FAKE);
   assert.ok(Date.now() - t0 < 500, 'a few milliseconds, not a game');
   const altar = step(r, '农民4', 0), hero = step(r, '国王祭坛', 1), hall = step(r, '农民8', 6), keep = step(r, '城镇大厅', 14);
   assert.ok(altar.done >= 60 && altar.done <= 70, 'altar ' + altar.done);
@@ -99,7 +100,7 @@ function project(state) {
   const s = D.starts[0], hall = [s.x, s.y], m = Budget.fromText(SCRIPT);
   const mine = D.mines.map(x => [x.x, x.y]).sort((a, b) => Math.hypot(a[0] - hall[0], a[1] - hall[1]) - Math.hypot(b[0] - hall[0], b[1] - hall[1]))[0];
   return Budget.run({eco: D.economy.units, start: 0, hall, mine, lanes: m.lanes, reserves: m.reserves,
-    places: Budget.resolvePlaces(m.positions, (plan.plan || plan).groups, hall, Budget.NATURALS[0]), live: state});
+    places: Budget.resolvePlaces(m.positions, (plan.plan || plan).groups, hall, Budget.NATURALS[0]), live: state, rates: FAKE});
 }
 const later = (label, k) => LIVE.later.find(l => l.label === label).steps[k];
 

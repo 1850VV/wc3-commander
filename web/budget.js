@@ -12,7 +12,7 @@
  * Runs in the browser (window.Budget) and in Node (module.exports) for the tests. */
 (function (root) {
   'use strict';
-  const RATES = {gold: 2.0, wood: 0.52, perMine: 5, farNatural: 0.2, peasant: 190, militia: 270, hero: 320, foot: 270,
+  const RATES = {gold: 1.4, wood: 0.4, perMine: 5, farNatural: 0.2, peasant: 190, militia: 270, hero: 320, foot: 270,
     bell: 2, militia_s: 45, clear: 25, assist: 0.6, heroFree: true, startGold: 500, startWood: 150};
   const NAMES = {农民: 'hpea', 民兵: 'hmil', 步兵: 'hfoo', 大法师: 'Hamg', 山丘之王: 'Hmkg', 牧师: 'hmpr', 女巫: 'hsor', 破法者: 'hspt', 水元素: 'hwat',
     城镇大厅: 'htow', 分基地: 'htow', 主城: 'hkee', 城堡: 'hcas', 国王祭坛: 'halt', 祭坛: 'halt', 兵营: 'hbar', 农场: 'hhou', 伐木场: 'hlum',
