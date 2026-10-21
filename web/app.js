@@ -313,7 +313,8 @@
   /* ---------- 时间轴编排: in a script preview the sandbox is the moment at the red line; select and
    * command units like in the game, every order goes into the script (script-editor.js addOrder) ---------- */
   const UTL = () => window.UnifiedTimeline;
-  const orderMode = () => !!(live.replay && live.replay.preview && !live.on && UTL() && UTL().has() && !editingScript());
+  const orderMode = () => !!(UTL() && UTL().has() && !editingScript() && ((live.replay && live.replay.preview && !live.on) || (liveUT() && UTL().live())));
+  const orderT = () => (live.replay ? live.replay.t : Math.max(V().t, liveRed()));
   let cmdMode = null, cmdMenu = 'main', flags = [], boxSel = null, cmdGhost = null;
   const pickedUnits = () => V().units.filter(u => UTL().pick.has(u.id) && !u.hidden);
   function creepsUp(t) {
@@ -323,16 +324,16 @@
   function issue(cmd, extra) {
     if (!UTL().pick.size) { say('先选单位：点一下，或拖一个框'); return; }
     let cids = pickedUnits().map(u => u.id); // only those on the map at the red line (not yet born, inside a mine: no order)
-    if (!cids.length) { say(`选中的单位在 ${fmt(live.replay.t)} 这一刻不在地图上（还没出生或在金矿里）`, true); return; }
+    if (!cids.length) { say(`选中的单位在 ${fmt(orderT())} 这一刻不在地图上（还没出生或在金矿里）`, true); return; }
     if (['gold-main', 'gold-nat', 'wood', 'build', 'assist', 'bell'].includes(cmd)) {
       cids = cids.filter(c => UTL().typeOf(c) === 'hpea' || UTL().typeOf(c) === 'hmil');
       if (!cids.length) { say('这个命令只有农民能做', true); return; }
     }
-    ScriptEditor.addOrder({cids, t: live.replay.t, cmd, ...extra});
+    ScriptEditor.addOrder({cids, t: orderT(), cmd, ...extra});
   }
   function orderAt(wx, wy, queue) { // right-click: what is under the mouse decides the order
     const v = V(), us = pickedUnits(); if (!us.length) return;
-    const peas = us.every(u => u.type === 'hpea' || u.type === 'hmil'), nat = UTL().natural(), now = live.replay.t;
+    const peas = us.every(u => u.type === 'hpea' || u.type === 'hmil'), nat = UTL().natural(), now = orderT();
     const flag = c => flags.push({x: wx, y: wy, at: performance.now(), c});
     const mine = W.mines.find(m => Math.hypot(m.x - wx, m.y - wy) < 260);
     if (mine && peas) { flag('228,193,74'); issue(nat && Math.hypot(mine.x - nat[0], mine.y - nat[1]) < 400 ? 'gold-nat' : 'gold-main', {queue}); return; }
@@ -347,7 +348,7 @@
     flag('127,224,138'); issue('move', {xy: [wx, wy], queue});
   }
   function drawOrders(ls) {
-    const v = V(), t = live.replay.t, picked = UTL().pick;
+    const v = V(), t = orderT(), picked = UTL().pick;
     for (const u of v.units) {
       if (!picked.has(u.id) || u.hidden) continue;
       const [x, y] = toScreen(u.x, u.y), r = Math.max(3.5, (/^[A-Z]/.test(u.type) ? 26 : 16) * cam.s);
@@ -494,7 +495,7 @@
         let inside = v.units.filter(u => !u.hidden && (([x, y]) => x >= x0 && x <= x1 && y >= y0 && y <= y1)(toScreen(u.x, u.y)));
         const army = inside.filter(u => u.type !== 'hpea' && u.type !== 'hmil'); if (army.length && army.length < inside.length) inside = army;
         if (!e.shiftKey) P.clear(); inside.forEach(u => P.add(u.id));
-        if (inside.length) say(`选中 ${inside.length} 个：右键下令（金矿=采金，树=伐木，在建的建筑=协助，分矿野点=清野，地面=移动），Shift 排队；命令从红线 ${fmt(live.replay.t)} 开始`);
+        if (inside.length) say(`选中 ${inside.length} 个：右键下令（金矿=采金，树=伐木，在建的建筑=协助，分矿野点=清野，地面=移动），Shift 排队；命令从红线 ${fmt(orderT())} 开始`);
       } else {
         const [sx, sy] = [b.x0, b.y0];
         let best = null, bd = 14; for (const u of v.units) { if (u.hidden) continue; const [x, y] = toScreen(u.x, u.y), dd = Math.hypot(x - sx, y - sy); if (dd < bd) { bd = dd; best = u; } }
@@ -674,7 +675,7 @@
   }
   const trainBtn = (key, ut, then) => [key, '训练' + name(ut) + (then ? (then === 'gold' ? '→金' : '→木') : ''), () => addTo('g_user', Sim.ev('train', '训练' + name(ut) + (then ? ' → ' + RES[then] : ''), nowT(), {utype: ut, then}))];
   function renderScriptCmd() {
-    const us = pickedUnits(), t = live.replay.t, peas = us.length && us.every(u => u.type === 'hpea' || u.type === 'hmil');
+    const us = pickedUnits(), t = orderT(), peas = us.length && us.every(u => u.type === 'hpea' || u.type === 'hmil');
     const groups = {}; for (const u of us) { const n = u.type === 'hpea' ? '农民' : u.type === 'hmil' ? '民兵' : /^H/.test(u.type) ? name(u.type) : '步兵'; groups[n] = (groups[n] || 0) + 1; }
     let btns = [];
     if (cmdMenu === 'build') btns = ['农场', '兵营', '国王祭坛', '伐木场', '城镇大厅', '侦察塔', '神秘藏宝室', '神秘圣所', '铁匠铺'].map((b, i) => [String(i + 1), b, 'build', () => { cmdMode = {kind: 'build', what: b, btype: {农场: 'hhou', 兵营: 'hbar', 国王祭坛: 'halt', 伐木场: 'hlum', 城镇大厅: 'htow', 侦察塔: 'hwtw', 神秘藏宝室: 'hvlt', 神秘圣所: 'hars', 铁匠铺: 'hbla'}[b]}; cmdMenu = 'main'; renderCmd(); say(`在沙盘上点一下放${b}；Shift 连着放；右键或 Esc 取消`); }]).concat([['ESC', '返回', 'wait', () => { cmdMenu = 'main'; renderCmd(); }]]);
@@ -1116,7 +1117,7 @@
       sel = null; G = Sim.run(W, startIndex, groups, 0); buildTimeline(); renderCmd(); home();
     },
     disconnect(btn) {
-      if (live.es) live.es.close(); live.on = false; live.state = null; btn.textContent = '重新连接'; live.tacticBtn.hidden = true; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = false);
+      if (live.es) live.es.close(); live.on = false; live.state = null; live.adopted = false; btn.textContent = '重新连接'; live.tacticBtn.hidden = true; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = false);
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'stop'})});
       $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live');
       if (live.arbMode) { live.arbMode = false; live.arb = null; groups = Sim.defaultPlan(); checkpoints = []; buildTimeline(); } // back to an editable plan
@@ -1179,7 +1180,8 @@
       } catch (_) { say('没记下：连不上本地服务', true); }
     },
     apply(s) {
-      if (live.state && s.t < live.state.t - 1) live.hist = null; // a new game
+      if (live.state && s.t < live.state.t - 1) { live.hist = null; live.adopted = false; } // a new game
+      if (s.script && !live.adopted && window.ScriptEditor) { live.adopted = true; ScriptEditor.adoptLive(); }
       live.state = s;
       this.record(s);
       if (s.arbiter) this.syncArbiter(s);
@@ -1203,7 +1205,7 @@
       (u ? `<p><b>${esc(name(u.type))} ${u.id}</b> · ${esc(u.task || '')}</p>` + (cur ? `<p>脚本「${esc(L.label)}」此刻：${esc(cur.body)}</p>` : '')
         : b ? `<p><b>${esc(name(b.type))}</b>${b.done ? '' : ' · 建造中 ' + Math.round((b.progress || 0) * 100) + '%'}${b.train ? ` · 训练 ${esc(b.train.name)}，剩 ${Math.ceil(b.train.left)} 秒` : ''}</p>`
         : '<p class="hint">点沙盘上的单位或建筑，看它在做什么、脚本里此刻是哪一步。</p>') +
-      '<p class="hint">实战中在这里下令、马上生效，是下一步要接上的。</p>';
+      '<p class="hint">框选单位后右键下令，或点「现在下令」：命令写进战术脚本并马上发给游戏。</p>';
   }
   Live.record = function (s) {
     if (!s.script || !window.Budget) return;
@@ -1223,12 +1225,14 @@
   };
   const liveUT = () => !!(live.on && live.state && live.state.script && (live.state.script.lanes || []).length && window.ScriptEditor && ScriptEditor.ready());
   let utLiveT = null, utLiveHold = 0, lastProj = -1e9;
+  function liveRed() { return liveUT() && utLiveT != null && performance.now() < utLiveHold ? utLiveT : V().t; } // the red line in a game: now, or where it was dragged
   function projectLive() { // every 2 s: the past as it was, the rest from now
     const s = live.state, h = live.hist; if (!h || performance.now() - lastProj < 2000) return;
     lastProj = performance.now();
     const j = ScriptEditor.project(s, h.rates), ideal = ScriptEditor.budget(); if (!j || !ideal) return;
     const src = h.frames.filter(f => f.t < j.now).concat(j.frames), F = []; // one frame a second, by index (the timeline reads them so)
     for (let sec = 0, i = 0; sec <= Math.floor(src[src.length - 1].t); sec++) { while (i + 1 < src.length && src[i + 1].t <= sec) i++; F.push({...src[i], t: sec}); }
+    const nowSec = Math.ceil(s.t); if (F[nowSec] && j.frames[0]) F[nowSec] = {...j.frames[0], t: nowSec}; // the red line rounds to this second: the game as it is, not the model's next move
     j.frames = F;
     const baseline = new Map(); for (const L of ideal.timeline.lanes) L.steps.forEach((x, k) => { if (x.start != null) baseline.set(L.label + '|' + k + '|' + x.raw, x.start); });
     UnifiedTimeline.setData(j, {baseline, now: s.t});
@@ -1271,7 +1275,7 @@
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
   if (tlZoom !== 1) setTlZoom(tlZoom);
   if (window.UnifiedTimeline) UnifiedTimeline.mount({
-    getT: () => (live.replay ? live.replay.t : liveUT() && utLiveT != null && performance.now() < utLiveHold ? utLiveT : V().t),
+    getT: () => (live.replay ? live.replay.t : liveRed()),
     setT: v => { if (live.replay) Replay.seek(v); else if (liveUT()) { utLiveT = v; utLiveHold = performance.now() + 10000; } }, // back to now 10 s after the last drag
     pause: () => { playing = false; bPlay.textContent = '▶ 播放'; }, playing: () => playing && !!live.replay, say,
     picked: () => { const us = pickedUnits(); if (us.length) lookAt(us.reduce((a, u) => a + u.x, 0) / us.length, us.reduce((a, u) => a + u.y, 0) / us.length); renderCmd(); },
@@ -1284,21 +1288,20 @@
     view.before(stage); stage.appendChild(view);
     const card = document.createElement('aside'); card.className = 'box card4'; card.id = 'card4'; stage.appendChild(card);
     const b = document.createElement('button'); b.className = 'btn on'; b.id = 'orderTop'; b.type = 'button'; b.textContent = '在此刻下令';
-    b.onclick = () => UnifiedTimeline.openOrder(live.replay ? live.replay.t : 0, null); $('clock').after(b);
+    b.onclick = () => UnifiedTimeline.openOrder(orderMode() ? orderT() : 0, null); $('clock').after(b);
   })();
   let utOn = null;
   let cmdSec = -1;
   function syncUT() { // the timeline tab shows the script's lanes while a preview is open
-    if (orderMode() && Math.floor(live.replay.t) !== cmdSec) { cmdSec = Math.floor(live.replay.t); if (UTL().pick.size || document.body.classList.contains('v4')) renderCmd(); } // the card names the moment
-    const lv = liveUT(); if (lv) { projectLive(); if (Math.floor(V().t) !== cmdSec) { cmdSec = Math.floor(V().t); renderCmd(); } }
+    if (orderMode() && Math.floor(orderT()) !== cmdSec) { cmdSec = Math.floor(orderT()); if (UTL().pick.size || document.body.classList.contains('v4')) renderCmd(); } // the card names the moment
+    const lv = liveUT(); if (lv) { projectLive(); if (!orderMode() && Math.floor(V().t) !== cmdSec) { cmdSec = Math.floor(V().t); renderCmd(); } }
     const on = (orderMode() || (lv && UTL().has())) && !(window.ScriptEditor && ScriptEditor.active());
-    if (on && live.replay) $('orderTop').textContent = `在 ${fmt(live.replay.t)} 下令`;
-    $('orderTop').hidden = !!lv; // orders in a live game: the next step
+    if (on) $('orderTop').textContent = lv && orderT() < V().t + 1 ? '现在下令' : `在 ${fmt(orderT())} 下令`;
     if (on === utOn) return; utOn = on;
     if (lv) say('时间轴跟着游戏：红线是现在，之前是真实时间，之后按实测速度推算；色块上的 +/− 秒是和理想计划的差');
     UnifiedTimeline.show(on); document.querySelector('.tl').classList.toggle('ut-mode', on); document.body.classList.toggle('v4', on); renderCmd();
   }
-  if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
+  if (window.ScriptEditor) ScriptEditor.init({live: () => live, liveChanged: () => { lastProj = -1e9; }, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
       if (live.on) return; // connected: the timeline follows the game
       const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null); if (window.UnifiedTimeline) { UnifiedTimeline.setData(j); utOn = null; syncUT(); } // new data: draw it again
       if (fromStart) { Replay.seek(0); playing = true; bPlay.textContent = '❚❚ 暂停'; } else if (keep != null) Replay.seek(keep); },

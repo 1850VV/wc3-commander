@@ -99,5 +99,50 @@ class FootmenLaneTest(unittest.TestCase):
         self.assertIsNotNone(lane["steps"][1]["start"], "the attack-move ended once they arrived")
 
 
+
+class LiveReloadTest(unittest.TestCase):
+    """The console changes the script during a game: the running commander takes it at once."""
+
+    def setUp(self):
+        import tempfile
+        from commander_bridge import server
+        self.tmp = tempfile.TemporaryDirectory()
+        self.server, self.saved = server, server.RUNS
+        server.RUNS = Path(self.tmp.name)
+        self.r = server.Runner("fake", 1.0, "none")
+        self.r.plan = {"script": SCRIPT, "start": 0, "groups": []}
+        self.r.commander = self.r.new_commander()
+        self.r.commander.set_plan(self.r.plan)
+
+    def tearDown(self):
+        self.server.RUNS = self.saved
+        self.tmp.cleanup()
+
+    def test_only_while_a_script_game_runs(self):
+        self.assertTrue(self.r.reload_script(SCRIPT))
+        self.assertIsNone(self.r.live_script())
+
+    def test_steps_after_the_current_one_change_at_once(self):
+        self.r.running = True
+        c = self.r.commander
+        lane = next(L for L in c.lanes if L["label"] == "农民7")
+        lane["on"] = True  # he is mining
+        changed = SCRIPT.replace("农民7：采金 主矿", "农民7：采金 主矿 → [3:25] 移动 @前方空地")
+        self.assertEqual(self.r.reload_script(changed), [])
+        lane = next(L for L in self.r.commander.lanes if L["label"] == "农民7")
+        self.assertTrue(lane["on"], "keeps where he is")
+        self.assertEqual([s["raw"] for s in lane["steps"]], ["采金 主矿", "[3:25] 移动 @前方空地"])
+        self.assertIn("移动 @前方空地", self.r.live_script()["text"])
+        self.assertTrue(any(d["action"] == "战术脚本在实战中更新" for d in c.decisions))
+
+    def test_what_has_begun_cannot_change_but_what_has_not_can(self):
+        self.r.running = True
+        lane = next(L for L in self.r.commander.lanes if L["label"] == "农民4")
+        lane["i"], lane["on"] = 1, True  # built the altar, cutting now
+        errors = self.r.reload_script(SCRIPT.replace("农民4：建造 国王祭坛 @祭坛", "农民4：建造 兵营 @祭坛"))
+        self.assertTrue(any("农民4" in e for e in errors), errors)
+        self.assertEqual(self.r.reload_script(SCRIPT.replace("农民21：伐木 主矿", "农民21：采金 主矿")), [], "农民21 is not even trained yet")
+
+
 if __name__ == "__main__":
     unittest.main()

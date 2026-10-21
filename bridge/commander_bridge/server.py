@@ -413,6 +413,30 @@ class Runner:
                 self.plan_name = name
             self.commander.set_plan(plan)
 
+    def live_script(self) -> dict | None:
+        """The tactic script the game is playing now (None: this game does not play one)."""
+        with self.lock:
+            c = self.commander
+            if not self.running or not hasattr(c, "reload_script"):
+                return None
+            return {"text": tactic_script.to_text(c.model), "model": c.model}
+
+    def reload_script(self, text: str) -> list[str]:
+        """A script changed in the console during the game: it takes over from the next tick. Lanes
+        keep their progress; steps already begun cannot change (the errors say which)."""
+        with self.lock:
+            c = self.commander
+            if not self.running or not hasattr(c, "reload_script"):
+                return ["现在没有按战术脚本进行的游戏"]
+            errors = c.reload_script(text)
+            if not errors:
+                self.plan = dict(self.plan, script=text)
+                c.note("脚本", "战术脚本在实战中更新", "控制台改了脚本：已经开始的步骤不变，后面的按新脚本执行")
+                self.state = c.snapshot()
+        if not errors:
+            self.log("战术脚本已更新，从现在起按新脚本执行")
+        return errors
+
     def set_tactic(self, on: bool) -> None:
         """Switch the plan on or off without leaving the game; off only watches."""
         with self.lock:
@@ -710,6 +734,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {"ok": True, **self.runner.load_run(unquote(self.path[len("/api/runs/"):]))})
             except ValueError as exc:
                 return self._json(404, {"ok": False, "error": str(exc)})
+        if self.path == "/api/script/live":
+            j = self.runner.live_script()
+            return self._json(200, {"ok": True, **j} if j else {"ok": False, "error": "现在没有按战术脚本进行的游戏"})
         if self.path == "/api/script":
             text = SCRIPT.read_text(encoding="utf-8") if SCRIPT.is_file() else ""
             model, errors = tactic_script.parse(text)
@@ -772,6 +799,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"ok": False, "error": "这个出生点还没有布局（人族速矿二本 · 方向）"})
             except ImportError as exc:
                 return self._json(500, {"ok": False, "error": f"预演要用 wc3env 的假游戏：{exc}"})
+        if self.path == "/api/script/live":
+            if not isinstance(body.get("text"), str):
+                return self._json(400, {"ok": False, "error": "要给 text"})
+            errors = self.runner.reload_script(body["text"])
+            return self._json(200, {"ok": not errors, "errors": errors})
         if self.path == "/api/plan":
             self.runner.set_plan(body, body.get("name", _UNSET))
             return self._json(200, {"ok": True, "events": len(self.runner.commander.events)})

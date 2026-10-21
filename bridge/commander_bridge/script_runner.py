@@ -90,7 +90,7 @@ class ScriptRunner(Arbiter):
             O = old.pop((L["kind"], L["label"]), None)
             if O is None:
                 continue
-            k = O["i"]
+            k = O["i"] if O["on"] or O["i"] > 0 or O["done"] or O["dead"] else -1  # not begun yet: all of it may change
             if [x["raw"] for x in O["steps"][:k + 1]] != [x["raw"] for x in L["steps"][:k + 1]]:
                 bad.append(f"{L['label']} 已经做过的步骤被改了")
                 continue

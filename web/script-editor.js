@@ -169,6 +169,7 @@
     let j; try { j = await api_('PUT', '/api/script', {text}); } catch (_) { api.say('没保存：连不上本地服务', true); return; }
     if (!j.saved) { api.say('脚本有错，没有保存：' + (j.errors || [])[0], true); check(); return; }
     S.loadedText = j.text; S.saved = true; render();
+    if (api.live().on) { api.say('已保存到脚本文件。'); return; } // the game has it already
     preview(api.startIndex(), '已保存。', S.demo);
   }
   /* the budget (budget.js): the script as edited, saved or not, turned into its timeline by
@@ -184,7 +185,43 @@
     j.meta.name = '预算 · ' + api.startName(start);
     return {j, text, map};
   }
-  function scheduleBudget() { clearTimeout(S.rebudget); if (!api.live().on) S.rebudget = setTimeout(() => preview(api.startIndex()), 200); }
+  function scheduleBudget() {
+    clearTimeout(S.rebudget); clearTimeout(S.livePush);
+    if (api.live().on) S.livePush = setTimeout(() => pushLive(''), 800); // in a game: the edit goes to it
+    else S.rebudget = setTimeout(() => preview(api.startIndex()), 200);
+  }
+  /* ---------- in a game: the running commander takes the changed script at once (POST /api/script/live);
+   * steps it has begun cannot change, and then neither does the console's copy ---------- */
+  const sig = m => JSON.stringify([m.positions.map(p => [p.name, p.expr]), m.lanes.map(l => [l.head, !!l.muted, l.steps.map(x => x.raw.trim())]), m.reserves.map(r => r.raw.trim())]);
+  async function pushLive(lead, undoOnFail) {
+    clearTimeout(S.livePush);
+    const {text} = toText();
+    let j; try { j = await api_('POST', '/api/script/live', {text}); } catch (_) { j = {ok: false, errors: ['连不上本地服务']}; }
+    const what = lead.replace(/，?已写进脚本（未保存）。?|（未保存）。?/g, '');
+    if (!j.ok) {
+      if (undoOnFail && S.undo.length) { M = JSON.parse(S.undo.pop()); S.timingKey = ''; render(); }
+      S.liveErr = (j.errors || [j.error])[0];
+      api.liveChanged(); api.say((what ? what + '：' : '脚本的改动') + '没发给游戏 —— ' + (j.errors || [j.error]).join('；') + (undoOnFail ? '（已撤回）' : ''), true);
+      return false;
+    }
+    S.liveErr = null; render(); api.liveChanged();
+    api.say((what ? what + '，' : '脚本的改动') + '已发给游戏，马上生效（脚本文件还没改，点「保存」才写进去）。');
+    return true;
+  }
+  /* connected: the console edits the script the game is playing (it may have picked the file itself) */
+  async function adoptLive() {
+    let j; try { j = await api_('GET', '/api/script/live'); } catch (_) { return; }
+    if (!j || !j.ok || !M) return;
+    const m = fromModel(j.model);
+    if (sig(m) === sig(M)) return;
+    S.undo.push(JSON.stringify(M)); M = m; S.saved = false; S.timingKey = ''; render(); api.liveChanged();
+    api.say('控制台换成了游戏正在执行的战术脚本（原来的改动可以「撤销」找回）。');
+  }
+  /* an edit from the timeline or the sandbox: budgeted again, or sent to the game being played */
+  function commit(lead, from) {
+    if (api.live().on) return pushLive(lead, true);
+    return preview(api.startIndex(), lead, false, from);
+  }
   async function preview(start, lead = '', demo = false, from = null, full = false) {
     clearTimeout(S.rebudget);
     if (S.busy || !M) return;
@@ -288,7 +325,7 @@
     });
     if (!done.length) { api.say('没有能接这个命令的单位' + (notes.length ? '：' + notes.join('；') : ''), true); return; }
     const lead = `${api.fmt(T)}：${done.join('、')} → ${cmd === 'build' ? '建造 ' + what : {'gold-main': '采金 主矿', 'gold-nat': '采金 分矿', wood: '伐木', bell: '敲钟', clear: '清野', move: '移动', attack: '攻击移动', hold: '待命', assist: '协助'}[cmd]}${queue ? '（排队）' : ''}，已写进脚本（未保存）。` + (notes.length ? notes.join('；') + '。' : '');
-    preview(api.startIndex(), lead, false, T);
+    commit(lead, T);
   }
   function editFromTimeline(op) { // {op: time | move | delete | raw, label, k, raw, to, at, t}
     if (!M) return;
@@ -309,14 +346,14 @@
     });
     if (!ok) { S.undo.pop(); api.say('脚本和时间轴对不上了（可能刚改过），稍等一下再改', true); return; }
     const what = {delete: '删掉了', raw: '改了', time: `改成最早 ${api.fmt(op.at || 0)} 开始：`, move: `改派给 ${op.to}：`}[op.op];
-    preview(api.startIndex(), `${op.label} 的「${op.raw}」${what}（未保存）。`, false, Math.max(0, Math.floor(op.t || 0)));
+    commit(`${op.label} 的「${op.raw}」${what}（未保存）。`, Math.max(0, Math.floor(op.t || 0)));
   }
   function toggleMute(label) {
     if (!M) return;
     let head = '';
     change(() => { const li = laneIndexOf(label, true); if (li >= 0) { M.lanes[li].muted = !M.lanes[li].muted; head = (M.lanes[li].muted ? '暂停' : '恢复') + '「' + M.lanes[li].head + '」'; } });
     if (!head) return;
-    preview(api.startIndex(), head + '（未保存）。', false, 0); // the whole game changes: from the start
+    commit(head + '（未保存）。', 0); // the whole game changes: from the start
   }
   function openCardOf(label, k) {
     const li = laneIndexOf(label, false); if (li < 0) return;
@@ -1173,7 +1210,7 @@
     if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, preview, ready: () => !!M, budget: () => (M ? budget(api.startIndex()).j : null),
+  window.ScriptEditor = {init, tick, preview, ready: () => !!M, adoptLive, liveErr: () => S.liveErr, budget: () => (M ? budget(api.startIndex()).j : null),
     // connected: the game so far plus the rest of the script from now, at the measured rates
     project: (state, rates) => (M ? budget(state.start != null ? state.start : api.startIndex(), {live: state, rates}).j : null), planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf, toggleMute,
     placing: () => S.placing, cancelPlacing: () => { if (S.placing) { S.placing = null; api.say('已取消放置'); } },
