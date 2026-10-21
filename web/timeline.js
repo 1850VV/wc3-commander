@@ -28,22 +28,26 @@
   let api = null, root = null, D = null, END = 600, lanes = [], rows = [], E = [], mined = [[0, 0]];
   let zoom = Math.max(1, Math.min(8, +store.get('wcc.utZoom') || 1)), byPrio = false, view = 'unit', filters = new Set(), critOn = false, goalKey = 'keep', pinPicked = true;
   let stale = null, prevStarts = new Map(), sel = null, dimOthers = false;
+  let base = null, liveNow = null; // connected to a game: the ideal plan's starts (label|k|raw), and the game's now
   const pick = new Set();
   const $ = id => document.getElementById('ut-' + id);
   const stepEnd = s => s.done != null ? s.done : s.end != null ? s.end : (ongoing(s) ? END : null);
   const LABEL = () => 200, pps = () => Math.max(0.6, ((($('scroll') || {}).clientWidth || 900) - LABEL() - 8) / END) * zoom, X = sec => LABEL() + sec * pps();
 
   /* ---------- data from a preview ---------- */
-  function setData(j) {
+  /* opt.baseline: compare each step with the ideal plan instead of the last preview; opt.now: a live
+   * game's moment, what is after it is projected */
+  function setData(j, opt = {}) {
     const T = j.timeline, F = j.frames || [];
     if (!T) return;
+    base = opt.baseline || null; liveNow = opt.now != null ? opt.now : null;
     // what moved since the last preview: kept for the before/after badges
     if (D) for (const L of lanes) L.steps.forEach((s, k) => { if (s.start != null) prevStarts.set(L.label + '|' + k + '|' + s.raw, s.start); });
     END = Math.max(60, Math.ceil(F.length ? F[F.length - 1].t : j.t || 600));
     const lineRank = [...new Set(T.lanes.map(l => l.line))].sort((a, b) => a - b);
     lanes = T.lanes.map((L, i) => ({...L, id: 'L' + i, prio: lineRank.indexOf(L.line) + 1, steps: L.steps.map((s, k) => {
-      const x = {...s, ...split(s.raw)}, before = prevStarts.get(L.label + '|' + k + '|' + s.raw);
-      x.delta = before != null && x.start != null ? Math.round(x.start - before) : 0;
+      const x = {...s, ...split(s.raw)}, before = (base || prevStarts).get(L.label + '|' + k + '|' + s.raw);
+      x.delta = before != null && x.start != null ? Math.round(x.start - before) : 0; x.planned = base ? before : null;
       return x;
     })}));
     const natural = T.natural, pos = {}, types = {...T.units};
@@ -65,6 +69,21 @@
     D = {places: T.places || {}, units: types, pos, hall: T.hall, mine: T.mine, natural, mineGold: T.mineGold || 12500};
     stale = null;
     computeBnecks(); buildRows(); if (critOn) updateChain();
+    liveBox();
+  }
+  /* connected: how far the game is from the ideal plan so far, and when the next buildings should come */
+  function liveBox() {
+    const box = $('live'); if (!box) return;
+    box.hidden = !(base && liveNow != null); if (box.hidden) return;
+    const all = lanes.flatMap(L => L.steps.map(s => ({L, s}))).filter(x => x.s.start != null && x.s.planned != null);
+    const past = all.filter(x => x.s.start <= liveNow).sort((a, b) => b.s.start - a.s.start).slice(0, 6);
+    const word = d => (Math.abs(d) < 3 ? '和计划一样' : d > 0 ? `比计划慢 ${d} 秒` : `比计划快 ${-d} 秒`);
+    const cls = d => (Math.abs(d) < 3 ? '' : d > 0 ? 'late' : 'early');
+    const avg = past.length ? Math.round(past.reduce((a, x) => a + x.s.delta, 0) / past.length) : 0;
+    const next = all.filter(x => x.s.start > liveNow && /^(建造|升级)/.test(x.s.body)).sort((a, b) => a.s.start - b.s.start).slice(0, 4);
+    box.innerHTML = `<h3>实机 · 和理想计划比</h3><p class="u-lv ${cls(avg)}">最近开始的 ${past.length} 步：${word(avg)}</p>` +
+      (next.length ? '<div class="u-list">' + next.map(x => `<div class="u-it"><b>${esc(x.L.label)}</b> ${esc(x.s.body)}<span class="u-lv ${cls(x.s.delta)}">预计 ${fmt(x.s.start)}（${word(x.s.delta)}）</span></div>`).join('') + '</div>' : '') +
+      '<p class="hint">红线之前是游戏里的真实时间；之后按实测的采集速度推算，每两秒更新。色块上的 +/− 秒是和理想计划的差。</p>';
   }
   const at = T => Math.max(0, Math.min(E.length - 1, Math.round(T)));
   function posAt(cid, T) {
@@ -223,7 +242,7 @@
         const wait = s.work != null ? Math.max(0, (s.work - s.start) * pps()) : 0;
         const text = it.build ? `建造 · ${it.build}` : s.body + (s.pos ? ' @' + s.pos : '') + (s.tag ? ' #' + s.tag : '');
         b.innerHTML = (wait ? `<div class="u-wait" style="width:${wait}px"></div>` : '') + (s.work != null ? `<div class="u-fill" style="left:${wait}px;width:0"></div>` : '') +
-          `<div class="u-txt">${s.cond && !it.build ? '<em>[' + esc(s.cond) + ']</em>' : ''}<span>${esc(text)}</span>${s.delta ? `<span class="u-delta ${s.delta > 0 ? 'late' : 'early'}" title="和上一次预演比">${s.delta > 0 ? '+' : ''}${s.delta}s</span>` : ''}<em class="u-cd"></em><button type="button" class="u-x" data-del title="删除这一步">×</button></div>`;
+          `<div class="u-txt">${s.cond && !it.build ? '<em>[' + esc(s.cond) + ']</em>' : ''}<span>${esc(text)}</span>${s.delta ? `<span class="u-delta ${s.delta > 0 ? 'late' : 'early'}" title="${s.planned != null ? '和理想计划比（计划 ' + fmt(s.planned) + '）' : '和上一次比'}">${s.delta > 0 ? '+' : ''}${s.delta}s</span>` : ''}<em class="u-cd"></em><button type="button" class="u-x" data-del title="删除这一步">×</button></div>`;
         b.title = `${it.lane.label} 第 ${it.k + 1} 步：${s.raw}\n开始 ${fmt(s.start)}` + (s.work != null ? `，开工 ${fmt(s.work)}` : '') + (s.done != null ? `，完成 ${fmt(s.done)}` : '');
         if (/^敲钟/.test(s.body)) R.track.insertAdjacentHTML('beforeend', `<div class="u-band" style="left:${(s.start + 3) * pps()}px;width:${45 * pps()}px" title="民兵 45 秒"></div>`);
         R.track.appendChild(b); it.el = b;
@@ -270,7 +289,8 @@
       return {g: 0, cur, cls: waiting ? 'wait' : 'act', text: waiting ? (cur.build ? cur.build + ' 走过去/等钱' : '等资源 · ' + s.body) : (cur.build ? '建造中' : s.body) + (e != null && !ongoing(s) ? ` · 剩 ${Math.ceil(e - t)}s` : '')};
     }
     if (next) return {g: next.step.start - t <= 30 ? 1 : 2, next, cls: '', text: `${Math.ceil(next.step.start - t)}s 后：${next.build ? '开始建' : next.step.body}`};
-    return {g: 3, cls: '', text: R.kind === 'bld' ? '' : '这一行做完了'};
+    const left = R.lane && R.lane.steps.some(x => x.start == null); // some steps never begin before the timeline ends
+    return {g: 3, cls: left ? 'wait' : '', text: R.kind === 'bld' ? '' : left ? (R.lane.steps.every(x => x.start == null) ? `${fmt(END)} 前不会开始` : `后面的步骤 ${fmt(END)} 前不会开始`) : '这一行做完了'};
   }
   let lastKey = '';
   function tick() {
@@ -309,6 +329,7 @@
     }
     if (view === 'unit') $('filters').querySelectorAll('[data-f]').forEach(b => { const f = FILTERS.find(q => q[0] === b.dataset.f); if (f) b.querySelector('b').textContent = rows.filter(f[1]).length; });
     canvas.classList.toggle('u-critmode', critOn);
+    const pj = $('proj'); if (liveNow != null && liveNow < END) { pj.hidden = false; pj.style.left = X(liveNow) + 'px'; pj.style.width = (X(END) - X(liveNow)) + 'px'; pj.style.top = top0 + 'px'; pj.style.height = $('rows').offsetHeight + 'px'; } else pj.hidden = true;
     const st2 = $('stale'); if (stale != null) { st2.hidden = false; st2.style.left = X(stale) + 'px'; st2.style.width = (X(END) - X(stale)) + 'px'; st2.style.top = top0 + 'px'; st2.style.height = $('rows').offsetHeight + 'px'; } else st2.hidden = true;
     drawGhosts();
     const key = Math.floor(t) + '|' + order.map(R => R.key).join() + '|' + pps() + '|' + chain.length;
@@ -590,9 +611,11 @@
           <svg class="u-arrows" id="ut-arrows"></svg>
           <div class="u-shade" id="ut-shade"></div>
           <div class="u-stale" id="ut-stale" hidden><span>从存档点重新计算中…</span></div>
+          <div class="u-proj" id="ut-proj" hidden><span>推算（按实测速度）</span></div>
           <div class="u-now" id="ut-now" data-t="0:00" title="拖动红线换时刻"><span class="grip"></span></div>
         </div></div></section>
         <aside class="u-side">
+          <div class="u-box u-livebox" id="ut-live" hidden></div>
           <div class="u-box" id="ut-crit" hidden></div>
           <div class="u-box u-order" id="ut-order" hidden></div>
           <div class="u-box"><h3>此刻 · 正在做（按优先级）</h3><div class="u-list" id="ut-nowList"></div></div>
@@ -648,7 +671,7 @@
 
   window.UnifiedTimeline = {
     mount, setData, pick, posAt, typeOf, laneOfCid, current, stepEnd, fmt, activity,
-    has: () => !!D, show(on) { if (root) { root.hidden = !on; if (on && D) { drawBars(); lastKey = ''; } } }, shown: () => !!(root && !root.hidden),
+    has: () => !!D, live: () => liveNow != null, show(on) { if (root) { root.hidden = !on; if (on && D) { drawBars(); lastKey = ''; } } }, shown: () => !!(root && !root.hidden),
     markStale(t) { stale = t; lastKey = ''; }, clearStale() { stale = null; lastKey = ''; },
     openOrder: (t, cids) => { if (D) openOrder(t, cids); }, syncOrder: () => { if (ord.open) renderOrder(); },
     lanes: () => lanes, places: () => (D ? D.places : {}), natural: () => D && D.natural, mine: () => D && D.mine, hall: () => D && D.hall,

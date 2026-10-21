@@ -695,6 +695,7 @@
   }
   function renderCmd() {
     if (orderMode()) { renderScriptCmd(); return; }
+    if (live.on && document.body.classList.contains('v4')) { renderLiveCard(); return; }
     let btns = [];
     const v = V(), u = sel && sel.type === 'unit' ? v.units.find(x => x.id === sel.id) : null;
     const b = sel && sel.type === 'building' ? v.buildings.find(x => x.id === sel.id) : null;
@@ -969,6 +970,7 @@
     /* a recorded game, or the tactic script's preview on the fake world (meta.preview): the timeline
      * shows its events grouped by the script's lines, the map and resources follow the time */
     open(j, id) {
+      if (live.on) return; // the game owns the console while connected
       const st = j.state, preview = !!(j.meta && j.meta.preview);
       live.replay = {id, preview, meta: j.meta, frames: j.frames, t: 0, end: j.frames[j.frames.length - 1].t, consistency: st.consistency || null, fi: 0, state: st};
       live.arbMode = false; live.arbN = -1;
@@ -1005,7 +1007,7 @@
       live.replay = null; live.arbMode = false; live.arb = null; live.replayExit.hidden = true; playing = false;
       groups = Sim.defaultPlan(); checkpoints = []; buildTimeline();
       $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live'); resim(0); sel = null; renderCmd();
-      if (!quiet && window.ScriptEditor && ScriptEditor.budget()) { ScriptEditor.preview(startIndex); say(was ? '回到预算：时间轴按数学模型估算' : '已退出回放，回到预算'); return; }
+      if (!quiet && window.ScriptEditor && ScriptEditor.ready()) { ScriptEditor.preview(startIndex); say(was ? '回到预算：时间轴按数学模型估算' : '已退出回放，回到预算'); return; }
       if (!quiet) say(was ? '已退出预演：时间轴回到模拟器的默认计划' : '已退出回放');
     },
   };
@@ -1098,7 +1100,8 @@
       live.es = new EventSource('/api/stream');
       live.es.onmessage = m => { const msg = JSON.parse(m.data); if (msg.type === 'state') this.apply(msg.state); else if (msg.type === 'plan') this.adopt(msg.plan, msg.name); else if (msg.type === 'log') say(msg.text, msg.level === 'error'); };
       live.es.onerror = () => say('与本地服务的连接中断，正在重试…', true);
-      live.on = true; btn.textContent = '断开'; this.showTactic(h.running ? h.tactic !== false : true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
+      live.on = true; if (live.replay) Replay.exit(true); // a budget that finished loading meanwhile gives way too
+      btn.textContent = '断开'; this.showTactic(h.running ? h.tactic !== false : true); live.tacticBtn.hidden = false; ['bPlay', 'speeds', 'bReset'].forEach(id => $(id).hidden = true); $('modeTag').textContent = '实机 · ' + (live.backend === 'fake' ? '假服务器' : 'wc3env'); $('modeTag').classList.add('live');
       if (h.running) { say('已加入正在进行的游戏（' + W.starts[startIndex].name + '，' + allEvents().length + ' 个事件）'); return; }
       if (h.waiting) { say('正在等待你开游戏…'); return; }
       fetch('/api/control', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({action: 'start', start: startIndex})});
@@ -1118,7 +1121,7 @@
       $('modeTag').textContent = '离线预演'; $('modeTag').classList.remove('live');
       if (live.arbMode) { live.arbMode = false; live.arb = null; groups = Sim.defaultPlan(); checkpoints = []; buildTimeline(); } // back to an editable plan
       resim(0);
-      if (window.ScriptEditor && ScriptEditor.budget()) ScriptEditor.preview(startIndex); // back to the script's budget
+      if (window.ScriptEditor && ScriptEditor.ready()) ScriptEditor.preview(startIndex); // back to the script's budget
     },
     showTactic(on) { live.tactic = on; const tk = live.tacticBtn; tk.textContent = on ? '战术：开' : '战术：关'; tk.classList.toggle('on', on); },
     tactic(on) { // the bridge keeps reading the game either way; off only stops it giving orders
@@ -1176,7 +1179,9 @@
       } catch (_) { say('没记下：连不上本地服务', true); }
     },
     apply(s) {
+      if (live.state && s.t < live.state.t - 1) live.hist = null; // a new game
       live.state = s;
+      this.record(s);
       if (s.arbiter) this.syncArbiter(s);
       if (s.enabled != null && s.enabled !== live.tactic) this.showTactic(s.enabled); // a new game starts with it on
       if (s.start != null && s.start !== startIndex) { startIndex = s.start; startSel.value = String(s.start); home(); say('游戏分配的出生点是' + W.starts[s.start].name + '，已切换'); }
@@ -1189,6 +1194,46 @@
         mine: s.mine || {x: 0, y: 0, gold: 0}, buildings: s.buildings.map(b => ({...b, tex: W.buildingTex(b.type) || 'PathTextures\\8x8Default.tga'})), treeAlive: null};
     },
   };
+
+  /* ---------- connected: the script's timeline from the game (budget.js) ---------- */
+  function renderLiveCard() { // v4 beside a live game: what the picked unit or building is doing, and its script step
+    const v = V(), u = sel && sel.type === 'unit' ? v.units.find(x => x.id === sel.id) : null, b = sel && sel.type === 'building' ? v.buildings.find(x => x.id === sel.id) : null;
+    const L = u && UTL().laneOfCid(u.id), cur = L && UTL().stepAt(L.label, v.t);
+    $('card4').innerHTML = `<h3>实机 · ${fmt(v.t)}</h3>` +
+      (u ? `<p><b>${esc(name(u.type))} ${u.id}</b> · ${esc(u.task || '')}</p>` + (cur ? `<p>脚本「${esc(L.label)}」此刻：${esc(cur.body)}</p>` : '')
+        : b ? `<p><b>${esc(name(b.type))}</b>${b.done ? '' : ' · 建造中 ' + Math.round((b.progress || 0) * 100) + '%'}${b.train ? ` · 训练 ${esc(b.train.name)}，剩 ${Math.ceil(b.train.left)} 秒` : ''}</p>`
+        : '<p class="hint">点沙盘上的单位或建筑，看它在做什么、脚本里此刻是哪一步。</p>') +
+      '<p class="hint">实战中在这里下令、马上生效，是下一步要接上的。</p>';
+  }
+  Live.record = function (s) {
+    if (!s.script || !window.Budget) return;
+    const h = live.hist = live.hist || {frames: [], samples: [], rates: null};
+    if (h.frames.length && s.t < h.frames[h.frames.length - 1].t + 1) return;
+    h.frames.push({t: s.t, gold: s.gold, wood: s.wood, foodUsed: s.foodUsed, foodCap: s.foodCap, got: s.got || [0, 0],
+      units: s.units.map(u => ({id: u.id, type: u.type, x: u.x, y: u.y, hidden: u.hidden, role: u.role === 'gold' || u.role === 'wood' ? u.role : u.type === 'hpea' && u.task === '空闲' ? 'idle' : 'build'})),
+      buildings: s.buildings.map(b => ({id: b.id, type: b.type, x: b.x, y: b.y, done: b.done, progress: b.progress}))});
+    if (!s.got) return;
+    const nat = Budget.NATURALS[s.start != null ? s.start : startIndex], near = u => Math.hypot(u.x - nat[0], u.y - nat[1]) < 1500;
+    const ps = s.units.filter(u => u.type === 'hpea'), home = W.starts[s.start != null ? s.start : startIndex];
+    h.samples.push({t: s.t, got: s.got, miners: ps.filter(u => u.role === 'gold' && !near(u)).length, natMiners: ps.filter(u => u.role === 'gold' && near(u)).length,
+      jacks: ps.filter(u => u.role === 'wood').length,
+      natHall: s.buildings.some(b => ['htow', 'hkee', 'hcas'].includes(b.type) && b.done && Math.hypot(b.x - home.x, b.y - home.y) > 2000)});
+    if (h.samples.length > 400) h.samples.shift();
+    h.rates = Budget.ratesFrom(h.samples) || h.rates;
+  };
+  const liveUT = () => !!(live.on && live.state && live.state.script && (live.state.script.lanes || []).length && window.ScriptEditor && ScriptEditor.ready());
+  let utLiveT = null, utLiveHold = 0, lastProj = -1e9;
+  function projectLive() { // every 2 s: the past as it was, the rest from now
+    const s = live.state, h = live.hist; if (!h || performance.now() - lastProj < 2000) return;
+    lastProj = performance.now();
+    const j = ScriptEditor.project(s, h.rates), ideal = ScriptEditor.budget(); if (!j || !ideal) return;
+    const src = h.frames.filter(f => f.t < j.now).concat(j.frames), F = []; // one frame a second, by index (the timeline reads them so)
+    for (let sec = 0, i = 0; sec <= Math.floor(src[src.length - 1].t); sec++) { while (i + 1 < src.length && src[i + 1].t <= sec) i++; F.push({...src[i], t: sec}); }
+    j.frames = F;
+    const baseline = new Map(); for (const L of ideal.timeline.lanes) L.steps.forEach((x, k) => { if (x.start != null) baseline.set(L.label + '|' + k + '|' + x.raw, x.start); });
+    UnifiedTimeline.setData(j, {baseline, now: s.t});
+    const r = h.rates; $('modeTag').title = r ? `推算用的采集速度（最近 90 秒实测）：每人每秒 金 ${(r.gold || Budget.RATES.gold).toFixed(2)} · 木 ${(r.wood || Budget.RATES.wood).toFixed(2)}` : '推算用的采集速度：默认值（实测数据还不够）';
+  }
 
   /* ---------- loop + controls ---------- */
   const bPlay = $('bPlay');
@@ -1226,7 +1271,8 @@
   resim(0); buildTimeline(); renderCmd(); fit(); home(); Live.probe(); requestAnimationFrame(frame);
   if (tlZoom !== 1) setTlZoom(tlZoom);
   if (window.UnifiedTimeline) UnifiedTimeline.mount({
-    getT: () => (live.replay ? live.replay.t : V().t), setT: v => { if (live.replay) Replay.seek(v); },
+    getT: () => (live.replay ? live.replay.t : liveUT() && utLiveT != null && performance.now() < utLiveHold ? utLiveT : V().t),
+    setT: v => { if (live.replay) Replay.seek(v); else if (liveUT()) { utLiveT = v; utLiveHold = performance.now() + 10000; } }, // back to now 10 s after the last drag
     pause: () => { playing = false; bPlay.textContent = '▶ 播放'; }, playing: () => playing && !!live.replay, say,
     picked: () => { const us = pickedUnits(); if (us.length) lookAt(us.reduce((a, u) => a + u.x, 0) / us.length, us.reduce((a, u) => a + u.y, 0) / us.length); renderCmd(); },
     editStep: op => ScriptEditor.editFromTimeline(op), openCard: (label, k) => ScriptEditor.openCardOf(label, k),
@@ -1244,12 +1290,16 @@
   let cmdSec = -1;
   function syncUT() { // the timeline tab shows the script's lanes while a preview is open
     if (orderMode() && Math.floor(live.replay.t) !== cmdSec) { cmdSec = Math.floor(live.replay.t); if (UTL().pick.size || document.body.classList.contains('v4')) renderCmd(); } // the card names the moment
-    const on = orderMode() && !(window.ScriptEditor && ScriptEditor.active());
+    const lv = liveUT(); if (lv) { projectLive(); if (Math.floor(V().t) !== cmdSec) { cmdSec = Math.floor(V().t); renderCmd(); } }
+    const on = (orderMode() || (lv && UTL().has())) && !(window.ScriptEditor && ScriptEditor.active());
     if (on && live.replay) $('orderTop').textContent = `在 ${fmt(live.replay.t)} 下令`;
+    $('orderTop').hidden = !!lv; // orders in a live game: the next step
     if (on === utOn) return; utOn = on;
+    if (lv) say('时间轴跟着游戏：红线是现在，之前是真实时间，之后按实测速度推算；色块上的 +/− 秒是和理想计划的差');
     UnifiedTimeline.show(on); document.querySelector('.tl').classList.toggle('ut-mode', on); document.body.classList.toggle('v4', on); renderCmd();
   }
   if (window.ScriptEditor) ScriptEditor.init({live: () => live, openPreview: (j, fromStart) => { // a new preview keeps the moment being looked at; a demo plays from 0:00
+      if (live.on) return; // connected: the timeline follows the game
       const keep = live.replay && live.replay.preview ? live.replay.t : null; Replay.open(j, null); if (window.UnifiedTimeline) { UnifiedTimeline.setData(j); utOn = null; syncUT(); } // new data: draw it again
       if (fromStart) { Replay.seek(0); playing = true; bPlay.textContent = '❚❚ 暂停'; } else if (keep != null) Replay.seek(keep); },
     exitPreview: () => Replay.exit(true),

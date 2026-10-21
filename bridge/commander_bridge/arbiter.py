@@ -459,6 +459,7 @@ class Arbiter(Commander):
     def snapshot(self) -> dict:
         s = super().snapshot()
         s["arbiter"] = True
+        s["got"] = [round(self._got[0]), round(self._got[1])]  # gathered so far: the console measures income from it
         s["decisions"] = self.decisions
         for e in self.events:  # accepted but never carried out: ordered 15 s ago, no sign of it in the game
             r = self.rt[e["id"]]

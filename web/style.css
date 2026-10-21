@@ -388,6 +388,12 @@ body.u-scrubbing,body.u-scrubbing *{cursor:ew-resize!important;user-select:none}
 .u-arrows{position:absolute;left:0;top:0;pointer-events:none;z-index:6;overflow:visible}
 .u-stale{position:absolute;z-index:4;pointer-events:none;background:repeating-linear-gradient(-45deg,rgba(13,18,20,.55) 0 8px,rgba(13,18,20,.25) 8px 16px);border-left:2px dashed var(--accent)}
 .u-stale span{position:sticky;left:0;display:inline-block;margin:6px 8px;font-size:12px;color:var(--accent);background:var(--panel);border:1px solid var(--accent);border-radius:6px;padding:2px 8px}
+.u-proj{position:absolute;z-index:1;pointer-events:none;background:repeating-linear-gradient(-45deg,rgba(120,150,170,.07) 0 6px,transparent 6px 12px)}
+.u-proj span{position:sticky;left:0;display:inline-block;margin:4px 8px;font-size:11px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.u-livebox .u-lv{font-size:12px;margin:4px 0}
+.u-livebox .u-it{font-size:12px;display:flex;flex-wrap:wrap;gap:4px;align-items:baseline}
+.u-livebox .u-it .u-lv{margin:0 0 0 auto}
+.u-lv.late{color:#e07a6a}.u-lv.early{color:#7fc48a}
 .u-ghost-t{position:absolute;top:-2px;left:0;font-family:var(--f-mono);font-size:10.5px;background:var(--accent);color:var(--accent-ink);border-radius:3px;padding:0 5px;z-index:10}
 .u-side{display:flex;flex-direction:column;gap:8px}
 .u-box{background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:8px 10px;min-width:0}

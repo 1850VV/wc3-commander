@@ -19,6 +19,7 @@
   const NATURALS = [[-3776, -7488], [-6912, 2176], [4480, 6912], [7040, -2944]];
   const ONGOING = ['采金', '伐木', '集合', '待命'];
   const HALLS = ['htow', 'hkee', 'hcas'];
+  const UPGRADES = ['hkee', 'hcas', 'hatw', 'hgtw', 'hctw'];
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
   const fmt = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
 
@@ -108,6 +109,43 @@
     return out;
   }
 
+  /* ---------- what the game has done (the same reading as the server's timeline_of) ---------- */
+  /* per lane label, each step's start (decision record: 「第 N 行第 K 步」) and work / done / site (events) */
+  function actualOf(S) {
+    const out = {}, cell = (label, k) => ((out[label] = out[label] || [])[k] = out[label][k] || {});
+    for (const d of S.decisions || []) {
+      const m = /^第 (\d+) 行第 (\d+) 步/.exec(d.why || ''), ci = (d.action || '').indexOf('：');
+      if (!m || ci < 0) continue;
+      const c = cell(d.action.slice(0, ci), +m[2] - 1); if (c.start == null) c.start = d.t;
+    }
+    const rts = S.events || {};
+    for (const e of S.arbEvents || []) {
+      if (e.phase == null || e.step == null) continue;
+      const rt = rts[e.id] || {}, c = cell(e.phase, e.step);
+      if (rt.bStart != null) c.work = rt.bStart; else if (rt.trainStart != null) c.work = rt.trainStart;
+      if (rt.aEnd != null) c.done = rt.aEnd;
+      if (rt.builtAt || e.site) c.at = rt.builtAt || e.site;
+    }
+    return out;
+  }
+  /* gathering speed per worker, measured: samples of the live game {t, got: [gold, wood], miners, natMiners,
+   * natHall, jacks}; over the last `window` seconds, what came in divided by worker-seconds (the same
+   * counting as the model: 5 a mine, a natural with no hall at farNatural). Null until there is enough. */
+  function ratesFrom(samples, window = 90) {
+    const S = samples.filter(x => x.t >= samples[samples.length - 1].t - window);
+    if (S.length < 2) return null;
+    let gw = 0, ww = 0;
+    for (let i = 0; i + 1 < S.length; i++) {
+      const a = S[i], dt = S[i + 1].t - a.t; if (dt <= 0 || dt > 10) continue;
+      gw += (Math.min(a.miners, RATES.perMine) + Math.min(a.natMiners, RATES.perMine) * (a.natHall ? 1 : RATES.farNatural)) * dt;
+      ww += a.jacks * dt;
+    }
+    const first = S[0], last = S[S.length - 1], out = {};
+    if (gw >= 60) out.gold = Math.max(0.8, Math.min(3.5, (last.got[0] - first.got[0]) / gw));
+    if (ww >= 60) out.wood = Math.max(0.2, Math.min(1.2, (last.got[1] - first.got[1]) / ww));
+    return Object.keys(out).length ? out : null;
+  }
+
   /* ---------- the run ---------- */
   function run(opts) {
     const eco = opts.eco, start = opts.start || 0, R = {...RATES, ...(opts.rates || {})}, END = opts.end || 600, DT = 0.5;
@@ -119,7 +157,7 @@
     const awayFromMine = (() => { const n = dist(hall, mine) || 1; return [hall[0] + (hall[0] - mine[0]) / n * 700, hall[1] + (hall[1] - mine[1]) / n * 700]; })();
     const treeSpot = where => where === 'natural' ? (places.分矿木场 || [natural[0] + 500, natural[1] + 300]) : awayFromMine;
     function addBuilding(type, at, tag, done) { const b = {id: 'b' + buildings.length, type, x: at[0], y: at[1], tag, work: done ? -1 : t, done: done ? 0 : null, prog: done ? 1 : 0, helpers: new Set(), busy: null, queueFree: true}; buildings.push(b); if (tag) tags[tag] = b; return b; }
-    const mainHall = addBuilding('htow', hall, null, true);
+    let mainHall = addBuilding('htow', hall, null, true);
     for (let c = 1; c <= 5; c++) units.set(c, {id: c, type: 'hpea', x: hall[0] + (mine[0] - hall[0]) * 0.3 + (c - 3) * 40, y: hall[1] + (mine[1] - hall[1]) * 0.3, job: {kind: 'idle'}, walk: null});
     const foodCap = () => buildings.reduce((a, b) => a + (b.done != null && b.done <= t ? (eco[b.type] || {}).foodMade || 0 : 0), 0);
     let foodUsed = 5;
@@ -252,11 +290,89 @@
       if (a === '升级') return rec.work != null;
       return (L.made || 0) >= (st.count || 1); // 训练 ×N, 农民N: once they are out
     }
+    /* ---- the game as it is: what each lane has done (its real times), units where they stand,
+     * buildings with their progress and queues, the money in the bank; the clock goes on from there */
+    function restore(S) {
+      t = Math.ceil((S.t || 0) / DT) * DT;
+      gold = S.gold || 0; wood = S.wood || 0; if (S.got) got = [S.got[0], S.got[1]];
+      const act = actualOf(S);
+      units.clear();
+      for (const u of S.units || []) if (u.id) units.set(u.id, {id: u.id, type: u.type, x: u.x, y: u.y, job: {kind: 'idle'}, walk: null, milEnd: t + R.militia_s / 2});
+      for (const id of units.keys()) if (id > 100) nextId = Math.max(nextId, id + 1);
+      buildings.length = 0; for (const k of Object.keys(tags)) delete tags[k];
+      const typeOfName = {}; for (const [k, v] of Object.entries(eco)) if (v && v.name && !(v.name in typeOfName)) typeOfName[v.name] = k;
+      for (const x of S.buildings || []) {
+        const b = addBuilding(x.type, [x.x, x.y], null, x.done);
+        if (!x.done) { b.prog = x.progress || 0; b.work = t - b.prog * ((eco[x.type] || {}).time || 60); }
+        const ut = x.train && typeOfName[x.train.name];
+        if (ut) b.busy = UPGRADES.includes(ut) ? {kind: 'upgrade', to: ut, end: t + (x.train.left || 0), L: null} : {kind: 'train', ut, end: t + (x.train.left || 0), L: null};
+      }
+      const halls = buildings.filter(b => HALLS.includes(b.type));
+      if (halls.length) mainHall = halls.reduce((a, b) => (dist([a.x, a.y], hall) <= dist([b.x, b.y], hall) ? a : b));
+      const nearest = (type, at, open) => buildings.filter(b => b.type === type && (!open || b.done == null))
+        .reduce((a, b) => (!a || (at && dist([b.x, b.y], at) < dist([a.x, a.y], at)) ? b : a), null);
+      const live = Object.fromEntries(((S.script || {}).lanes || []).map(x => [x.label, x]));
+      // what has happened: real times, tags, sites taken, the clear
+      for (const L of lanes) {
+        const X = live[L.label], A = act[L.label] || [];
+        L.steps.forEach((st, k) => {
+          const a = A[k] || {}, rec = L.rec[k];
+          for (const f of ['start', 'work', 'done']) if (a[f] != null && a[f] <= t) rec[f] = a[f];
+          if (a.at) { rec.at = a.at; usedSites.add(a.at.join()); }
+          if (st.tag && rec.work != null) {
+            if (st.act === '建造') { const b = nearest(st.btype, rec.at); if (b) { tags[st.tag] = b; b.tag = st.tag; if (b.done == null) { b.L = L; b.k = k; } } }
+            else if (st.act === '升级') tags[st.tag] = {work: rec.work, done: rec.done != null ? rec.done : null, x: mainHall.x, y: mainHall.y};
+          }
+        });
+        if (!X) continue;
+        L.i = Math.max(0, Math.min(X.i, L.steps.length - 1)); L.on = !!X.on; L.done = !!X.done;
+        if (X.dead) { L.done = true; L.dead = true; units.delete(L.cid); }
+        if (L.kind === 'hero') {
+          const ci = L.steps.findIndex(x => x.act === '清野'), r = L.rec[ci];
+          if (ci >= 0 && r && r.start != null) {
+            const u = heroOf(L.hero), next = L.rec[ci + 1] && L.rec[ci + 1].start;
+            if (L.i > ci || r.done != null) clear = {start: r.start, end: r.done != null ? r.done : next != null ? next : t};
+            else clear = {start: r.start, end: t + (u ? dist([u.x, u.y], natural) / R.hero : 0) + Math.max(5, R.clear - (t - r.start))};
+          }
+        }
+      }
+      for (const b of buildings) if (b.busy && b.busy.ut === 'Hamg') heroTrain = {start: t, end: b.busy.end};
+      // what is going on: give each unit his step again from where he stands, queues to their lanes
+      for (const L of lanes) {
+        if (L.done || !L.on) continue;
+        const st = L.steps[L.i], rec = L.rec[L.i];
+        if (L.kind === 'peasant') {
+          const u = units.get(L.cid); if (!u) { L.on = false; continue; } // in training
+          if (st.act === '建造' && rec.work != null) { const b = nearest(st.btype, rec.at, true); u.job = {kind: 'build', site: rec.at || [u.x, u.y], arrive: t, b}; continue; }
+          if (st.act === '建造' && rec.at) { u.job = {kind: 'build', site: rec.at, arrive: walkTo(u, rec.at, R.peasant)}; continue; }
+          if (u.type === 'hmil' && st.act === '敲钟') continue;
+          if (!begin(L, st, rec) && !ONGOING.includes(st.act)) L.on = false;
+          continue;
+        }
+        if (L.kind === 'hero' || L.kind === 'army') { if (st.act === '清野') { const u = heroOf(L.hero); if (u) { u.job = {kind: 'clear'}; walkTo(u, natural, R.hero); } } else if (!begin(L, st, rec) && !ONGOING.includes(st.act)) L.on = false; continue; }
+        // a building's lane: its queue is already in the building
+        if (st.act === '训练' || st.act === '农民') {
+          const ut = st.act === '农民' ? 'hpea' : st.unit, b = producers(L).find(x => x.busy && x.busy.kind === 'train' && x.busy.ut === ut && !x.busy.L);
+          const earlier = L.steps.slice(0, L.i).filter(x => x.unit === ut).reduce((a, x) => a + (x.count || 1), 0);
+          L.made = st.act === '农民' ? 0 : Math.max(0, Math.min((st.count || 1) - (b ? 1 : 0), [...units.values()].filter(u => u.type === ut).length - earlier));
+          L.queued = L.made + (b ? 1 : 0);
+          if (b) Object.assign(b.busy, {L, k: L.i, as: st.peasant});
+        } else if (st.act === '升级') {
+          const b = producers(L).find(x => x.busy && x.busy.kind === 'upgrade' && !x.busy.L) || buildings.find(x => x.busy && x.busy.kind === 'upgrade' && x.busy.to === st.to && !x.busy.L);
+          if (b) { Object.assign(b.busy, {L, k: L.i}); if (st.tag && tags[st.tag] && tags[st.tag].done == null) b.busy.mark = tags[st.tag]; }
+        }
+      }
+      for (const r of reserves) if (tags[r.tag] && tags[r.tag].work != null) r.off = true;
+    }
     function producers(L) {
       if (L.tag) { const b = tags[L.tag]; return b && b.done != null && b.done <= t ? [b] : []; }
       if (HALLS.includes(L.btype)) return [mainHall];
       return buildings.filter(b => b.type === L.btype && b.done != null && b.done <= t);
     }
+
+    if (opts.live) restore(opts.live);
+    const now = t;
+    if (opts.live) { foodUsed = opts.live.foodUsed != null ? opts.live.foodUsed : foodUsed; frames.push({...frame(), t: opts.live.t, gold: Math.floor(gold), wood: Math.floor(wood)}); } // the game as it is, before the model moves
 
     // ---- the clock
     for (; t <= END + 1e-9; t = Math.round((t + DT) * 100) / 100) {
@@ -282,15 +398,19 @@
           if (bz.kind === 'train') {
             const id = bz.ut === 'hpea' && bz.as ? bz.as : nextId++;
             units.set(id, {id, type: bz.ut, x: b.x + 120, y: b.y - 120, job: {kind: 'idle'}, walk: null});
-            bz.L.rec[bz.k].done = t; bz.L.made = (bz.L.made || 0) + 1;
+            if (bz.L) { bz.L.rec[bz.k].done = t; bz.L.made = (bz.L.made || 0) + 1; }
             if (bz.ut === 'Hamg') heroTrain = null;
-          } else { b.type = bz.to; bz.L.rec[bz.k].done = t; if (bz.mark) bz.mark.done = t; }
+          } else { b.type = bz.to; if (bz.L) bz.L.rec[bz.k].done = t; if (bz.mark) bz.mark.done = t; }
         }
       }
       // militia: change at the hall, turn back 45 s later
       for (const u of units.values()) {
         if (u.job.kind === 'bell' && t >= u.job.at && u.type === 'hpea') { u.type = 'hmil'; u.milEnd = t + R.militia_s; }
-        if (u.type === 'hmil' && t >= u.milEnd) u.type = 'hpea';
+        if (u.type === 'hmil' && t >= u.milEnd) {
+          u.type = 'hpea';
+          const L = lanes.find(x => x.cid === u.id && x.on && !x.done);
+          if (L && (L.steps[L.i].act === '采金' || L.steps[L.i].act === '伐木')) begin(L, L.steps[L.i], L.rec[L.i]);
+        }
       }
       for (const r of reserves) { if (!r.on && !r.off && holds(r.cond)) r.on = true; if (r.on && !r.off && tags[r.tag] && tags[r.tag].work != null) r.off = true; }
       // lanes, earlier lines first
@@ -310,7 +430,7 @@
             const u = units.get(L.cid);
             if (t >= u.job.arrive) { const c = eco[st.btype] || {gold: 0, wood: 0}; if (afford(c.gold, c.wood, L.line)) { pay(c.gold, c.wood); const b = addBuilding(st.btype, u.job.site, st.tag || null, false); b.L = L; b.k = L.i; u.job.b = b; rec.work = t; } }
           }
-          if ((st.act === '训练') && L.queued < (st.count || 1)) trainOne(L, st, rec);
+          if ((st.act === '训练' || st.act === '农民') && L.on && L.queued < (st.count || 1)) trainOne(L, st, rec); // the rest of ×N; a queue the game had not started yet
           if (!finished(L, st, rec)) break;
           if (rec.done == null && !ONGOING.includes(st.act) && st.act !== '训练' && st.act !== '农民' && st.act !== '升级') rec.done = t;
           if (L.i + 1 >= L.steps.length) { if (!ONGOING.includes(st.act)) L.done = true; break; }
@@ -354,14 +474,14 @@
     const types = {}; for (const u of units.values()) types[u.id] = u.type === 'hmil' ? 'hpea' : u.type;
     const cleanPlaces = Object.fromEntries(Object.entries(places).filter(([k, v]) => k !== '__pools' && v));
     const last = frames[frames.length - 1] || {gold, wood, foodUsed, foodCap: foodCap()};
-    return {ok: true, budget: true, t: END, frames, timeline: {lanes: tl, places: cleanPlaces, hall, mine, natural, mineGold: 12500, units: types},
+    return {ok: true, budget: true, t: END, now, frames, timeline: {lanes: tl, places: cleanPlaces, hall, mine, natural, mineGold: 12500, units: types},
       gold: last.gold, wood: last.wood, foodUsed: last.foodUsed, foodCap: last.foodCap, decisions, script: {lanes: tl.map(l => ({label: l.label, kind: l.kind, line: l.line, i: 0, on: false, done: false, dead: false, muted: !!l.muted, steps: l.steps.map(s => s.raw)})), positions: cleanPlaces},
       meta: {name: '预算 · 出生点 ' + start, start, preview: true, budget: true},
       state: {start, arbiter: false, decisions, arbEvents: [], events: {}, consistency: null, script: {lanes: [], positions: cleanPlaces}},
       rates: R};
   }
 
-  const Budget = {run, fromText, parseStep, parseCond, laneHead, resolvePlaces, RATES, NATURALS, fmt};
+  const Budget = {run, actualOf, ratesFrom, fromText, parseStep, parseCond, laneHead, resolvePlaces, RATES, NATURALS, fmt};
   if (typeof module !== 'undefined' && module.exports) module.exports = Budget;
   else root.Budget = Budget;
 })(typeof window !== 'undefined' ? window : globalThis);

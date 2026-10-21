@@ -175,12 +175,12 @@
    * arithmetic in a few milliseconds, so every change shows at once. The console opens it like a
    * replay: the event timeline, the map and these cards all show it. full: play it on the bridge's
    * fake world instead (about 5 s), a check that the budget is not far off */
-  function budget(start) {
+  function budget(start, extra = {}) {
     const D = window.LT_DATA, s0 = D.starts[start], hall = [s0.x, s0.y];
     const mine = D.mines.map(m => [m.x, m.y]).sort((a, b) => Math.hypot(a[0] - hall[0], a[1] - hall[1]) - Math.hypot(b[0] - hall[0], b[1] - hall[1]))[0];
     const {text, map} = toText(), m = Budget.fromText(text);
     const places = Budget.resolvePlaces(m.positions, layoutGroups(start), hall, Budget.NATURALS[start]);
-    const j = Budget.run({eco: D.economy.units, start, hall, mine, lanes: m.lanes, reserves: m.reserves, places, rates: S.rates});
+    const j = Budget.run({eco: D.economy.units, start, hall, mine, lanes: m.lanes, reserves: m.reserves, places, rates: extra.rates, live: extra.live, end: extra.live ? Math.max(600, Math.ceil(extra.live.t || 0) + 300) : 600});
     j.meta.name = '预算 · ' + api.startName(start);
     return {j, text, map};
   }
@@ -200,7 +200,11 @@
       if (!j.ok) { render(); api.say('没跑成：' + (j.error || (j.errors || [])[0] || '未知原因'), true); return; }
       if (api.live().on) { render(); return; } // a game started meanwhile
       j.meta.name = '假游戏 · ' + api.startName(start);
-    } else { await loadLayout(start); ({j, text, map} = budget(start)); } // the start's layout first: its sites are where the walks go
+    } else {
+      await loadLayout(start); // the start's layout first: its sites are where the walks go
+      if (api.live().on) return; // connected meanwhile: the timeline follows the game
+      ({j, text, map} = budget(start));
+    }
     S.previewMap = map; S.previewText = text; S.timingKey = ''; S.movedPos.clear(); S.moved.clear();
     S.lastPreview = j;
     const dead = (j.script.lanes || []).filter(l => l.dead).map(l => l.label);
@@ -1169,7 +1173,9 @@
     if (src) refresh();
   }
 
-  window.ScriptEditor = {init, tick, preview, budget: () => (M ? budget(api.startIndex()).j : null), planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf, toggleMute,
+  window.ScriptEditor = {init, tick, preview, ready: () => !!M, budget: () => (M ? budget(api.startIndex()).j : null),
+    // connected: the game so far plus the rest of the script from now, at the measured rates
+    project: (state, rates) => (M ? budget(state.start != null ? state.start : api.startIndex(), {live: state, rates}).j : null), planFor, sites, moveSite, selectStep, selectUnit, onMap, markers, editing, addOrder, editFromTimeline, openCardOf, toggleMute,
     placing: () => S.placing, cancelPlacing: () => { if (S.placing) { S.placing = null; api.say('已取消放置'); } },
     placed: (pos) => { const p = S.placing; S.placing = null; if (p) moveSite(p.l, p.s, pos); }, markerAt, moveMarker, selectPos, active: () => S.active,
     _test: {splitStep, joinStep, laneKind, laneCids, toText: () => toText(), model: () => M}};

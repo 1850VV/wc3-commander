@@ -91,3 +91,43 @@ test('every start plays the script through', () => {
     assert.ok(step(r, '城镇大厅', 14).done != null, NAMES[s] + ': keep');
   }
 });
+
+// a fake game part-way (tools/export_live_state.py 200): what it had done, and how it went on
+const LIVE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'live-s0-200.json'), 'utf8'));
+function project(state) {
+  const plan = JSON.parse(fs.readFileSync(path.join(ROOT, 'strategies', '人族速矿二本 · 南方.json'), 'utf8'));
+  const s = D.starts[0], hall = [s.x, s.y], m = Budget.fromText(SCRIPT);
+  const mine = D.mines.map(x => [x.x, x.y]).sort((a, b) => Math.hypot(a[0] - hall[0], a[1] - hall[1]) - Math.hypot(b[0] - hall[0], b[1] - hall[1]))[0];
+  return Budget.run({eco: D.economy.units, start: 0, hall, mine, lanes: m.lanes, reserves: m.reserves,
+    places: Budget.resolvePlaces(m.positions, (plan.plan || plan).groups, hall, Budget.NATURALS[0]), live: state});
+}
+const later = (label, k) => LIVE.later.find(l => l.label === label).steps[k];
+
+test('from a live game: what happened keeps its real times, the rest goes on from now', () => {
+  const r = project(LIVE.state);
+  assert.strictEqual(r.now, 200);
+  assert.strictEqual(r.frames[0].t, 200, 'frames from now on (the console has the game\'s own before)');
+  const mill = step(r, '农民8', 4), real = later('农民8', 4);
+  assert.deepStrictEqual([mill.start, mill.work], [real.start, real.work], 'begun before now: real times');
+  assert.ok(Math.abs(mill.done - real.done) < 3, 'finishes after now: from its progress');
+  assert.ok(Math.abs(step(r, '农民8', 6).start - later('农民8', 6).start) < 3, 'the hall right after the mill, as in the game');
+  for (const [label, k] of [['城镇大厅', 14], ['国王祭坛', 2], ['农民22', 1]]) {
+    const err = Math.abs(step(r, label, k).start - later(label, k).start);
+    assert.ok(err <= 20, `${label} step ${k + 1}: ${err} s off what the game did`);
+  }
+});
+
+test('measured rates: income over worker-seconds', () => {
+  const S = [];
+  for (let t = 0; t <= 60; t += 2) S.push({t, got: [t * 5 * 1.8, t * 4 * 0.6], miners: 5, natMiners: 0, natHall: false, jacks: 4});
+  const r = Budget.ratesFrom(S);
+  assert.ok(Math.abs(r.gold - 1.8) < 0.01 && Math.abs(r.wood - 0.6) < 0.01, JSON.stringify(r));
+  assert.strictEqual(Budget.ratesFrom(S.slice(0, 3)), null, 'not enough yet');
+});
+
+test('from a live game: a queue the game has not started yet (no money or food then) still gets trained', () => {
+  const state = JSON.parse(JSON.stringify(LIVE.state)), hallLane = state.script.lanes.find(l => l.label === '城镇大厅');
+  for (const b of state.buildings) if (b.type === 'htow') b.train = null;
+  const who = hallLane.steps[hallLane.i], r = project(state);
+  assert.ok(lane(r, who).steps[0].start != null, `${who} is trained after all`);
+});
