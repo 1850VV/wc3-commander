@@ -546,6 +546,15 @@
         });
       }
     }
+    if (cam.s > 0.07) for (const b of blds) if (b.state === 'up' && MAKES[b.type]) { // what it is making at the red line, and how many wait
+      const P = prodOf(b, t); if (!P) continue;
+      const [x, y, w, h] = (r => [sx(r[0]), sy(r[3]), (r[2] - r[0]) * cam.s, (r[3] - r[1]) * cam.s])(rectOf(b, 'body'));
+      late.push(() => {
+        const bw = Math.max(w, 46), bx = x + (w - bw) / 2, by = y + h + 3;
+        if (P.cur) { ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(bx - 1, by, bw + 2, 6); ctx.fillStyle = '#e4c14a'; ctx.fillRect(bx, by + 1, bw * P.p, 4); }
+        label((P.cur ? P.cur : '空闲') + (P.wait ? ` · 后面 ${P.wait} 项` : ''), x + w / 2, by + 14, P.cur ? '#f3dc8a' : '#b7b2a0', 10);
+      });
+    }
     const us = units(t), picked = TL.pick;
     drawLives(us, t);
     if (false) for (const u of us) if (picked.has(u.cid)) {
@@ -580,7 +589,12 @@
     if (nodeDrag) { const x = sx(nodeDrag.x), y = sy(nodeDrag.y); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#d6a03f'; ctx.beginPath(); ctx.moveTo(nodeDrag.nd.x, nodeDrag.nd.y); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]); ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.strokeStyle = '#d6a03f'; ctx.lineWidth = 2; ctx.stroke(); }
     for (const f of flags) { const k = (performance.now() - f.at) / 600; if (k > 1) continue; ctx.beginPath(); ctx.arc(sx(f.x), sy(f.y), 6 + k * 14, 0, 7); ctx.strokeStyle = `rgba(${f.c},${1 - k})`; ctx.lineWidth = 2; ctx.stroke(); }
     flags = flags.filter(f => performance.now() - f.at < 600);
-    if (box) { ctx.setLineDash([4, 3]); ctx.strokeStyle = '#7fe08a'; ctx.lineWidth = 1; ctx.strokeRect(Math.min(box.x0, box.x1), Math.min(box.y0, box.y1), Math.abs(box.x1 - box.x0), Math.abs(box.y1 - box.y0)); ctx.setLineDash([]); }
+    if (bDrag && !bDrag.no) {
+      const what = bDrag.b.s.body.split(' ')[1], g = placeGhost(bDrag.x, bDrag.y, what, bDrag.b.s);
+      rect(rectOf(bDrag.b, 'body'), 'rgba(0,0,0,.35)', 'rgba(197,139,240,.5)', [3, 3], 1);
+      const [x, y, w] = rect(g.rect, g.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)', g.ok ? '#7fb069' : '#d0584a', null, 2);
+      label(g.ok ? `${what} 放这里（松手）` : g.why, x + w / 2, y - 10, g.ok ? '#c8f0b4' : '#ffb3a8', 11);
+    } else if (box && !bDrag) { ctx.setLineDash([4, 3]); ctx.strokeStyle = '#7fe08a'; ctx.lineWidth = 1; ctx.strokeRect(Math.min(box.x0, box.x1), Math.min(box.y0, box.y1), Math.abs(box.x1 - box.x0), Math.abs(box.y1 - box.y0)); ctx.setLineDash([]); }
     if (mode && mode.kind === 'build' && mouse) {
       const g = placeGhost(mouse.wx, mouse.wy, mode.what); const [x, y, w, h] = rect(g.rect, g.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)', g.ok ? '#7fb069' : '#d0584a', null, 2);
       label(g.ok ? `放${mode.what}（Shift 排队）` : g.why, x + w / 2, y - 10, g.ok ? '#c8f0b4' : '#ffb3a8', 11);
@@ -590,6 +604,29 @@
   }
   let selectedBuild = null;
 
+  /* ---------- moving a building that has not begun: drag it on the map ----------
+     编排: any building of the script (it is all a plan); 实战: one whose builder has not set off yet
+     (the game refuses a step it has begun); 回放: none. The step gets a new place (位置 X = 坐标 x,y),
+     the builder's walk, the build and everything after it are worked out again. */
+  let bDrag = null; // {b, x, y, g} while dragging
+  function movable(b) {
+    if (!b || !b.s || !b.L || !/^建造/.test(b.s.body)) return false;
+    const st = window.CONSOLE && CONSOLE.state;
+    if (st === 'replay') return false;
+    if (st === 'live') return b.state === 'plan' && b.s.start != null && b.s.start > TL.t;
+    return true;
+  }
+  function buildingAt(px, py) { return buildingsAt(TL.t).find(o => (rr => wx(px) > rr[0] && wx(px) < rr[2] && wy(py) > rr[1] && wy(py) < rr[3])(rectOf(o, 'body'))); }
+  function dropBuilding(d) {
+    const s = d.b.s, what = s.body.split(' ')[1], g = placeGhost(d.x, d.y, what, s);
+    if (!g.ok) { TL.toast('这里不能放：' + g.why); return; }
+    if (Math.hypot(g.x - d.b.x, g.y - d.b.y) < 32) return;
+    let nm; do { nm = what + placeN++; } while (nm in D.places);
+    D.places[nm] = [g.x, g.y]; s.pos = nm; s.at = null; s.edited = true;
+    const L = d.b.L, k = L.steps.indexOf(s);
+    editLane(L, k < 0 ? 0 : k, `${what}（${L.label} 建）换到新位置：走路、开工、完成和后面的时间都重算了。按 ↶ 可以撤回。`);
+  }
+
   /* ---------- placing a building ---------- */
   function isTree(x, y) {
     if (!texData) return false;
@@ -597,11 +634,11 @@
     const i = (py * M.w + px) * 4, r = texData[i], g = texData[i + 1], b = texData[i + 2];
     return g < 70 && r < 40 && b < 35;
   }
-  function placeGhost(x, y, what) {
+  function placeGhost(x, y, what, skip) { // skip: the build step being moved (its own old footprint does not count)
     const type = BT[what], f = M.body[type].foot, ox = ((f[2] - f[0]) / 2) % 64, oy = ((f[3] - f[1]) / 2) % 64;
     const px = Math.round((x - ox) / 64) * 64 + ox, py = Math.round((y - oy) / 64) * 64 + oy, b = {type, x: px, y: py}, r = rectOf(b, 'foot'), body = rectOf(b, 'body');
     let why = '';
-    for (const o of buildingsAt(TL.t)) { const q = rectOf(o, 'foot'); if (r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]) { why = `和${o.name}重叠`; break; } }
+    for (const o of buildingsAt(TL.t)) { if (skip && o.s === skip) continue; const q = rectOf(o, 'foot'); if (r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]) { why = `和${o.name}重叠`; break; } }
     for (const m of M.mines) { const q = m.body; if (!why && r[0] < q[2] + 96 && r[2] > q[0] - 96 && r[1] < q[3] + 96 && r[3] > q[1] - 96) why = '离金矿太近'; }
     if (!why) for (let gx = body[0] + 16; gx < body[2]; gx += 32) for (let gy = body[1] + 16; gy < body[3]; gy += 32) if (isTree(gx, gy)) { why = '压到树或悬崖'; break; }
     return {x: px, y: py, rect: body, ok: !why, why};
@@ -656,6 +693,12 @@
     if (mode && mode.kind === 'build') {
       const g = placeGhost(wx(px), wy(py), mode.what);
       if (!g.ok) { TL.toast('这里不能放：' + g.why); return; }
+      if (mode.auto) {
+        const u = autoBuilder(g.x, g.y); if (!u) { TL.toast(`${TL.fmt(TL.t)} 没有在采集的农民可以派`); return; }
+        TL.pick.clear(); TL.pick.add(u.cid);
+        flags.push({x: g.x, y: g.y, at: performance.now(), c: '121,176,238'}); give('build', {xy: [g.x, g.y], what: mode.what, queue: false});
+        if (!e.shiftKey) mode = null; renderCard(); return;
+      }
       if (e.shiftKey) { appendAt(sx(g.x), sy(g.y), {what: mode.what}); return; } // stays in build mode: Shift keeps adding
       flags.push({x: g.x, y: g.y, at: performance.now(), c: '121,176,238'}); give('build', {xy: [g.x, g.y], what: mode.what, queue: false});
       if (!e.shiftKey) mode = null; renderCard(); return;
@@ -679,11 +722,19 @@
       };
       cv.addEventListener('pointermove', mv); cv.addEventListener('pointerup', up); return;
     }
+    const press = !unitAt(px, py) && buildingAt(px, py), canMove = movable(press);
     box = {x0: px, y0: py, x1: px, y1: py};
-    const mv = q => { box.x1 = q.clientX - r.left; box.y1 = q.clientY - r.top; };
+    const mv = q => {
+      box.x1 = q.clientX - r.left; box.y1 = q.clientY - r.top;
+      if (press && Math.hypot(box.x1 - box.x0, box.y1 - box.y0) >= 6) {
+        if (!canMove) { if (!bDrag) TL.toast(CONSOLE.state === 'replay' ? '回放不能改' : '这座已经开始了（农民出发或已开工），不能再挪'); bDrag = {b: press, x: press.x, y: press.y, no: true}; return; }
+        bDrag = {b: press, x: press.x + (wx(box.x1) - wx(box.x0)), y: press.y + (wy(box.y1) - wy(box.y0))};
+      }
+    };
     const up = q => {
       cv.removeEventListener('pointermove', mv); cv.removeEventListener('pointerup', up);
       const b = box; box = null;
+      if (bDrag) { const d = bDrag; bDrag = null; if (!d.no) dropBuilding(d); return; }
       if (Math.hypot(b.x1 - b.x0, b.y1 - b.y0) < 6) { // a click
         const u = unitAt(px, py);
         if (u && (q.ctrlKey || q.metaKey)) { setPick(units(TL.t).filter(v => v.type === u.type && sx(v.x) >= 0 && sx(v.x) <= CW && sy(v.y) >= 0 && sy(v.y) <= CH).map(v => v.cid)); return; }
@@ -707,7 +758,10 @@
     };
     cv.addEventListener('pointermove', mv); cv.addEventListener('pointerup', up);
   });
-  cv.addEventListener('pointermove', e => { const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top; mouse = {px, py, wx: wx(px), wy: wy(py)}; });
+  cv.addEventListener('pointermove', e => {
+    const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top; mouse = {px, py, wx: wx(px), wy: wy(py)};
+    cv.style.cursor = bDrag ? (bDrag.no ? 'not-allowed' : 'grabbing') : !box && !mode && !panMode && movable(buildingAt(px, py)) && !unitAt(px, py) ? 'grab' : '';
+  });
   cv.addEventListener('pointerleave', () => { mouse = null; });
   cv.addEventListener('wheel', e => {
     e.preventDefault(); const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, x = wx(px), y = wy(py);
@@ -801,6 +855,17 @@
     let n = 2, tag; do { tag = b.name.replace(/^神秘/, '') + n++; } while (TL.lanes.some(L => L.label === '#' + tag) || TL.lanes.some(L => L.steps.some(x => x.tag === tag)));
     return fresh('#' + tag, tag);
   }
+  function prodOf(b, t) { // its production line at time t: what is being made (and how far), how many after it
+    const B = pickBuilding(b); if (B.none || B.L.fresh) return null;
+    let cur = null, p = 0, wait = 0;
+    for (const x of B.L.steps) {
+      if (/^集结点/.test(x.body)) continue;
+      const e = x.done ?? x.end;
+      if (x.start != null && x.start <= t && e != null && t < e) { cur = x.body; p = Math.max(0, Math.min(1, (t - (x.work ?? x.start)) / Math.max(1, e - (x.work ?? x.start)))); }
+      else if (x.start == null || x.start > t) wait++;
+    }
+    return cur || wait ? {cur, p, wait} : null;
+  }
   function nextPeasant() {
     let n = 0;
     for (const L of TL.lanes) { if (L.kind === 'peasant') n = Math.max(n, +L.label.slice(2) || 0); for (const x of L.steps) { const m = /^农民(\d+)$/.exec(x.body); if (m) n = Math.max(n, +m[1]); } }
@@ -858,9 +923,32 @@
       ${B.none ? '' : `<p class="hint">点按钮 = 从红线这一刻（${TL.fmt(t)}）起，排在正在做的后面；<b>Shift+点</b> = 排到队列最后。同一种兵连点会合成 ×2、×3。集结点：点按钮后在地图上点一下（点英雄 = 集结到英雄）。</p>`}`;
   }
 
+  /* nothing picked: place a building and let the commander send a peasant (the nearest one gathering at
+     the red line, a woodcutter first, none another step names); he goes back to his work after */
+  function emptyCardHTML() {
+    const t = TL.t, btns = menu === 'build' ? BUILD_LIST.map((b, i) => [`b-${b}`, b, 'build', '1234567890'[i]]).concat([['back', '返回', 'wait', 'escape']]) : [['buildmenu', '放建筑…', 'build', 'b']];
+    return `<h2>选中 · ${TL.fmt(t)}</h2>
+      <div class="selsum"><span class="hint">在地图上点选或拖框选单位；点建筑看它的生产队列；时间轴上点轨道名也一样</span></div>
+      <div class="cmdcard">${btns.map(([k, n, c, key]) => `<button type="button" class="c-${c} ${mode && mode.key === k ? 'on' : ''}" data-cmd="${k}" data-key="${key}"><kbd>${key === 'escape' ? 'Esc' : key.toUpperCase()}</kbd>${esc(n)}</button>`).join('')}</div>
+      <p class="hint">「放建筑」：选类型，在地图上点一下，指挥官从 ${TL.fmt(t)} 时在采集的农民里挑一个去建（后面没有别的任务的优先，先挑伐木的，再挑离得近的），建完回去干原来的活。没开工的建筑可以直接拖动换位置。</p>
+      <div class="gslots" role="group" aria-label="编队">${[1, 2, 3, 4].map(n => { const G = TL.groups().find(g => g.key === n); const c = G ? G.cids.length : 0;
+        return `<button type="button" class="gslot" data-gsel="${n}" title="${G ? '点 = 选中' + esc(G.name) : '空：选中单位后 Ctrl+' + n}"><kbd>${n}</kbd>${G ? esc(G.name) + ' <b>' + c + '</b>' : '<i>空</i>'}</button>`; }).join('')}</div>`;
+  }
+  function autoBuilder(x, y) { // gathering at the red line; one with a job still ahead of him (build, assist, bell, a squad) last
+    const t = TL.t;
+    const cands = units(t).filter(u => u.type === 'hpea' && u.L).map(u => {
+      const cur = TL.current(u.L.steps.map(step => ({step})), t).cur, a = cur ? cur.step.body : '';
+      const busy = u.L.steps.some(st => (st.start == null || st.start > t) && /^(建造|协助|敲钟|加入|清野|集合)/.test(st.body));
+      return {u, busy, wood: /^伐木/.test(a), gather: /^(采金|伐木)/.test(a), d: Math.hypot(u.x - x, u.y - y)};
+    }).filter(c => c.gather);
+    cands.sort((p, q) => (p.busy - q.busy) || (q.wood - p.wood) || p.d - q.d);
+    return cands[0] ? cands[0].u : null;
+  }
+
   /* ---------- the command card ---------- */
   function renderCard() {
     if (bsel && !TL.pick.size) { $('card').innerHTML = buildingCardHTML(); return; }
+    if (!TL.pick.size && !lifeLane) { $('card').innerHTML = emptyCardHTML(); return; }
     const us = pickedUnits(), peas = us.length && us.every(u => u.type === 'hpea'), t = TL.t;
     const groups = {}; for (const u of us) { const n = u.type === 'hpea' ? '农民' : u.type === 'hmil' ? '民兵' : /^H/.test(u.type) ? '英雄' : '步兵'; groups[n] = (groups[n] || 0) + 1; }
     const acts = {}; for (const u of us) if (u.L) { const a = TL.current(u.L.steps.map(step => ({step})), t).cur; const n = a ? a.step.body.split(' ').slice(0, 2).join(' ') : '空闲'; acts[n] = (acts[n] || 0) + 1; }
@@ -887,7 +975,7 @@
     const k = b.dataset.cmd;
     if (k === 'buildmenu') { menu = 'build'; renderCard(); return; }
     if (k === 'back') { menu = 'main'; mode = null; renderCard(); return; }
-    if (k.startsWith('b-')) { mode = {kind: 'build', what: k.slice(2), key: k}; menu = 'main'; renderCard(); TL.toast(`在地图上点一下放${k.slice(2)}；Shift 连着放；右键或 Esc 取消`); return; }
+    if (k.startsWith('b-')) { const auto = !TL.pick.size; mode = {kind: 'build', what: k.slice(2), key: k, auto}; menu = 'main'; renderCard(); TL.toast(`在地图上点一下放${k.slice(2)}${auto ? '，指挥官挑一个农民去建' : ''}；${auto ? '' : 'Shift 连着放；'}右键或 Esc 取消`); return; }
     if (k === 'move' || k === 'attack') { mode = {kind: k, key: k}; renderCard(); return; }
     if (k === 'hold') { const u = pickedUnits()[0]; give('hold', {xy: u ? [u.x, u.y] : null}); return; }
     if (bsel && !TL.pick.size) {
