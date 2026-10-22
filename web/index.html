@@ -34,8 +34,8 @@
     <button class="btn" id="disconnect" type="button" data-in="live">断开</button>
     <span class="more" data-in="plan replay"><button class="btn" id="moreBtn" type="button" aria-haspopup="true" aria-expanded="false">更多 ▾</button>
       <div class="menu" id="moreMenu" hidden role="menu">
-        <button type="button" data-m="saveas" role="menuitem">另存为一套新布局…</button>
-        <button type="button" data-m="load" role="menuitem">载入别的布局…</button>
+        <button type="button" data-m="saveas" role="menuitem">另存为新的战术脚本…</button>
+        <button type="button" data-m="load" role="menuitem">载入别的战术脚本…</button>
         <button type="button" data-m="replay" role="menuitem">回放以前的一局…</button>
         <hr>
         <button type="button" data-m="full" role="menuitem">完整跑一遍（假游戏，核对预算）</button>
@@ -132,6 +132,15 @@
     <p class="note" id="cfSaveNote" hidden>接管时游戏用的是<b>保存过的</b>战术脚本；现在有没保存的改动，先点「保存」。</p>
   </div>
   <div class="dlg-b"><button class="btn on" id="cfGo" type="button">连接</button><button class="btn" id="cfCancel" type="button">取消</button></div>
+</div></div>
+<div class="dlg" id="libDlg" hidden role="dialog" aria-label="战术脚本"><div class="dlg-box narrow">
+  <h2 id="libTitle">战术脚本</h2>
+  <div id="libSave" class="cf"><div class="cf-row"><span class="cf-l">新名字</span><input id="libName" type="text" maxlength="40" aria-label="新名字" style="flex:1;min-width:180px"></div>
+    <p class="note">存成 <code>strategies/战术脚本-名字.txt</code>，之后「保存」写这一份，接管的游戏也用这一份。原来那份不变。</p></div>
+  <div id="libLoad"><div class="runs" id="libList"></div>
+    <p class="note" id="libDirty" hidden>现在有没保存的改动：载入后可以按 Ctrl+Z 找回。</p>
+    <p class="note">载入后这一份就是「当前」的：「保存」写它，接管的游戏也用它。</p></div>
+  <div class="dlg-b"><button class="btn on" id="libGo" type="button">保存</button><button class="btn" id="libClose" type="button">关闭</button></div>
 </div></div>
 <div class="dlg" id="runDlg" hidden role="dialog" aria-label="回放以前的一局"><div class="dlg-box">
   <h2>回放以前的一局</h2>

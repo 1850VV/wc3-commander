@@ -18,7 +18,7 @@
   const $ = id => document.getElementById(id), TL = window.TL, fmt = TL.fmt, DATA = window.LT_DATA, ECO = DATA.economy.units;
   const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const START_NAMES = DATA.starts.map(s => s.name);
-  const S = {text: '', saved: '', model: null, start: 0, layouts: {}, undo: [], redo: [], busy: false, errors: [], state: 'plan', bottom: 'tl'};
+  const S = {name: '人族速矿二本', text: '', saved: '', model: null, start: 0, layouts: {}, undo: [], redo: [], busy: false, errors: [], state: 'plan', bottom: 'tl'};
   const LV = {es: null, state: null, hist: null, rates: null, hold: 0, lastProj: 0, adopted: false, backend: '', sending: false};
   let RP = null; // the replay open: {id, meta, frames, data}
   async function api(method, path, body) {
@@ -101,7 +101,12 @@
     for (const [name, xy] of Object.entries(TL.D.places)) // places made on the sandbox
       if (!named.has(name) && name !== '主矿' && name !== '分矿' && xy && TL.lanes.some(L => L.steps.some(s => s.pos === name))) out.push(`位置 ${name} = 坐标 ${Math.round(xy[0])},${Math.round(xy[1])}`);
     for (const [title, kind] of [['农民', 'peasant'], ['建筑生产顺序', 'building'], ['英雄', 'hero'], ['队伍', 'squad'], ['部队', 'army']]) {
-      const lanes = M.lanes.filter(x => x.kind === kind), extra = kind === 'squad' ? TL.lanes.filter(L => L.kind === 'squad' && !M.lanes.some(x => x.kind === 'squad' && '队伍·' + x.name === L.label)) : [];
+      const lanes = M.lanes.filter(x => x.kind === kind), mine = x => x.kind === kind;
+      // lines made on the console and not in the script yet: squads, a peasant just queued for training, a building's first queue
+      const extra = TL.lanes.filter(L => L.kind === kind && (
+        kind === 'squad' ? !M.lanes.some(x => mine(x) && '队伍·' + x.name === L.label)
+        : kind === 'peasant' ? !M.lanes.some(x => mine(x) && x.cids.includes(+L.label.slice(2)))
+        : kind === 'building' ? !M.lanes.some(x => mine(x) && laneLabelOf(x) === L.label) : false));
       if (!lanes.length && !extra.length && (kind === 'squad' || kind === 'army')) continue;
       out.push('', `# ---------- ${title} ----------`);
       for (const ln of lanes) {
@@ -118,7 +123,7 @@
           if (steps.length) out.push(...line(ln.head, steps, L ? muted(L) : ln.muted));
         }
       }
-      for (const L of extra) { const steps = stepsOf(L); if (steps.length) out.push(...line('队伍 ' + L.label.replace(/^队伍·/, ''), steps, muted(L))); }
+      for (const L of extra) { const steps = stepsOf(L); if (steps.length) out.push(...line(kind === 'squad' ? '队伍 ' + L.label.replace(/^队伍·/, '') : L.label, steps, muted(L))); }
     }
     out.push('', '# ---------- 留钱 ----------');
     for (const r of M.reserves) out.push(...note(r), r.raw.trim());
@@ -168,13 +173,13 @@
   async function save() {
     let j; try { j = await api('PUT', '/api/script', {text: S.text}); } catch (_) { TL.toast('没保存：连不上本地服务'); return; }
     if (!j.saved) { showErrors(j.errors || []); TL.toast('脚本有错，没有保存：' + ((j.errors || [])[0] || '')); return; }
-    S.saved = S.text; if (j.model) S.model = j.model; syncTop(); TL.toast('已保存：战术脚本（工地位置也在脚本里）。');
+    S.saved = S.text; if (j.model) S.model = j.model; if (j.name) S.name = j.name; syncTop(); TL.toast(`已保存：战术脚本「${S.name}」（工地位置也在脚本里）。`);
   }
   $('saveBtn').onclick = save;
 
   /* ---------- states and the top bar ---------- */
   const STATE = {
-    plan: {name: '编排', sub: () => `${START_NAMES[S.start]} · 时间按预算估算 · 改了马上重算`},
+    plan: {name: '编排', sub: () => `「${S.name}」 · ${START_NAMES[S.start]} · 时间按预算估算 · 改了马上重算`},
     live: {name: '实战', sub: () => LV.waiting ? (LV.waitLeft != null ? `等你打开魔兽争霸三 · 还剩 ${LV.waitLeft} 秒` : LV.found ? '已接入魔兽，等你开始一局' : '等你打开魔兽争霸三') : `${START_NAMES[S.start]} · ${LV.backend === 'fake' ? '假游戏' : '魔兽争霸三'} · ${$('tactic').getAttribute('aria-checked') === 'true' ? '指挥官在执行脚本' : '战术已关，只看不下令'}`},
     replay: {name: '回放', sub: () => RP ? `${(RP.meta.name || RP.id)}` : ''},
   };
@@ -190,7 +195,7 @@
     $('undoBtn').disabled = !S.undo.length || S.state === 'replay'; $('redoBtn').disabled = !S.redo.length || S.state === 'replay';
     $('undoBtn').title = S.undo.length ? `撤销（还能撤销 ${S.undo.length} 次，Ctrl+Z）` : '没有可以撤销的';
     $('redoBtn').title = S.redo.length ? `重做（${S.redo.length} 次，Ctrl+Shift+Z）` : '没有可以重做的';
-    $('stName').textContent = STATE[S.state].name; $('stSub').textContent = STATE[S.state].sub();
+    $('stName').textContent = STATE[S.state].name; $('stSub').textContent = $('stSub').title = STATE[S.state].sub();
     $('startSel').value = String(S.start);
   }
   $('startSel').innerHTML = START_NAMES.map((n, i) => `<option value="${i}">${n}</option>`).join('');
@@ -384,8 +389,11 @@
   async function openRun(id) {
     let j; try { j = await api('GET', '/api/runs/' + encodeURIComponent(id)); } catch (_) { TL.toast('读不到这一局'); return; }
     if (!j.ok || !j.frames || !j.frames.length) { TL.toast('这一局没有可以回放的记录' + (j.error ? '：' + j.error : '')); return; }
+    if (await showRun(j, id)) TL.toast(`回放：${RP.meta.name || id}。拖时间条或点「播放」看过程；回放不能改，点「回到编排」改脚本。`);
+  }
+  async function showRun(j, id, baseline) { // a recorded game (or a fake-game run) on the timeline and the sandbox, read only
     const st = j.state || {};
-    if (!st.script || !(st.script.lanes || []).length) { TL.toast('这一局不是按战术脚本打的，请用「更多 → 旧控制台」回放'); return; }
+    if (!st.script || !(st.script.lanes || []).length) { TL.toast('这一局不是按战术脚本打的，请用「更多 → 旧控制台」回放'); return false; }
     if (st.start != null) { S.start = st.start; await layoutOf(S.start); }
     // each step's real times: began (the decision record), work / done / site (the game's events)
     const act = Budget.actualOf(st), hall = DATA.starts[S.start];
@@ -396,18 +404,65 @@
     const T = {lanes, places: st.script.positions || {}, hall: [hall.x, hall.y], mine: mineOf([hall.x, hall.y]), natural: Budget.NATURALS[S.start], units: {}};
     RP = {id, meta: j.meta || {}, data: toData(T, perSecond(j.frames))};
     RP.data.real = {frames: perSecond(j.frames), upTo: RP.data.end};
+    if (baseline) RP.data.baseline = baseline;
     setState('replay'); TL.stop(); TL.t = 0;
     S.busy = true; try { show(RP.data); } finally { S.busy = false; }
-    TL.toast(`回放：${RP.meta.name || id}。拖时间条或点「播放」看过程；回放不能改，点「回到编排」改脚本。`);
+    return true;
   }
+  /* 完整跑一遍: this script on the fake game (the server plays 10 minutes in about 10 s); opened like a
+     replay, each step's shadow and ± against this budget */
+  async function fullRun() {
+    if (S.state === 'live') { TL.toast('连着游戏时不能跑假游戏，先点「断开」'); return; }
+    if (S.errors.length) { TL.toast('脚本有错，先改好：' + S.errors[0]); return; }
+    let ideal; try { ideal = budget(S.text, S.start); } catch (e) { TL.toast('预算没算出来：' + e.message); return; }
+    TL.toast('正在用假游戏把这份脚本跑 10 分钟（大约 10 秒）…');
+    let j; try { j = await api('POST', '/api/script/preview', {text: S.text, start: S.start}); } catch (_) { TL.toast('没跑成：连不上本地服务'); return; }
+    if (!j.ok) { TL.toast('没跑成：' + ((j.errors || [])[0] || j.error || '')); return; }
+    const base = new Map(); for (const L of ideal.timeline.lanes) L.steps.forEach((x, k) => { if (x.start != null) base.set(L.label + '|' + k + '|' + x.raw, {start: x.start, done: x.done}); });
+    if (!await showRun(j, '预演', base)) return;
+    RP.meta = {...RP.meta, name: `完整跑一遍（假游戏） · ${START_NAMES[S.start]}`}; syncTop();
+    TL.toast(`假游戏跑完了（用时 ${j.seconds} 秒）。色块上的 ± 和阴影是和预算比；沙盘画的是假游戏里真实的样子。点「回到编排」继续改。`);
+  }
+  /* 另存为 / 载入: the tactic scripts kept in strategies/战术脚本-<名字>.txt; the current one is what 「保存」 writes */
+  let LIB = null; // 'save' | 'load'
+  async function openLib(kind) {
+    if (kind === 'load' && S.state === 'live') { TL.toast('连着游戏时不能换脚本，先点「断开」'); return; }
+    LIB = kind; $('libSave').hidden = kind !== 'save'; $('libLoad').hidden = kind !== 'load'; $('libGo').hidden = kind !== 'save';
+    $('libTitle').textContent = kind === 'save' ? `另存为新的战术脚本（现在是「${S.name}」）` : '载入别的战术脚本';
+    if (kind === 'save') { $('libName').value = S.name + ' 2'; $('libDlg').hidden = false; $('libName').select(); return; }
+    let j; try { j = await api('GET', '/api/scripts'); } catch (_) { TL.toast('读不到战术脚本列表'); return; }
+    $('libDirty').hidden = S.text === S.saved;
+    $('libList').innerHTML = (j.scripts || []).map(x => `<button type="button" class="run" data-lib="${esc(x.name)}"><b>${esc(x.name)}</b>${x.name === j.current ? ' <span class="tag">当前</span>' : ''}<small>${esc(x.modified)}</small></button>`).join('') || '<p class="note">还没有别的战术脚本：先「另存为」一份。</p>';
+    $('libDlg').hidden = false;
+  }
+  $('libClose').onclick = () => { $('libDlg').hidden = true; };
+  $('libGo').onclick = async () => {
+    const name = $('libName').value.trim(); if (!name) { TL.toast('写一个名字'); return; }
+    let j; try { j = await api('PUT', '/api/script', {text: S.text, name}); } catch (_) { TL.toast('没保存：连不上本地服务'); return; }
+    if (!j.ok && j.error) { TL.toast(j.error); return; }
+    if (!j.saved) { showErrors(j.errors || []); TL.toast('脚本有错，没有保存：' + ((j.errors || [])[0] || '')); return; }
+    $('libDlg').hidden = true; S.saved = S.text; S.name = j.name || name; if (j.model) S.model = j.model; syncTop();
+    TL.toast(`另存为「${S.name}」：现在编辑的、接管的游戏用的都是这一份。`);
+  };
+  $('libList').onclick = async e => {
+    const b = e.target.closest('[data-lib]'); if (!b) return;
+    let j; try { j = await api('POST', '/api/script/use', {name: b.dataset.lib}); } catch (_) { TL.toast('没载入：连不上本地服务'); return; }
+    if (!j.ok) { TL.toast(j.error || '没载入'); return; }
+    $('libDlg').hidden = true;
+    if (j.text !== S.text) { S.undo.push(S.text); S.redo = []; }
+    S.text = S.saved = j.text; S.model = j.model; S.name = j.name;
+    recompute(); showErrors(j.errors || []); syncTop();
+    TL.toast(`载入了「${S.name}」${j.errors && j.errors.length ? '（有 ' + j.errors.length + ' 处要改）' : ''}。`);
+  };
   $('backPlan').onclick = () => { RP = null; setState('plan'); recompute(); TL.toast('回到编排'); };
+  $('libName').addEventListener('keydown', e => { if (e.key === 'Enter') $('libGo').click(); });
 
   /* ---------- menus ---------- */
   const MENUS = [['moreBtn', 'moreMenu'], ['showBtn', 'showMenu'], ['helpBtn', 'helpMenu']];
   function closeMenus(except) { for (const [b, m] of MENUS) if (m !== except) { $(m).hidden = true; $(b).setAttribute('aria-expanded', 'false'); } }
   for (const [b, m] of MENUS) $(b).onclick = e => { e.stopPropagation(); const open = $(m).hidden; closeMenus(m); $(m).hidden = !open; $(b).setAttribute('aria-expanded', open); };
   document.addEventListener('click', e => { if (!e.target.closest('.menu')) closeMenus(); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenus(); $('textDlg').hidden = true; $('runDlg').hidden = true; $('connDlg').hidden = true; } });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenus(); $('textDlg').hidden = true; $('runDlg').hidden = true; $('connDlg').hidden = true; $('libDlg').hidden = true; } });
   $('moreMenu').onclick = e => {
     const b = e.target.closest('[data-m]'); if (!b) return; closeMenus();
     const m = b.dataset.m;
@@ -415,8 +470,8 @@
     if (m === 'old') { location.href = 'old.html'; return; }
     if (m === 'replay') { if (S.state === 'live') { TL.toast('连着游戏时不能回放，先点「断开」'); return; } openRuns(); return; }
     if (m === 'revert') { if (S.text === S.saved) { TL.toast('没有没保存的改动'); return; } if (S.state === 'live') sendLive(S.saved, '回到上次保存的脚本：'); else { setText(S.saved, true); TL.toast('回到了上次保存的脚本（可以撤销）'); } return; }
-    TL.toast({saveas: '另存为：现在只有一份战术脚本，之后再接。', load: '载入：现在只有一份战术脚本，之后再接。',
-      full: '完整跑一遍（假游戏）：之后再接；现在可以「连接游戏」直接跑假游戏看。'}[m] || '');
+    if (m === 'saveas' || m === 'load') { openLib(m === 'saveas' ? 'save' : 'load'); return; }
+    if (m === 'full') { fullRun(); return; }
   };
   /* the script as text: for big changes, copy and paste */
   $('textApply').onclick = async () => {
@@ -469,7 +524,7 @@
     setState('plan');
     if (location.protocol === 'file:') { $('errs').hidden = false; $('errs').innerHTML = '<b>这个页面要从本地服务打开</b>：运行 <code>python -m commander_bridge</code> 后打开 http://127.0.0.1:8790/'; return; }
     let j; try { j = await api('GET', '/api/script'); } catch (_) { $('errs').hidden = false; $('errs').innerHTML = '<b>连不上本地服务</b>：战术脚本读不到。'; return; }
-    S.text = S.saved = j.text; S.model = j.model;
+    S.text = S.saved = j.text; S.model = j.model; if (j.name) S.name = j.name;
     await layoutOf(S.start);
     recompute(); showErrors(j.errors || []);
     requestAnimationFrame(loop);

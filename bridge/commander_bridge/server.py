@@ -16,8 +16,11 @@
   GET  /api/strategies          saved strategies (name, time, start, event count)
   GET  /api/strategies/<name>   one saved strategy {name, saved, plan}
   PUT  /api/strategies/<name>   save the console plan in the body under that name
-  GET  /api/script              the tactic script (strategies/战术脚本-人族速矿二本.txt): {text, model, errors}
-  PUT  /api/script              {text} or {model}: check it and, without mistakes, save it ({dryRun: true} only checks)
+  GET  /api/script              the current tactic script (strategies/战术脚本-<名字>.txt): {name, text, model, errors}
+  PUT  /api/script              {text} or {model}, name?: check it and, without mistakes, save it ({dryRun: true} only
+                                checks); a name saves it under that name and makes it the current one (另存为)
+  GET  /api/scripts             the tactic scripts kept: {current, scripts: [{name, modified}]}
+  POST /api/script/use          {name}: make that one current (载入): what 「保存」 writes and a game taken over plays
   POST /api/script/preview      {text, start, from?}: play it on the fake world (about 10 s), or go on from the save point
                                 before `from` when the script changed there (a few seconds); a recorded game + timeline
 
@@ -53,7 +56,36 @@ RUNS = ROOT / "bridge" / "runs"  # one folder per arbiter game: meta, state (dec
 RUN_NAME = re.compile(r"\d{8}-\d{6}-[a-z]+")
 WEB = ROOT / "web"
 MAX_BODY = 1 << 20
-SCRIPT = strategies.STORE / "战术脚本-人族速矿二本.txt"  # the tactic script the console edits and attach mode plays
+SCRIPT_DEFAULT = "人族速矿二本"  # strategies/战术脚本-<名字>.txt: the tactic scripts; one is current
+
+
+def script_path(name: str | None = None) -> pathlib.Path:
+    """A tactic script's file; no name: the current one (the console edits it, a game taken over plays it)."""
+    return strategies.STORE / f"战术脚本-{name or script_name()}.txt"
+
+
+def script_name() -> str:
+    """The current tactic script, as strategies/当前战术脚本.txt names it (the default when unset or gone)."""
+    try:
+        name = (strategies.STORE / "当前战术脚本.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        name = ""
+    return name if name and script_ok(name) and script_path(name).is_file() else SCRIPT_DEFAULT
+
+
+def script_ok(name: str) -> bool:
+    return 0 < len(name) <= 40 and not re.search(r'[\\/:*?"<>|\n\r\t]', name) and not name.startswith(".")
+
+
+def script_names() -> list[dict]:
+    out = []
+    for f in sorted(strategies.STORE.glob("战术脚本-*.txt"), key=lambda f: -f.stat().st_mtime):
+        out.append({"name": f.stem[len("战术脚本-"):], "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime))})
+    return out
+
+
+def use_script(name: str) -> None:
+    (strategies.STORE / "当前战术脚本.txt").write_text(name + "\n", encoding="utf-8")
 _UNSET = object()  # distinguishes "no name in the request" from an explicit null (no current layout)
 
 
@@ -695,8 +727,8 @@ class Runner:
                 plan["start"] = start  # the detected direction wins over a stale start saved in the layout
                 plan["arbiter"] = True  # played by the rule table (arbiter.py), recorded for replay in bridge/runs
                 orch = strategies.STORE / "编排-人族速矿二本.md"
-                if SCRIPT.is_file():  # the player's tactic script wins over the orchestration and the built-in rules
-                    plan["script"] = SCRIPT.read_text(encoding="utf-8")
+                if script_path().is_file():  # the player's tactic script wins over the orchestration and the built-in rules
+                    plan["script"] = script_path().read_text(encoding="utf-8")
                 elif orch.is_file():  # the player's own orchestration wins over the built-in rules
                     plan["orchestration"] = orch.read_text(encoding="utf-8")
             except (FileNotFoundError, ValueError):
@@ -777,9 +809,11 @@ class Handler(SimpleHTTPRequestHandler):
             j = self.runner.live_script()
             return self._json(200, {"ok": True, **j} if j else {"ok": False, "error": "现在没有按战术脚本进行的游戏"})
         if self.path == "/api/script":
-            text = SCRIPT.read_text(encoding="utf-8") if SCRIPT.is_file() else ""
+            text = script_path().read_text(encoding="utf-8") if script_path().is_file() else ""
             model, errors = tactic_script.parse(text)
-            return self._json(200, {"ok": True, "text": text, "model": model, "errors": errors})
+            return self._json(200, {"ok": True, "name": script_name(), "text": text, "model": model, "errors": errors})
+        if self.path == "/api/scripts":
+            return self._json(200, {"ok": True, "current": script_name(), "scripts": script_names()})
         if self.path == "/api/strategies":
             return self._json(200, {"ok": True, "strategies": strategies.list_all()})
         if self.path.startswith("/api/strategies/"):
@@ -806,10 +840,17 @@ class Handler(SimpleHTTPRequestHandler):
             if text is None:
                 return self._json(400, {"ok": False, "error": "要给 text 或 model"})
             model, errors = tactic_script.parse(text)
+            name = body.get("name") if isinstance(body.get("name"), str) and body["name"].strip() else None
+            if name is not None:
+                name = name.strip()
+                if not script_ok(name):
+                    return self._json(400, {"ok": False, "error": "名字不能空、不超过 40 个字，不能有 / \\ : * ? \" < > |"})
             if errors or body.get("dryRun"):
                 return self._json(200, {"ok": not errors, "saved": False, "text": text, "model": model, "errors": errors})
-            SCRIPT.write_text(text, encoding="utf-8")
-            return self._json(200, {"ok": True, "saved": True, "text": text, "model": model, "errors": []})
+            script_path(name).write_text(text, encoding="utf-8")
+            if name is not None:
+                use_script(name)
+            return self._json(200, {"ok": True, "saved": True, "name": script_name(), "text": text, "model": model, "errors": []})
         if not self.path.startswith("/api/strategies/"):
             return self._json(404, {"ok": False})
         try:
@@ -825,8 +866,16 @@ class Handler(SimpleHTTPRequestHandler):
             body = self._body()
         except (ValueError, json.JSONDecodeError):
             return self._json(400, {"ok": False, "error": "请求不是有效的 JSON"})
+        if self.path == "/api/script/use":
+            name = body.get("name") if isinstance(body.get("name"), str) else ""
+            if not script_ok(name) or not script_path(name).is_file():
+                return self._json(404, {"ok": False, "error": f"没有叫「{name}」的战术脚本"})
+            use_script(name)
+            text = script_path(name).read_text(encoding="utf-8")
+            model, errors = tactic_script.parse(text)
+            return self._json(200, {"ok": True, "name": name, "text": text, "model": model, "errors": errors})
         if self.path == "/api/script/preview":
-            text = body.get("text") if isinstance(body.get("text"), str) else (SCRIPT.read_text(encoding="utf-8") if SCRIPT.is_file() else "")
+            text = body.get("text") if isinstance(body.get("text"), str) else (script_path().read_text(encoding="utf-8") if script_path().is_file() else "")
             start = body.get("start", 0)
             if not isinstance(start, int) or not 0 <= start < len(self.runner.data["starts"]):
                 return self._json(400, {"ok": False, "error": "出生点不对"})

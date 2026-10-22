@@ -9,3 +9,6 @@ bridge/war3-launch.log
 bridge/next-start.txt
 bridge/hook-cache/
 bridge/runs/
+
+# which tactic script is current on this machine (console 「载入」/「另存为」)
+strategies/当前战术脚本.txt

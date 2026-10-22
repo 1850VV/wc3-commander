@@ -162,7 +162,7 @@
      of his lifecycle. Each step can wait for something before it starts: a moment, a delay after the
      step before, the hero's birth, a building, the money. */
   const SPD = {hpea: 190, hmil: 270, Hamg: 320, Hmkg: 270, hfoo: 270};
-  const TRAIN = {农民: 15, 大法师: 55, 山丘之王: 55, 步兵: 20, 破法者: 28, 牧师: 28, 女巫: 30, 主城: 140, 奥术塔: 50};
+  const TRAIN = {农民: 15, 大法师: 55, 山丘之王: 55, 步兵: 20, 破法者: 28, 牧师: 28, 女巫: 30, 主城: 140, 城堡: 140, 奥术塔: 50, 集结点: 0};
   let lifeSel = null, lifeLane = null, showAll = false, lifeNodes = [], nodeDrag = null, placeN = 1;
   const condTerms = TL.condTerms, rawOf = s => `${s.cond ? '[' + s.cond + '] ' : ''}${s.body}${s.pos ? ' @' + s.pos : ''}${s.tag ? ' #' + s.tag : ''}`;
   function birthOf(L) { const tr = D.pos[TL.cidOfLane(L)]; return tr && tr.length ? [tr[0][1], tr[0][2]] : D.hall; }
@@ -208,7 +208,7 @@
       if (tt && !tt.depart && to0) { const walk0 = Math.hypot(to0[0] - pos[0], to0[1] - pos[1]) / speed; s.start = Math.max(condStart(s, base, true), tt.t - walk0); }
       const sq = unit && isJoin(s) && squadByName(s.body.slice(3));
       if (sq) { const ps = squadPlaces(sq), f = ps[0]; s.arrive = s.start + (f ? Math.hypot(f.at[0] - pos[0], f.at[1] - pos[1]) / speed : 0); s.end = s.done = breakUp(sq) ?? TL.END; if (prev && TL.ongoing(prev)) prev.end = s.start; if (ps.length) pos = ps[ps.length - 1].at; s.raw = rawOf(s); continue; }
-      if (!unit) { const n = s.body.replace(/^升级\s*/, '').replace(/\s*[×x]\s*\d+$/, ''), cnt = +((s.body.match(/[×x]\s*(\d+)/) || [])[1] || 1); s.work = s.start; s.done = s.start + (TRAIN[n] || TRAIN[n.replace(/\d+$/, '')] || 20) * cnt; s.end = s.done; continue; }
+      if (!unit) { const n = s.body.replace(/^升级\s*/, '').replace(/\s*[×x]\s*\d+$/, ''), cnt = +((s.body.match(/[×x]\s*(\d+)/) || [])[1] || 1); s.work = s.start; s.done = s.start + (TRAIN[n] || TRAIN[n.replace(/\d+$/, '')] || 20) * cnt; s.end = s.done; s.raw = rawOf(s); continue; }
       const to = targetOf(s), walk = to ? Math.hypot(to[0] - pos[0], to[1] - pos[1]) / speed : 0;
       if (to) s.arrive = s.start + walk;
       if (/^建造/.test(s.body)) { s.work = s.start + walk; s.done = s.work + (TL.BUILD[s.body.split(' ')[1]] || 60); s.end = s.done; }
@@ -614,7 +614,7 @@
     return best;
   }
   function changed() { TL.syncOrder(); renderCard(); }
-  function setPick(list, add) { if (!add) TL.pick.clear(); for (const c of list) TL.pick.add(c); lifeLane = null; if (lifeSel && !(TL.pick.size === 1 && pickedUnits()[0] && pickedUnits()[0].L === lifeSel.L)) lifeSel = null; changed(); }
+  function setPick(list, add) { bsel = null; if (!add) TL.pick.clear(); for (const c of list) TL.pick.add(c); lifeLane = null; if (lifeSel && !(TL.pick.size === 1 && pickedUnits()[0] && pickedUnits()[0].L === lifeSel.L)) lifeSel = null; changed(); }
   const pickedUnits = () => units(TL.t).filter(u => TL.pick.has(u.cid) && !u.summon);
   function give(cmd, extra) {
     if (!TL.pick.size) { TL.toast('先选单位：点一下，或拖一个框'); return; }
@@ -660,6 +660,7 @@
       flags.push({x: g.x, y: g.y, at: performance.now(), c: '121,176,238'}); give('build', {xy: [g.x, g.y], what: mode.what, queue: false});
       if (!e.shiftKey) mode = null; renderCard(); return;
     }
+    if (mode && mode.kind === 'rally') { setRally(px, py, e.shiftKey); mode = null; renderCard(); return; }
     if (mode) { flags.push({x: wx(px), y: wy(py), at: performance.now(), c: mode.kind === 'attack' ? '208,88,74' : '127,224,138'}); give(mode.kind === 'attack' ? 'attack' : 'move', {xy: [wx(px), wy(py)], queue: e.shiftKey}); if (!e.shiftKey) mode = null; renderCard(); return; }
     const nd = nodeAt(px, py);
     if (nd) {
@@ -689,13 +690,12 @@
         const cr = !u && creepsAt(TL.t).find(c => Math.hypot(sx(c.x) - px, sy(c.y) - py) < 14);
         if (cr) { TL.toast(`${cr.n}（${cr.lv} 级，${cr.camp}）：生命 ${Math.round(cr.hp * cr.hpLeft)}/${cr.hp}。选中自己的单位后右键它 = 去清野。`); return; }
         if (u) { if (q.shiftKey) { TL.pick.has(u.cid) ? TL.pick.delete(u.cid) : TL.pick.add(u.cid); changed(); } else setPick([u.cid]); selectedBuild = null; return; }
-        const bl = buildingsAt(TL.t).find(o => o.s && (rr => wx(px) > rr[0] && wx(px) < rr[2] && wy(py) > rr[1] && wy(py) < rr[3])(rectOf(o, 'body')));
-        selectedBuild = bl || null;
-        const hallHit = !bl && (rr => wx(px) > rr[0] && wx(px) < rr[2] && wy(py) > rr[1] && wy(py) < rr[3])(rectOf({type: 'htow', x: D.hall[0], y: D.hall[1]}, 'body'));
-        const nm = bl ? (bl.s.tag && TL.lanes.find(L => L.label === '#' + bl.s.tag) ? '#' + bl.s.tag : ({神秘圣所: '神秘圣地'})[bl.name] || bl.name) : hallHit ? '城镇大厅' : null;
-        lifeLane = nm ? TL.lanes.find(L => L.kind === 'building' && L.label === nm) || null : null; lifeSel = null;
-        if (lifeLane) { if (!q.shiftKey) TL.pick.clear(); TL.syncOrder(); renderCard(); return; }
-        if (bl) { TL.toast(`${bl.name}：${bl.who} ${bl.state === 'plan' ? '计划 ' + TL.fmt(bl.s.start) + ' 去建' : bl.state === 'ordered' ? '正在走过去 / 等钱' : bl.state === 'building' ? '建造中 ' + Math.round(bl.p * 100) + '%' : '已建好'}${bl.s.done != null ? '，预计 ' + TL.fmt(bl.s.done) + ' 完成' : ''}`); }
+        const bl = buildingsAt(TL.t).find(o => (rr => wx(px) > rr[0] && wx(px) < rr[2] && wy(py) > rr[1] && wy(py) < rr[3])(rectOf(o, 'body')));
+        selectedBuild = bl || null; lifeSel = null;
+        bsel = bl ? pickBuilding(bl) : null;
+        lifeLane = bsel && !bsel.L.fresh ? bsel.L : null;
+        if (bsel) { TL.pick.clear(); mode = null; menu = 'main'; TL.syncOrder(); renderCard(); return; }
+        if (bl) TL.toast(bl.s ? `${bl.name}：${bl.who} ${bl.state === 'plan' ? '计划 ' + TL.fmt(bl.s.start) + ' 去建' : bl.state === 'ordered' ? '正在走过去 / 等钱' : bl.state === 'building' ? '建造中 ' + Math.round(bl.p * 100) + '%' : '已建好'}${bl.s.done != null ? '，预计 ' + TL.fmt(bl.s.done) + ' 完成' : ''}` : `${bl.name}${bl.state === 'building' ? ' 建造中 ' + Math.round(bl.p * 100) + '%' : ''}`);
         if (!q.shiftKey) setPick([]);
         return;
       }
@@ -759,7 +759,7 @@
     const k = e.key.toLowerCase();
     if (k === 'escape') { mode = null; menu = 'main'; renderCard(); return; }
     if (/^[1-4]$/.test(k) && (e.ctrlKey || e.metaKey)) { e.preventDefault(); keepGroup(+k); return; }
-    const btn = $('card').querySelector(`[data-key="${k}"]`); if (btn) { e.preventDefault(); btn.click(); return; }
+    const btn = $('card').querySelector(`[data-key="${k}"]`); if (btn) { e.preventDefault(); btn.dispatchEvent(new MouseEvent('click', {bubbles: true, shiftKey: e.shiftKey})); return; }
     if (/^[1-4]$/.test(k) && !e.altKey) { e.preventDefault(); pickGroup(+k); }
   });
   let lastGroup = {k: 0, at: 0};
@@ -770,14 +770,97 @@
   function pickGroup(k) {
     const G = TL.selectGroup(k); if (!G) { TL.toast(`编队 ${k} 还是空的：选中单位后按 Ctrl+${k}`); return; }
     if (lastGroup.k === k && performance.now() - lastGroup.at < 450) window.MAP.focusPicked();
-    lastGroup = {k, at: performance.now()}; selectedBuild = null; renderCard();
+    lastGroup = {k, at: performance.now()}; selectedBuild = null; bsel = null; renderCard();
   }
   let mapHot = false;
   cv.addEventListener('pointerenter', () => { mapHot = true; }); $('card').addEventListener('pointerenter', () => { mapHot = true; });
   document.addEventListener('pointerdown', e => { if (!e.target.closest('#map, #card, .mapbox')) mapHot = !!e.target.closest('.board, .lower'); }); // number keys still pick groups below the map
 
+  /* ---------- a building's card: what it makes, its upgrade, its rally point; its production line ----------
+     A building with no line yet gets one with the first thing queued (「兵营：…」, or 「#兵营2：…」 with a
+     tag on its build step when it is not the first of its kind). Click = from the red line, after what is
+     under way; Shift = at the end of the queue. The same unit again makes it ×2, ×3. */
+  const MAKES = {htow: {train: ['农民'], up: '主城'}, hkee: {train: ['农民'], up: '城堡'}, hcas: {train: ['农民']},
+    hbar: {train: ['步兵']}, halt: {train: ['大法师', '山丘之王']}, hars: {train: ['破法者', '牧师', '女巫']}, hwtw: {up: '奥术塔'}};
+  const MKEY = {农民: 'p', 步兵: 'f', 大法师: 'r', 山丘之王: 'k', 破法者: 'b', 牧师: 'e', 女巫: 's'};
+  const LANE_NAME = {hbar: '兵营', halt: '国王祭坛', hars: '神秘圣地', hwtw: '侦察塔'};
+  const HALL_T = ['htow', 'hkee', 'hcas'];
+  let bsel = null; // the building picked: {b, L (its production line; L.fresh = not in the script yet), tag (to put on its build step)}
+  function pickBuilding(b) {
+    const lane = label => TL.lanes.find(L => L.kind === 'building' && L.label === label);
+    const fresh = (label, tag) => ({b, tag, L: {id: 'L:' + label, label, kind: 'building', prio: TL.lanes.length + 1, line: 9000 + TL.lanes.length, steps: [], fresh: true}});
+    if (HALL_T.includes(b.type) && Math.hypot(b.x - D.hall[0], b.y - D.hall[1]) < 200) return {b, L: lane('城镇大厅') || fresh('城镇大厅').L};
+    if (b.s && b.s.tag) return {b, L: lane('#' + b.s.tag) || fresh('#' + b.s.tag).L};
+    const kind = HALL_T.includes(b.type) ? null : LANE_NAME[b.type];
+    if (!MAKES[b.type]) return {b, L: {id: 'L:none', label: b.name, kind: 'building', steps: [], fresh: true}, none: true};
+    if (kind) { // the first of its kind in the script is the line named after it; the others get a tag
+      const same = buildingsAt(TL.t).filter(o => o.type === b.type && o.s).sort((p, q) => (p.s.start ?? 1e9) - (q.s.start ?? 1e9));
+      if (!b.s || same[0].s === b.s) return lane(kind) ? {b, L: lane(kind)} : b.s ? fresh(kind) : {b, L: {id: 'L:none', label: b.name, kind: 'building', steps: []}, none: true, hand: true};
+    }
+    if (!b.s) return {b, L: {id: 'L:none', label: b.name, kind: 'building', steps: []}, none: true, hand: true};
+    let n = 2, tag; do { tag = b.name.replace(/^神秘/, '') + n++; } while (TL.lanes.some(L => L.label === '#' + tag) || TL.lanes.some(L => L.steps.some(x => x.tag === tag)));
+    return fresh('#' + tag, tag);
+  }
+  function nextPeasant() {
+    let n = 0;
+    for (const L of TL.lanes) { if (L.kind === 'peasant') n = Math.max(n, +L.label.slice(2) || 0); for (const x of L.steps) { const m = /^农民(\d+)$/.exec(x.body); if (m) n = Math.max(n, +m[1]); } }
+    return n + 1;
+  }
+  function adoptLane() { // the first thing queued puts a new line into the script
+    const B = bsel, L = B.L; if (!L.fresh) return;
+    delete L.fresh;
+    if (B.tag && B.b.s) { B.b.s.tag = B.tag; B.b.s.raw = rawOf(B.b.s); }
+    TL.lanes.push(L); lifeLane = L;
+  }
+  function queueOn(body, queue, extra) {
+    if (!bsel || bsel.none) return;
+    const L = bsel.L, t = Math.round(TL.t), cond = queue || t <= 0 ? '' : TL.fmt(t), what = body.replace(/\s*×\s*\d+$/, '');
+    if (/^升级 /.test(body) && L.steps.some(x => x.body === body)) { TL.toast(`${L.label} 已经排了「${body}」`); return; }
+    adoptLane();
+    let k = L.steps.length;
+    if (!queue) { k = 0; L.steps.forEach((x, i) => { if (x.start != null && x.start <= t) k = i + 1; }); }
+    // the same unit queued the same way a moment ago (just before the end, or right after what is under way): ×2, ×3
+    const j = queue ? k - 1 : k, prev = L.steps[j], pm = prev && /^(.+?)(?:\s*×\s*(\d+))?$/.exec(prev.body);
+    if (pm && pm[1] === what && !/^(农民|升级|集结点|大法师|山丘之王)/.test(what) && (prev.cond || '') === cond && !extra && (prev.start == null || prev.start > TL.t - 0.5)) {
+      prev.body = `${what} ×${(+pm[2] || 1) + 1}`; prev.edited = true;
+      editLane(L, j, `${L.label}：第 ${j + 1} 步改成「${prev.body}」${prev.start != null ? '，预计 ' + TL.fmt(prev.start) + ' 开始' : ''}`); return;
+    }
+    const st = squadStep(body, {cond, ...(extra || {})}); st.raw = rawOf(st); st.edited = true;
+    L.steps.splice(k, 0, st);
+    editLane(L, k, null);
+    const s2 = L.steps[k];
+    TL.toast(`${L.label}：${queue ? '排到最后' : '从 ' + TL.fmt(t) + ' 起'}「${st.body}${st.pos ? ' @' + st.pos : ''}」${s2 && s2.start != null ? '，预计 ' + TL.fmt(s2.start) + ' 开始' : '。预算里到 ' + TL.fmt(TL.END) + ' 还开始不了：钱不够、人口满了（看「卡人口」），或建筑还没好'}`);
+  }
+  function trainPeasant(queue) {
+    const n = nextPeasant(), atNat = Math.hypot(bsel.b.x - D.natural[0], bsel.b.y - D.natural[1]) < 1500;
+    const P = {id: 'L:农民' + n, label: '农民' + n, kind: 'peasant', prio: TL.lanes.length + 1, line: 8000 + n, steps: [squadStep(atNat ? '采金 分矿' : '采金 主矿')]};
+    TL.lanes.push(P);
+    queueOn('农民' + n, queue);
+    TL.toast(`训练农民${n}：出生后去${atNat ? '分矿' : '主矿'}采金。选中他（或在时间轴上点「农民${n}」）可以改他之后做什么。`);
+  }
+  function setRally(px, py, queue) {
+    const x = wx(px), y = wy(py), hero = units(TL.t).find(u => /^H/.test(u.type) && Math.hypot(sx(u.x) - px, sy(u.y) - py) < 16);
+    if (hero) { queueOn('集结点 ' + (hero.type === 'Hamg' ? '大法师' : '山丘之王'), queue); return; }
+    let nm; do { nm = '点' + placeN++; } while (nm in D.places);
+    D.places[nm] = [Math.round(x), Math.round(y)]; flags.push({x, y, at: performance.now(), c: '228,193,74'});
+    queueOn('集结点', queue, {pos: nm});
+  }
+  function buildingCardHTML() {
+    const B = bsel, b = B.b, m = MAKES[b.type] || {}, t = TL.t;
+    const state = b.state === 'plan' ? `计划 ${b.s && b.s.start != null ? TL.fmt(b.s.start) + ' 开工' : '（不会开工）'}` : b.state === 'ordered' ? '农民正在走过去 / 等钱' : b.state === 'building' ? `建造中 ${Math.round(b.p * 100)}%` : '已建好';
+    const btns = B.none ? [] : [...(m.train || []).map(n => [`t-${n}`, `训练 ${n}`, 'train', MKEY[n] || '']), ...(m.up ? [[`u-${m.up}`, `升级 ${m.up}`, 'build', 'u']] : []), ...((m.train || []).length ? [['rally', '集结点', 'wait', 'y']] : [])];
+    const why = B.hand ? '这座是游戏里手动造的，脚本里没有它，没法给它排生产（直接在游戏里操作）。' : B.none ? '这种建筑不生产单位。' : '';
+    return `<h2>选中 · ${TL.fmt(t)}</h2>
+      <div class="selsum"><b>${esc(b.name)}</b>${b.who ? ` <span class="hint">${esc(b.who)} 建</span>` : ''}<div class="acts">${esc(state)}${B.L.fresh && !B.none ? ' · 还没有生产队列，点下面的按钮就加一行' : ''}</div></div>
+      <div class="cmdcard">${btns.map(([k, n, c, key]) => `<button type="button" class="c-${c} ${mode && mode.key === k ? 'on' : ''}" data-cmd="${k}" data-key="${key}">${key ? `<kbd>${key.toUpperCase()}</kbd>` : ''}${esc(n)}</button>`).join('')}</div>
+      ${why ? `<p class="hint">${why}</p>` : ''}
+      ${B.L.fresh ? '' : lifeHTML([])}
+      ${B.none ? '' : `<p class="hint">点按钮 = 从红线这一刻（${TL.fmt(t)}）起，排在正在做的后面；<b>Shift+点</b> = 排到队列最后。同一种兵连点会合成 ×2、×3。集结点：点按钮后在地图上点一下（点英雄 = 集结到英雄）。</p>`}`;
+  }
+
   /* ---------- the command card ---------- */
   function renderCard() {
+    if (bsel && !TL.pick.size) { $('card').innerHTML = buildingCardHTML(); return; }
     const us = pickedUnits(), peas = us.length && us.every(u => u.type === 'hpea'), t = TL.t;
     const groups = {}; for (const u of us) { const n = u.type === 'hpea' ? '农民' : u.type === 'hmil' ? '民兵' : /^H/.test(u.type) ? '英雄' : '步兵'; groups[n] = (groups[n] || 0) + 1; }
     const acts = {}; for (const u of us) if (u.L) { const a = TL.current(u.L.steps.map(step => ({step})), t).cur; const n = a ? a.step.body.split(' ').slice(0, 2).join(' ') : '空闲'; acts[n] = (acts[n] || 0) + 1; }
@@ -807,6 +890,13 @@
     if (k.startsWith('b-')) { mode = {kind: 'build', what: k.slice(2), key: k}; menu = 'main'; renderCard(); TL.toast(`在地图上点一下放${k.slice(2)}；Shift 连着放；右键或 Esc 取消`); return; }
     if (k === 'move' || k === 'attack') { mode = {kind: k, key: k}; renderCard(); return; }
     if (k === 'hold') { const u = pickedUnits()[0]; give('hold', {xy: u ? [u.x, u.y] : null}); return; }
+    if (bsel && !TL.pick.size) {
+      if (k === 't-农民') { trainPeasant(e.shiftKey); return; }
+      if (k.startsWith('t-')) { queueOn(k.slice(2), e.shiftKey); return; }
+      if (k.startsWith('u-')) { queueOn('升级 ' + k.slice(2), e.shiftKey); return; }
+      if (k === 'rally') { mode = {kind: 'rally', key: 'rally'}; renderCard(); TL.toast('在地图上点集结点：点地面 = 那个地方，点英雄 = 跟着英雄；右键或 Esc 取消'); return; }
+      return;
+    }
     give(k, {});
   });
   let lastSec = -1;
@@ -815,7 +905,7 @@
   new MutationObserver(() => { const key = lifeSel ? lifeSel.L.id + ':' + lifeSel.k : ''; if (key === lastSelKey) return; lastSelKey = key; const el = $('card').querySelector('.ledrow'); if (el) el.scrollIntoView({block: 'nearest'}); }).observe($('card'), {childList: true});
 
   window.MAP = {
-    picked: () => { selectedBuild = null; renderCard(); },
+    picked: () => { selectedBuild = null; bsel = null; renderCard(); },
     focusPicked() { const us = pickedUnits(); if (!us.length) return; cam.x = us.reduce((a, u) => a + u.x, 0) / us.length; cam.y = us.reduce((a, u) => a + u.y, 0) / us.length; cam.s = Math.max(cam.s, 0.22); renderCard(); },
   };
   $('mapFit').onclick = fit;
@@ -823,6 +913,7 @@
   window.addEventListener('data-loaded', () => {
     computeCamps(); readSquads(); renderMarks();
     if (lifeLane && !TL.lanes.includes(lifeLane)) { lifeLane = TL.lanes.find(L => L.id === lifeLane.id) || null; }
+    if (bsel && !bsel.none) { const L = TL.lanes.find(x => x.id === bsel.L.id); if (L) { bsel.L = L; lifeLane = L; } else if (!bsel.L.fresh) bsel = null; }
     if (lifeSel && !TL.lanes.includes(lifeSel.L)) { const L = TL.lanes.find(x => x.id === lifeSel.L.id); lifeSel = L && L.steps[lifeSel.k] ? {L, k: lifeSel.k} : null; }
     const key = D.hall.join(); if (key !== homeFor) { homeFor = key; home(); }
     renderCard();
