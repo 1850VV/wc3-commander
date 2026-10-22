@@ -323,6 +323,7 @@
   /* the game so far and the rest from now: what the timeline and the sandbox show while connected */
   function project(force) {
     const s = LV.state, h = LV.hist; if (!s || !h || !h.frames.length) return;
+    if (LV.sending) return; // an edit is on its way to the game: redraw once it answers, not from the old script
     if (!force && performance.now() - LV.lastProj < 2000) return;
     LV.lastProj = performance.now();
     let j, ideal;

@@ -590,7 +590,7 @@
     for (const f of flags) { const k = (performance.now() - f.at) / 600; if (k > 1) continue; ctx.beginPath(); ctx.arc(sx(f.x), sy(f.y), 6 + k * 14, 0, 7); ctx.strokeStyle = `rgba(${f.c},${1 - k})`; ctx.lineWidth = 2; ctx.stroke(); }
     flags = flags.filter(f => performance.now() - f.at < 600);
     if (bDrag && !bDrag.no) {
-      const what = bDrag.b.s.body.split(' ')[1], g = placeGhost(bDrag.x, bDrag.y, what, bDrag.b.s);
+      const what = bDrag.b.s.body.split(' ')[1], g = placeGhost(bDrag.x, bDrag.y, what, stepKey(bDrag.b));
       rect(rectOf(bDrag.b, 'body'), 'rgba(0,0,0,.35)', 'rgba(197,139,240,.5)', [3, 3], 1);
       const [x, y, w] = rect(g.rect, g.ok ? 'rgba(127,176,105,.35)' : 'rgba(208,88,74,.35)', g.ok ? '#7fb069' : '#d0584a', null, 2);
       label(g.ok ? `${what} 放这里（松手）` : g.why, x + w / 2, y - 10, g.ok ? '#c8f0b4' : '#ffb3a8', 11);
@@ -618,13 +618,15 @@
   }
   function buildingAt(px, py) { return buildingsAt(TL.t).find(o => (rr => wx(px) > rr[0] && wx(px) < rr[2] && wy(py) > rr[1] && wy(py) < rr[3])(rectOf(o, 'body'))); }
   function dropBuilding(d) {
-    const s = d.b.s, what = s.body.split(' ')[1], g = placeGhost(d.x, d.y, what, s);
+    // the step as it is now (in a game the lanes may have been rebuilt while dragging)
+    const L = TL.lanes.find(x => x.label === d.b.L.label), k = d.b.k, s = L && L.steps[k];
+    if (!s || s.body !== d.b.s.body) { TL.toast('这座建筑的计划刚变了，再拖一次'); return; }
+    const what = s.body.split(' ')[1], g = placeGhost(d.x, d.y, what, stepKey(d.b));
     if (!g.ok) { TL.toast('这里不能放：' + g.why); return; }
-    if (Math.hypot(g.x - d.b.x, g.y - d.b.y) < 32) return;
+    if (g.x === d.b.x && g.y === d.b.y) return; // back where it was
     let nm; do { nm = what + placeN++; } while (nm in D.places);
     D.places[nm] = [g.x, g.y]; s.pos = nm; s.at = null; s.edited = true;
-    const L = d.b.L, k = L.steps.indexOf(s);
-    editLane(L, k < 0 ? 0 : k, `${what}（${L.label} 建）换到新位置：走路、开工、完成和后面的时间都重算了。按 ↶ 可以撤回。`);
+    editLane(L, k, `${what}（${L.label} 建）换到新位置：走路、开工、完成和后面的时间都重算了。按 ↶ 可以撤回。`);
   }
 
   /* ---------- placing a building ---------- */
@@ -634,11 +636,12 @@
     const i = (py * M.w + px) * 4, r = texData[i], g = texData[i + 1], b = texData[i + 2];
     return g < 70 && r < 40 && b < 35;
   }
-  function placeGhost(x, y, what, skip) { // skip: the build step being moved (its own old footprint does not count)
+  const stepKey = o => o && o.L ? o.L.label + '|' + o.k : null; // a build step by line and place in it: in a game the lanes are rebuilt every 2 s
+  function placeGhost(x, y, what, skip) { // skip: stepKey of the building being moved (its own old footprint does not count)
     const type = BT[what], f = M.body[type].foot, ox = ((f[2] - f[0]) / 2) % 64, oy = ((f[3] - f[1]) / 2) % 64;
     const px = Math.round((x - ox) / 64) * 64 + ox, py = Math.round((y - oy) / 64) * 64 + oy, b = {type, x: px, y: py}, r = rectOf(b, 'foot'), body = rectOf(b, 'body');
     let why = '';
-    for (const o of buildingsAt(TL.t)) { if (skip && o.s === skip) continue; const q = rectOf(o, 'foot'); if (r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]) { why = `和${o.name}重叠`; break; } }
+    for (const o of buildingsAt(TL.t)) { if (skip && stepKey(o) === skip) continue; const q = rectOf(o, 'foot'); if (r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]) { why = `和${o.name}重叠`; break; } }
     for (const m of M.mines) { const q = m.body; if (!why && r[0] < q[2] + 96 && r[2] > q[0] - 96 && r[1] < q[3] + 96 && r[3] > q[1] - 96) why = '离金矿太近'; }
     if (!why) for (let gx = body[0] + 16; gx < body[2]; gx += 32) for (let gy = body[1] + 16; gy < body[3]; gy += 32) if (isTree(gx, gy)) { why = '压到树或悬崖'; break; }
     return {x: px, y: py, rect: body, ok: !why, why};
